@@ -1,0 +1,4 @@
+redis-cluster/data/*
+!redis-cluster/data/.gitkeep
+# Ignore all node_modules folders
+**/node_modules

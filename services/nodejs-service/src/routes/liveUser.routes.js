@@ -1,0 +1,121 @@
+const express = require('express');
+const { signup } = require('../controllers/liveUser.controller');
+const { body } = require('express-validator');
+const upload = require('../middlewares/upload.middleware');
+
+const router = express.Router();
+
+/**
+ * @swagger
+ * /api/live-users/signup:
+ *   post:
+ *     summary: Register a new live user
+ *     tags: [Live Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             $ref: '#/components/schemas/LiveUserSignup'
+ *     responses:
+ *       201:
+ *         description: User registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Email or phone number already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/signup',
+  upload.fields([
+    { name: 'address_proof_image', maxCount: 1 },
+    { name: 'id_proof_image', maxCount: 1 }
+  ]),
+  [
+    body('name').notEmpty(),
+    body('phone_number').notEmpty(),
+    body('email').isEmail(),
+    body('password').isLength({ min: 6 }),
+    body('city').notEmpty(),
+    body('state').notEmpty(),
+    body('country').notEmpty(),
+    body('pincode').notEmpty(),
+    body('group').notEmpty(),
+    body('bank_ifsc_code').notEmpty(),
+    body('bank_account_number').notEmpty(),
+    body('bank_holder_name').notEmpty(),
+    body('bank_branch_name').notEmpty(),
+    body('security_question').notEmpty(),
+    body('security_answer').notEmpty(),
+    body('address_proof').notEmpty(),
+    body('address_proof_image').optional(),
+    body('id_proof').notEmpty(),
+    body('id_proof_image').optional(),
+    body('is_self_trading').notEmpty().isInt({ min: 0, max: 1 }).withMessage('is_self_trading must be 0 or 1'),
+    body('is_active').notEmpty().isInt({ min: 0, max: 1 }).withMessage('is_active must be 0 or 1'),
+  ],
+  signup
+);
+
+/**
+ * @swagger
+ * /api/live-users/login:
+ *   post:
+ *     summary: Login for live user
+ *     tags: [Live Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 token:
+ *                   type: string
+ *       401:
+ *         description: Invalid credentials
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/login',
+  [
+    body('email').isEmail(),
+    body('password').isLength({ min: 6 })
+  ],
+  require('../controllers/liveUser.controller').login
+);
+
+module.exports = router; 

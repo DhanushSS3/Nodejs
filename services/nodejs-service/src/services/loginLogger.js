@@ -1,0 +1,25 @@
+const fs = require('fs');
+const path = require('path');
+
+const logDir = path.join(__dirname, '../../logs');
+const loginLogFile = path.join(logDir, 'liveUserLogin.log');
+
+// Ensure log directory exists
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+function logLiveUserLogin({ email, account_number, ip, userAgent, timestamp }) {
+  const logEntry = JSON.stringify({
+    level: 'info',
+    type: 'live_user_login',
+    timestamp,
+    email,
+    account_number,
+    ip,
+    userAgent
+  }) + '\n';
+  fs.appendFileSync(loginLogFile, logEntry, { encoding: 'utf8' });
+}
+
+module.exports = { logLiveUserLogin };
