@@ -312,13 +312,11 @@ async function login(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Login successful',
-      data: {
-        access_token: token,
-        refresh_token: refreshToken,
-        expires_in: 900, // 15 minutes in seconds
-        token_type: 'Bearer',
-        session_id: sessionId
-      }
+      access_token: token,
+      refresh_token: refreshToken,
+      expires_in: 900, // 15 minutes in seconds
+      token_type: 'Bearer',
+      session_id: sessionId
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Internal server error' });
