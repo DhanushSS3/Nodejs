@@ -175,4 +175,34 @@ router.post('/refresh-token',
   require('../controllers/liveUser.controller').refreshToken
 );
 
+const authenticateJWT = require('../middlewares/auth.middleware');
+
+/**
+ * @swagger
+ * /api/live-users/logout:
+ *   post:
+ *     summary: Logout for live user
+ *     tags: [Live Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               refresh_token:
+ *                 type: string
+ *                 description: The refresh token to invalidate.
+ *     responses:
+ *       200:
+ *         description: Logout successful
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/logout', authenticateJWT, require('../controllers/liveUser.controller').logout);
+
 module.exports = router;

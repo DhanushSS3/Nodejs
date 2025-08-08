@@ -267,7 +267,8 @@ async function login(req, res) {
       group: user.group,
       account_number: user.account_number,
       session_id: sessionId,
-      user_id: user.id
+      user_id: user.id,
+      status: user.status
     };
     // Generate access token (15 min expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '15m', jwtid: sessionId });
@@ -374,7 +375,8 @@ async function refreshToken(req, res) {
       group: user.group,
       account_number: user.account_number,
       session_id: sessionId,
-      user_id: user.id
+      user_id: user.id,
+      status: user.status
     };
     
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
@@ -432,4 +434,29 @@ async function refreshToken(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken };
+/**
+ * Secure user logout
+ */
+async function logout(req, res) {
+  const { userId, sessionId } = req.user; // from authenticateJWT middleware
+  const { refresh_token: refreshToken } = req.body;
+
+  try {
+    // Invalidate the session and refresh token in Redis
+    const { deleteSession } = require('../utils/redisSession.util');
+    await deleteSession(userId, sessionId, refreshToken);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Logout successful' 
+    });
+  } catch (error) {
+    console.error('Logout failed:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to logout' 
+    });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout };
