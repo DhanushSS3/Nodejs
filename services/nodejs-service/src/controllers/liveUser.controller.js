@@ -238,7 +238,7 @@ async function login(req, res) {
   const { checkAndIncrementRateLimit, resetRateLimit, storeSession } = require('../utils/redisSession.util');
   try {
     // Rate limiting: block if too many attempts
-    const isRateLimited = await checkAndIncrementRateLimit({ email, ip });
+    const isRateLimited = await checkAndIncrementRateLimit({ email, ip, userType: 'live' });
     if (isRateLimited) {
       return res.status(429).json({ success: false, message: 'Too many login attempts. Please try again later.' });
     }
@@ -253,7 +253,7 @@ async function login(req, res) {
     }
 
     // Passed authentication: reset rate limit
-    await resetRateLimit({ email, ip });
+    await resetRateLimit({ email, ip, userType: 'live' });
 
     const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
     const jwt = require('jsonwebtoken');
@@ -295,6 +295,7 @@ async function login(req, res) {
         user_id: user.id,
         refresh_token: refreshToken // Store refresh token in session for reference
       },
+      'live',
       refreshToken // Pass refresh token to be stored separately
     );
 
@@ -400,11 +401,12 @@ async function refreshToken(req, res) {
         jwt: newAccessToken,
         refresh_token: newRefreshToken
       },
+      'live',
       newRefreshToken
     );
 
     // Delete the old refresh token in a separate operation
-    await deleteRefreshToken(refreshToken);
+    await deleteRefreshToken(refreshToken, 'live');
 
     return res.status(200).json({
       success: true,
@@ -444,7 +446,7 @@ async function logout(req, res) {
   try {
     // Invalidate the session and refresh token in Redis
     const { deleteSession } = require('../utils/redisSession.util');
-    await deleteSession(userId, sessionId, refreshToken);
+    await deleteSession(userId, sessionId, 'live', refreshToken);
 
     return res.status(200).json({ 
       success: true, 

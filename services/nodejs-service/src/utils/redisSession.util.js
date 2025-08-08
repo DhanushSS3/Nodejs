@@ -5,21 +5,21 @@ const { redisCluster } = require('../../config/redis');
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW = 900; // 15 min in seconds
 
-function getEmailKey(email) {
+function getEmailKey(email, userType) {
   const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
   // Using email hash as the hash tag to ensure same slot for all user's keys
-  return `{${hash}}:login:attempts:email`;
+  return `{${hash}}:${userType}:login:attempts:email`;
 }
 
-function getIPKey(ip) {
+function getIPKey(ip, userType) {
   // For IP-based rate limiting, we'll use a separate key without hash tag
   // since it needs to be checked independently
-  return `login:attempts:ip:${ip}`;
+  return `${userType}:login:attempts:ip:${ip}`;
 }
 
-async function checkAndIncrementRateLimit({ email, ip }) {
-  const emailKey = getEmailKey(email);
-  const ipKey = getIPKey(ip);
+async function checkAndIncrementRateLimit({ email, ip, userType }) {
+  const emailKey = getEmailKey(email, userType);
+  const ipKey = getIPKey(ip, userType);
   
   // Execute email and IP rate limiting in separate pipelines since they need different hash slots
   try {
@@ -48,9 +48,9 @@ async function checkAndIncrementRateLimit({ email, ip }) {
   }
 }
 
-async function resetRateLimit({ email, ip }) {
-  const emailKey = getEmailKey(email);
-  const ipKey = getIPKey(ip);
+async function resetRateLimit({ email, ip, userType }) {
+  const emailKey = getEmailKey(email, userType);
+  const ipKey = getIPKey(ip, userType);
   
   try {
     // Execute deletes in parallel but separate operations
@@ -68,9 +68,9 @@ async function resetRateLimit({ email, ip }) {
 const SESSION_TTL = 900; // 15 min
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
-function getSessionKey(userId, sessionId) {
+function getSessionKey(userId, sessionId, userType) {
   // Using userId as hash tag to ensure all user sessions are in the same slot
-  return `{user:${userId}}:session:${sessionId}`;
+  return `{user:${userType}:${userId}}:session:${sessionId}`;
 }
 
 function getRefreshTokenKey(refreshToken) {
@@ -79,8 +79,8 @@ function getRefreshTokenKey(refreshToken) {
   return `{${hashPart}}:refresh_token:${refreshToken}`;
 }
 
-async function storeSession(userId, sessionId, sessionData, refreshToken = null) {
-  const key = getSessionKey(userId, sessionId);
+async function storeSession(userId, sessionId, sessionData, userType, refreshToken = null) {
+  const key = getSessionKey(userId, sessionId, userType);
   try {
     // Store session data first
     await redisCluster.set(key, JSON.stringify(sessionData), 'EX', SESSION_TTL);
@@ -93,6 +93,7 @@ async function storeSession(userId, sessionId, sessionData, refreshToken = null)
         JSON.stringify({
           userId,
           sessionId,
+          userType, // Add userType to refresh token data
           createdAt: new Date().toISOString()
         }), 
         'EX', 
@@ -107,8 +108,8 @@ async function storeSession(userId, sessionId, sessionData, refreshToken = null)
   }
 }
 
-async function getSession(userId, sessionId) {
-  const key = getSessionKey(userId, sessionId);
+async function getSession(userId, sessionId, userType) {
+  const key = getSessionKey(userId, sessionId, userType);
   try {
     const data = await redisCluster.get(key);
     return data ? JSON.parse(data) : null;
@@ -118,8 +119,8 @@ async function getSession(userId, sessionId) {
   }
 }
 
-async function deleteSession(userId, sessionId, refreshToken = null) {
-  const key = getSessionKey(userId, sessionId);
+async function deleteSession(userId, sessionId, userType, refreshToken = null) {
+  const key = getSessionKey(userId, sessionId, userType);
   try {
     // Delete session first
     await redisCluster.del(key);
@@ -145,7 +146,7 @@ async function validateRefreshToken(refreshToken) {
     
     const tokenData = JSON.parse(data);
     // Get the session to verify it exists
-    const sessionKey = getSessionKey(tokenData.userId, tokenData.sessionId);
+    const sessionKey = getSessionKey(tokenData.userId, tokenData.sessionId, tokenData.userType);
     const sessionExists = await redisCluster.exists(sessionKey);
     
     if (!sessionExists) {

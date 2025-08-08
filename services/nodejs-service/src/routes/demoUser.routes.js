@@ -1,5 +1,5 @@
 const express = require('express');
-const { signup } = require('../controllers/demoUser.controller');
+const { signup, login } = require('../controllers/demoUser.controller');
 const { body } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 
@@ -64,6 +64,61 @@ router.post('/signup',
     body('id_proof_image').optional(),
   ],
   signup
+);
+
+/**
+ * @swagger
+ * /api/demo-users/login:
+ *   post:
+ *     summary: Login a demo user
+ *     tags: [Demo Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       429:
+ *         description: Too many login attempts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/login',
+  [
+    body('email').isEmail(),
+    body('password').notEmpty(),
+  ],
+  login
 );
 
 module.exports = router; 
