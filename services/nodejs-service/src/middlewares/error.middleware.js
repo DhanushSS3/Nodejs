@@ -1,3 +1,4 @@
+const { validationResult } = require('express-validator');
 const logger = require('../services/logger.service');
 
 /**
@@ -93,8 +94,24 @@ function timeoutHandler(timeout = 30000) {
   };
 }
 
+/**
+ * Middleware to handle validation errors from express-validator
+ */
+function handleValidationErrors(req, res, next) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Validation failed', 
+      errors: errors.array().map(err => ({ field: err.path, message: err.msg }))
+    });
+  }
+  next();
+}
+
 module.exports = {
   errorHandler,
   notFoundHandler,
-  timeoutHandler
+  timeoutHandler,
+  handleValidationErrors
 };

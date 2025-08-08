@@ -1,11 +1,13 @@
 const express = require('express');
 const liveUserRoutes = require('./routes/liveUser.routes');
 const demoUserRoutes = require('./routes/demoUser.routes');
+const authRoutes = require('./routes/auth.routes');
 const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');
 const { errorHandler, notFoundHandler, timeoutHandler } = require('./middlewares/error.middleware');
 const logger = require('./services/logger.service');
+const cors = require('cors');
 
 const app = express();
 
@@ -25,6 +27,9 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Enable CORS for all origins
+app.use(cors());
 
 // Handle invalid JSON error from express.json()
 app.use((err, req, res, next) => {
@@ -50,6 +55,7 @@ app.get('/health', (req, res) => {
 });
 
 // API routes
+app.use('/api/auth', authRoutes);
 app.use('/api/live-users', liveUserRoutes);
 app.use('/api/demo-users', demoUserRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

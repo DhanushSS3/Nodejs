@@ -68,6 +68,81 @@ async function resetRateLimit({ email, ip, userType }) {
 const SESSION_TTL = 900; // 15 min
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
+// --- OTP MANAGEMENT ---
+const OTP_TTL = 300; // 5 minutes in seconds
+const OTP_MAX_TRIES = 5;
+const OTP_RATE_LIMIT_MAX = 5;
+const OTP_RATE_LIMIT_WINDOW = 3600; // 1 hour in seconds
+
+function getOTPKey(email, userType) {
+  const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+  return `{otp:${hash}}:${userType}:otp`;
+}
+
+function getOTPRateLimitKey(email, userType) {
+  const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+  return `{otp:${hash}}:${userType}:otp_limit`;
+}
+
+async function storeOTP(email, otp, userType) {
+  const key = getOTPKey(email, userType);
+  try {
+    const pipeline = redisCluster.pipeline();
+    pipeline.hset(key, 'otp', otp, 'tries', 0);
+    pipeline.expire(key, OTP_TTL);
+    await pipeline.exec();
+    return true;
+  } catch (error) {
+    console.error('Failed to store OTP:', error);
+    throw error;
+  }
+}
+
+async function getOTP(email, userType) {
+  const key = getOTPKey(email, userType);
+  try {
+    const data = await redisCluster.hgetall(key);
+    return data;
+  } catch (error) {
+    console.error('Failed to get OTP:', error);
+    return null;
+  }
+}
+
+async function incrementOTPTries(email, userType) {
+  const key = getOTPKey(email, userType);
+  try {
+    return await redisCluster.hincrby(key, 'tries', 1);
+  } catch (error) {
+    console.error('Failed to increment OTP tries:', error);
+    return OTP_MAX_TRIES + 1; // Fail closed
+  }
+}
+
+async function deleteOTP(email, userType) {
+  const key = getOTPKey(email, userType);
+  try {
+    await redisCluster.del(key);
+  } catch (error) {
+    console.error('Failed to delete OTP:', error);
+  }
+}
+
+async function checkOTPRateLimit(email, userType) {
+  const key = getOTPRateLimitKey(email, userType);
+  try {
+    const pipeline = redisCluster.pipeline();
+    pipeline.incr(key);
+    pipeline.expire(key, OTP_RATE_LIMIT_WINDOW, 'NX'); // Set expiry only if key is new
+    const results = await pipeline.exec();
+    const count = results[0][1];
+    return count > OTP_RATE_LIMIT_MAX;
+  } catch (error) {
+    console.error('OTP rate limit check failed:', error);
+    return true; // Fail closed
+  }
+}
+
 function getSessionKey(userId, sessionId, userType) {
   // Using userId as hash tag to ensure all user sessions are in the same slot
   return `{user:${userType}:${userId}}:session:${sessionId}`;
@@ -172,6 +247,13 @@ async function deleteRefreshToken(refreshToken) {
 }
 
 module.exports = {
+  // OTP Functions
+  storeOTP,
+  getOTP,
+  incrementOTPTries,
+  deleteOTP,
+  checkOTPRateLimit,
+  OTP_MAX_TRIES,
   checkAndIncrementRateLimit,
   resetRateLimit,
   storeSession,
