@@ -265,5 +265,121 @@ async function login(req, res) {
   }
 }
 
-module.exports = { signup, login };
+async function refreshToken(req, res) {
+  const { refresh_token: refreshToken } = req.body;
+  const { validateRefreshToken, deleteRefreshToken, storeSession } = require('../utils/redisSession.util');
+  
+  if (!refreshToken) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Refresh token is required' 
+    });
+  }
+
+  try {
+    const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
+    const decoded = jwt.verify(refreshToken, JWT_SECRET + '_REFRESH');
+    
+    const tokenData = await validateRefreshToken(refreshToken);
+    if (!tokenData || tokenData.userId !== decoded.userId || tokenData.sessionId !== decoded.sessionId || tokenData.userType !== 'demo') {
+      await deleteRefreshToken(refreshToken);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid or expired refresh token'
+      });
+    }
+
+    const user = await DemoUser.findByPk(decoded.userId);
+    if (!user) {
+      await deleteRefreshToken(refreshToken);
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    const sessionId = tokenData.sessionId;
+    const jwtPayload = {
+      user_id: user.id,
+      user_type: user.user_type,
+      account_number: user.account_number,
+      group: user.group,
+      status: user.status,
+      session_id: sessionId
+    };
+    
+    const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
+      expiresIn: '15m', 
+      jwtid: sessionId 
+    });
+
+    const newRefreshToken = jwt.sign(
+      { userId: user.id, sessionId },
+      JWT_SECRET + '_REFRESH',
+      { expiresIn: '7d' }
+    );
+
+    await storeSession(
+      user.id,
+      sessionId,
+      {
+        ...jwtPayload,
+        jwt: newAccessToken,
+        refresh_token: newRefreshToken
+      },
+      'demo',
+      newRefreshToken
+    );
+
+    await deleteRefreshToken(refreshToken);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Token refreshed successfully',
+      data: {
+        access_token: newAccessToken,
+        refresh_token: newRefreshToken,
+        expires_in: 900,
+        token_type: 'Bearer',
+        session_id: sessionId
+      }
+    });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      await deleteRefreshToken(refreshToken);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Refresh token has expired' 
+      });
+    }
+    logger.error('Failed to refresh demo user token', { error: error.message });
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to refresh token' 
+    });
+  }
+}
+
+async function logout(req, res) {
+  const { userId, sessionId } = req.user;
+  const { refresh_token: refreshToken } = req.body;
+
+  try {
+    const { deleteSession } = require('../utils/redisSession.util');
+    await deleteSession(userId, sessionId, 'demo', refreshToken);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Logout successful' 
+    });
+  } catch (error) {
+    logger.error('Demo user logout failed', { error: error.message });
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to logout' 
+    });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout };
 

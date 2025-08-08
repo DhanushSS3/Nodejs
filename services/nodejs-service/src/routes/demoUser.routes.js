@@ -1,6 +1,7 @@
 const express = require('express');
-const { signup, login } = require('../controllers/demoUser.controller');
+const { signup, login, refreshToken, logout } = require('../controllers/demoUser.controller');
 const { body } = require('express-validator');
+const authenticateJWT = require('../middlewares/auth.middleware');
 const upload = require('../middlewares/upload.middleware');
 
 const router = express.Router();
@@ -120,5 +121,85 @@ router.post('/login',
   ],
   login
 );
+
+/**
+ * @swagger
+ * /api/demo-users/refresh-token:
+ *   post:
+ *     summary: Refresh an access token for a demo user
+ *     tags: [Demo Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - refresh_token
+ *             properties:
+ *               refresh_token:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Token refreshed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       401:
+ *         description: Invalid or expired refresh token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/refresh-token', refreshToken);
+
+/**
+ * @swagger
+ * /api/demo-users/logout:
+ *   post:
+ *     summary: Logout a demo user
+ *     tags: [Demo Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - refresh_token
+ *             properties:
+ *               refresh_token:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Logout successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/logout', authenticateJWT, logout);
 
 module.exports = router; 
