@@ -1,1 +1,2 @@
-{"level":"info","type":"live_user_login","timestamp":"2025-08-07T12:57:22.041Z","email":"john@example.com","account_number":"LIVE-EE6A55","ip":"::1","userAgent":"PostmanRuntime/7.45.0"}
+{"level":"info","type":"live_user_login","timestamp":"2025-08-08T08:44:04.593Z","email":"sam@gmail.com","account_number":"LIVE-D98EA1","ip":"::1","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0"}
+{"level":"info","type":"live_user_login","timestamp":"2025-08-08T08:45:05.085Z","email":"john@example.com","account_number":"LIVE-EE6A55","ip":"::1","userAgent":"PostmanRuntime/7.45.0"}

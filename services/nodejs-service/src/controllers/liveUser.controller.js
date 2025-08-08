@@ -234,7 +234,15 @@ async function signup(req, res) {
  */
 async function login(req, res) {
   const { email, password } = req.body;
+  const ip = req.ip;
+  const { checkAndIncrementRateLimit, resetRateLimit, storeSession } = require('../utils/redisSession.util');
   try {
+    // Rate limiting: block if too many attempts
+    const isRateLimited = await checkAndIncrementRateLimit({ email, ip });
+    if (isRateLimited) {
+      return res.status(429).json({ success: false, message: 'Too many login attempts. Please try again later.' });
+    }
+
     const user = await LiveUser.findOne({ where: { email } });
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
@@ -243,16 +251,51 @@ async function login(req, res) {
     if (!valid) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
+
+    // Passed authentication: reset rate limit
+    await resetRateLimit({ email, ip });
+
     const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
+    const jwt = require('jsonwebtoken');
+    const { v4: uuidv4 } = require('uuid');
+    const sessionId = uuidv4();
     const jwtPayload = {
       user_type: user.user_type,
       mam_status: user.mam_status,
       pam_status: user.pam_status,
       sending_orders: user.sending_orders,
       group: user.group,
-      account_number: user.account_number
+      account_number: user.account_number,
+      session_id: sessionId,
+      user_id: user.id
     };
-    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '15m' });
+    // Generate access token (15 min expiry)
+    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '15m', jwtid: sessionId });
+    
+    // Generate refresh token (7 days expiry)
+    const refreshToken = jwt.sign(
+      { userId: user.id, sessionId },
+      JWT_SECRET + '_REFRESH', // Different secret for refresh tokens
+      { expiresIn: '7d' }
+    );
+
+    // Store session in Redis with refresh token
+    await storeSession(
+      user.id, 
+      sessionId, 
+      {
+        user_type: user.user_type,
+        mam_status: user.mam_status,
+        pam_status: user.pam_status,
+        sending_orders: user.sending_orders,
+        group: user.group,
+        account_number: user.account_number,
+        jwt: token,
+        user_id: user.id,
+        refresh_token: refreshToken // Store refresh token in session for reference
+      },
+      refreshToken // Pass refresh token to be stored separately
+    );
 
     // Log successful login for live users
     const { logLiveUserLogin } = require('../services/loginLogger');
@@ -267,7 +310,13 @@ async function login(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Login successful',
-      token
+      data: {
+        access_token: token,
+        refresh_token: refreshToken,
+        expires_in: 900, // 15 minutes in seconds
+        token_type: 'Bearer',
+        session_id: sessionId
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -275,4 +324,112 @@ async function login(req, res) {
 }
 
 
-module.exports = { signup, login };
+/**
+ * Refresh access token using a valid refresh token
+ */
+async function refreshToken(req, res) {
+  const { refresh_token: refreshToken } = req.body;
+  const { validateRefreshToken, deleteRefreshToken, storeSession } = require('../utils/redisSession.util');
+  
+  if (!refreshToken) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Refresh token is required' 
+    });
+  }
+
+  try {
+    // Verify the refresh token
+    const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
+    const decoded = jwt.verify(refreshToken, JWT_SECRET + '_REFRESH');
+    
+    // Check if the refresh token exists in Redis and is valid
+    const tokenData = await validateRefreshToken(refreshToken);
+    if (!tokenData || tokenData.userId !== decoded.userId || tokenData.sessionId !== decoded.sessionId) {
+      // If invalid, clean up any existing refresh token
+      await deleteRefreshToken(refreshToken);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid or expired refresh token' 
+      });
+    }
+
+    // Get user data
+    const user = await LiveUser.findByPk(decoded.userId);
+    if (!user) {
+      await deleteRefreshToken(refreshToken);
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Generate new access token
+    const sessionId = tokenData.sessionId; // Keep the same session
+    const jwtPayload = {
+      user_type: user.user_type,
+      mam_status: user.mam_status,
+      pam_status: user.pam_status,
+      sending_orders: user.sending_orders,
+      group: user.group,
+      account_number: user.account_number,
+      session_id: sessionId,
+      user_id: user.id
+    };
+    
+    const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
+      expiresIn: '15m', 
+      jwtid: sessionId 
+    });
+
+    // Generate new refresh token (rotate refresh token)
+    const newRefreshToken = jwt.sign(
+      { userId: user.id, sessionId },
+      JWT_SECRET + '_REFRESH',
+      { expiresIn: '7d' }
+    );
+
+    // Update session in Redis with new access token
+    await storeSession(
+      user.id,
+      sessionId,
+      {
+        ...jwtPayload,
+        jwt: newAccessToken,
+        refresh_token: newRefreshToken
+      },
+      newRefreshToken
+    );
+
+    // Delete the old refresh token in a separate operation
+    await deleteRefreshToken(refreshToken);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Token refreshed successfully',
+      data: {
+        access_token: newAccessToken,
+        refresh_token: newRefreshToken,
+        expires_in: 900, // 15 minutes in seconds
+        token_type: 'Bearer',
+        session_id: sessionId
+      }
+    });
+  } catch (error) {
+    console.error('Token refresh failed:', error);
+    if (error.name === 'TokenExpiredError') {
+      // Clean up expired refresh token
+      await deleteRefreshToken(refreshToken);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Refresh token has expired' 
+      });
+    }
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to refresh token' 
+    });
+  }
+}
+
+module.exports = { signup, login, refreshToken };

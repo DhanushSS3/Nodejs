@@ -118,4 +118,61 @@ router.post('/login',
   require('../controllers/liveUser.controller').login
 );
 
-module.exports = router; 
+/**
+ * @swagger
+ * /api/live-users/refresh-token:
+ *   post:
+ *     summary: Refresh access token using a refresh token
+ *     tags: [Live Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - refresh_token
+ *             properties:
+ *               refresh_token:
+ *                 type: string
+ *                 description: Valid refresh token received during login
+ *     responses:
+ *       200:
+ *         description: New access and refresh tokens
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     access_token:
+ *                       type: string
+ *                     refresh_token:
+ *                       type: string
+ *                     expires_in:
+ *                       type: number
+ *                     token_type:
+ *                       type: string
+ *                     session_id:
+ *                       type: string
+ *       400:
+ *         description: Missing refresh token
+ *       401:
+ *         description: Invalid or expired refresh token
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/refresh-token',
+  [
+    body('refresh_token').notEmpty().withMessage('Refresh token is required')
+  ],
+  require('../controllers/liveUser.controller').refreshToken
+);
+
+module.exports = router;
