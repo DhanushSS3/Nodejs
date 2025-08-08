@@ -69,10 +69,11 @@ const SESSION_TTL = 900; // 15 min
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 // --- OTP MANAGEMENT ---
-const OTP_TTL = 300; // 5 minutes in seconds
+const OTP_EXPIRATION = 300; // 5 minutes in seconds
 const OTP_MAX_TRIES = 5;
-const OTP_RATE_LIMIT_MAX = 5;
 const OTP_RATE_LIMIT_WINDOW = 3600; // 1 hour in seconds
+const OTP_RATE_LIMIT_MAX_REQUESTS = 5;
+const RESET_TOKEN_EXPIRATION = 600; // 10 minutes in seconds
 
 function getOTPKey(email, userType) {
   const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
@@ -246,6 +247,109 @@ async function deleteRefreshToken(refreshToken) {
   }
 }
 
+// --- Password Reset Functions ---
+
+function getPasswordResetOTPKey(email, userType) {
+  const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+  return `{otp:reset:${hash}}:${userType}:otp`;
+}
+
+function getPasswordResetRateLimitKey(email, userType) {
+  const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+  return `{otp:reset:${hash}}:${userType}:otp_limit`;
+}
+
+async function storePasswordResetOTP(email, otp, userType) {
+  const key = getPasswordResetOTPKey(email, userType);
+  try {
+    const pipeline = redisCluster.pipeline();
+    pipeline.hset(key, 'otp', otp, 'tries', 0);
+    pipeline.expire(key, OTP_EXPIRATION);
+    await pipeline.exec();
+  } catch (error) {
+    console.error('Failed to store password reset OTP:', error);
+    throw error; // Re-throw to be handled by the controller
+  }
+}
+
+async function getPasswordResetOTP(email, userType) {
+  const key = getPasswordResetOTPKey(email, userType);
+  try {
+    return await redisCluster.hgetall(key);
+  } catch (error) {
+    console.error('Failed to get password reset OTP:', error);
+    return null; // Fail gracefully
+  }
+}
+
+async function incrementPasswordResetOTPTries(email, userType) {
+  const key = getPasswordResetOTPKey(email, userType);
+  try {
+    return await redisCluster.hincrby(key, 'tries', 1);
+  } catch (error) {
+    console.error('Failed to increment password reset OTP tries:', error);
+    return OTP_MAX_TRIES + 1; // Fail closed
+  }
+}
+
+async function deletePasswordResetOTP(email, userType) {
+  const key = getPasswordResetOTPKey(email, userType);
+  try {
+    await redisCluster.del(key);
+  } catch (error) {
+    console.error('Failed to delete password reset OTP:', error);
+    // Do not re-throw, continue execution
+  }
+}
+
+async function checkPasswordResetOTPRateLimit(email, userType) {
+  const key = getPasswordResetRateLimitKey(email, userType);
+  try {
+    const currentRequests = await redisCluster.incr(key);
+    if (currentRequests === 1) {
+      await redisCluster.expire(key, OTP_RATE_LIMIT_WINDOW);
+    }
+    return currentRequests > OTP_RATE_LIMIT_MAX_REQUESTS;
+  } catch (error) {
+    console.error('Failed to check password reset OTP rate limit:', error);
+    return true; // Fail closed
+  }
+}
+
+function getResetTokenKey(email, userType) {
+  const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+  return `reset_token:${userType}:${hash}`;
+}
+
+async function storeResetToken(email, userType, token) {
+  const key = getResetTokenKey(email, userType);
+  try {
+    await redisCluster.set(key, token, 'EX', RESET_TOKEN_EXPIRATION);
+  } catch (error) {
+    console.error('Failed to store reset token:', error);
+    throw error;
+  }
+}
+
+async function getResetToken(email, userType) {
+  const key = getResetTokenKey(email, userType);
+  try {
+    return await redisCluster.get(key);
+  } catch (error) {
+    console.error('Failed to get reset token:', error);
+    return null;
+  }
+}
+
+async function deleteResetToken(email, userType) {
+  const key = getResetTokenKey(email, userType);
+  try {
+    await redisCluster.del(key);
+  } catch (error) {
+    console.error('Failed to delete reset token:', error);
+  }
+}
+
 module.exports = {
   // OTP Functions
   storeOTP,
@@ -254,6 +358,15 @@ module.exports = {
   deleteOTP,
   checkOTPRateLimit,
   OTP_MAX_TRIES,
+  // Password Reset
+  storePasswordResetOTP,
+  getPasswordResetOTP,
+  incrementPasswordResetOTPTries,
+  deletePasswordResetOTP,
+  checkPasswordResetOTPRateLimit,
+  storeResetToken,
+  getResetToken,
+  deleteResetToken,
   checkAndIncrementRateLimit,
   resetRateLimit,
   storeSession,
