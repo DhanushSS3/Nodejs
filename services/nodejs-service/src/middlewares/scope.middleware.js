@@ -25,4 +25,52 @@ const applyScope = (req, res, next) => {
   next();
 };
 
-module.exports = { applyScope };
+// Enhanced scope filtering that automatically applies country filtering to queries
+const autoApplyCountryFilter = (req, res, next) => {
+  const { admin } = req;
+
+  // Skip filtering for superadmin (country_id = null)
+  if (!admin || admin.role === 'superadmin' || !admin.country_id) {
+    return next();
+  }
+
+  // Store the country filter for use in controllers
+  req.countryFilter = { country_id: admin.country_id };
+  
+  // Add helper function to apply country filter to Sequelize queries
+  req.applyCountryFilter = (whereClause = {}) => {
+    return {
+      ...whereClause,
+      country_id: admin.country_id
+    };
+  };
+
+  next();
+};
+
+// Middleware to ensure country-scoped admins can only access their country's data
+const enforceCountryScope = (req, res, next) => {
+  const { admin } = req;
+  const { country_id } = req.params;
+
+  // Superadmin can access any country
+  if (!admin || admin.role === 'superadmin') {
+    return next();
+  }
+
+  // If country_id is provided in params, ensure it matches admin's country
+  if (country_id && parseInt(country_id) !== admin.country_id) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Access denied: You can only access data from your assigned country.' 
+    });
+  }
+
+  next();
+};
+
+module.exports = { 
+  applyScope, 
+  autoApplyCountryFilter,
+  enforceCountryScope 
+};

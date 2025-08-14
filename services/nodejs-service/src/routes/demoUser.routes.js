@@ -1,7 +1,7 @@
 const express = require('express');
 const { signup, login, refreshToken, logout } = require('../controllers/demoUser.controller');
 const { body } = require('express-validator');
-const authenticateJWT = require('../middlewares/auth.middleware');
+const { authenticateJWT } = require('../middlewares/auth.middleware');
 const upload = require('../middlewares/upload.middleware');
 
 const router = express.Router();

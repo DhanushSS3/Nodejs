@@ -24,10 +24,6 @@ const redisCluster = new Redis.Cluster(nodes, {
   },
 });
 
-redisCluster.on("connect", () => {
-  console.log("✅ Redis Cluster connected (connection initiated)");
-});
-
 redisCluster.on("error", (err) => {
   console.error("❌ Redis Cluster error:", err);
 });

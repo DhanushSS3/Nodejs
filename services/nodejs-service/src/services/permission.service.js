@@ -1,5 +1,5 @@
 const { Admin, Role, Permission } = require('../models');
-const redisClient = require('../config/redis');
+const { redisCluster } = require('../../config/redis');
 
 const CACHE_KEY_PREFIX = 'permissions:';
 const CACHE_EXPIRATION_SECONDS = 3600; // 1 hour
@@ -14,7 +14,7 @@ class PermissionService {
     const cacheKey = `${CACHE_KEY_PREFIX}${adminId}`;
 
     // 1. Try to get from cache
-    const cachedPermissions = await redisClient.get(cacheKey);
+    const cachedPermissions = await redisCluster.get(cacheKey);
     if (cachedPermissions) {
       return JSON.parse(cachedPermissions);
     }
@@ -40,7 +40,7 @@ class PermissionService {
     const permissions = admin.role.permissions.map(p => p.name);
 
     // 3. Store in cache for future requests
-    await redisClient.set(cacheKey, JSON.stringify(permissions), 'EX', CACHE_EXPIRATION_SECONDS);
+    await redisCluster.set(cacheKey, JSON.stringify(permissions), 'EX', CACHE_EXPIRATION_SECONDS);
 
     return permissions;
   }
@@ -51,7 +51,7 @@ class PermissionService {
    */
   async invalidatePermissionsForAdmin(adminId) {
     const cacheKey = `${CACHE_KEY_PREFIX}${adminId}`;
-    await redisClient.del(cacheKey);
+    await redisCluster.del(cacheKey);
   }
 }
 

@@ -2,6 +2,9 @@ const express = require('express');
 const liveUserRoutes = require('./routes/liveUser.routes');
 const demoUserRoutes = require('./routes/demoUser.routes');
 const authRoutes = require('./routes/auth.routes');
+const adminAuthRoutes = require('./routes/admin.auth.routes');
+const adminManagementRoutes = require('./routes/admin.management.routes');
+const adminUserManagementRoutes = require('./routes/admin.user.management.routes');
 const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');
@@ -58,6 +61,9 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/live-users', liveUserRoutes);
 app.use('/api/demo-users', demoUserRoutes);
+app.use('/api/admin/auth', adminAuthRoutes);
+app.use('/api/admin/management', adminManagementRoutes);
+app.use('/api/admin/users', adminUserManagementRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // 404 handler

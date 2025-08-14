@@ -1,5 +1,5 @@
 const { Admin, Role, Permission } = require('../models');
-const redisClient = require('../config/redis');
+const { redisCluster } = require('../../config/redis');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -23,14 +23,13 @@ class AdminAuthService {
     const emailService = require('./email.service');
 
     const otpKey = `otp:${admin.id}`;
-    await redisClient.set(otpKey, otp, 'EX', 300); // OTP valid for 5 minutes
+    await redisCluster.set(otpKey, otp, 'EX', 300); // OTP valid for 5 minutes
 
     try {
       await emailService.sendOTPEmail(admin.email, otp, 'Your Admin Login OTP');
     } catch (error) {
       console.error(`Failed to send OTP email to ${admin.email}`, error);
-      // Depending on policy, you might want to throw an error here
-      // For now, we'll proceed, but in production this should be handled
+      throw new Error('Could not send verification email.');
     }
 
     return { adminId: admin.id };
@@ -38,14 +37,14 @@ class AdminAuthService {
 
   async verifyOtp(adminId, otp) {
     const otpKey = `otp:${adminId}`;
-    const storedOtp = await redisClient.get(otpKey);
+    const storedOtp = await redisCluster.get(otpKey);
 
     if (!storedOtp || storedOtp !== otp) {
       throw new Error('Invalid or expired OTP');
     }
 
     // OTP is correct, delete it to prevent reuse
-    await redisClient.del(otpKey);
+    await redisCluster.del(otpKey);
 
     const admin = await Admin.findByPk(adminId);
     if (!admin) {
@@ -72,6 +71,11 @@ class AdminAuthService {
     });
 
     const role = adminWithPermissions.Role.name;
+    const permissions = adminWithPermissions.Role.Permissions.map(p => p.name);
+
+    // Cache permissions in Redis for faster middleware access
+    const permissionsCacheKey = `permissions:${admin.id}`;
+    await redisCluster.set(permissionsCacheKey, JSON.stringify(permissions), 'EX', 60 * 60); // Cache for 1 hour
 
     const jti = require('uuid').v4();
     const accessTokenKey = `jti:${admin.id}:${jti}`;
@@ -81,6 +85,7 @@ class AdminAuthService {
     const accessTokenPayload = {
       sub: admin.id,
       role,
+      permissions,
       country_id: admin.country_id,
       jti,
     };
@@ -90,11 +95,11 @@ class AdminAuthService {
       jti, // Link refresh token to the access token's JTI
     };
 
-    const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: accessTokenTTL });
-    const refreshToken = jwt.sign(refreshTokenPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: refreshTokenTTL });
+    const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: `${accessTokenTTL}s` });
+    const refreshToken = jwt.sign(refreshTokenPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: `${refreshTokenTTL}s` });
 
     // Store JTI in Redis to enable revocation (logout)
-    await redisClient.set(accessTokenKey, 'valid', 'EX', refreshTokenTTL); // Use longer expiry for revocation check
+    await redisCluster.set(accessTokenKey, 'valid', 'EX', refreshTokenTTL); // Use longer expiry for revocation check
 
     return { accessToken, refreshToken };
   }
@@ -107,14 +112,14 @@ class AdminAuthService {
 
       // 2. Check if the original JTI is still valid in Redis
       const jtiKey = `jti:${sub}:${jti}`;
-      const isValid = await redisClient.get(jtiKey);
+      const isValid = await redisCluster.get(jtiKey);
 
       if (!isValid) {
         throw new Error('Refresh token is invalid or has been revoked.');
       }
 
       // 3. Revoke the old JTI to prevent reuse (token rotation)
-      await redisClient.del(jtiKey);
+      await redisCluster.del(jtiKey);
 
       // 4. Issue new tokens
       const admin = await Admin.findByPk(sub);
@@ -131,7 +136,25 @@ class AdminAuthService {
 
   async logout(adminId, jti) {
     const jtiKey = `jti:${adminId}:${jti}`;
-    await redisClient.del(jtiKey);
+    const permissionsCacheKey = `permissions:${adminId}`;
+    await Promise.all([
+      redisCluster.del(jtiKey),
+      redisCluster.del(permissionsCacheKey)
+    ]);
+  }
+
+  async invalidatePermissionsCache(adminId = null) {
+    if (adminId) {
+      // Invalidate specific admin's permissions cache
+      const permissionsCacheKey = `permissions:${adminId}`;
+      await redisCluster.del(permissionsCacheKey);
+    } else {
+      // Invalidate all permissions caches (when roles/permissions are updated globally)
+      const keys = await redisCluster.keys('permissions:*');
+      if (keys.length > 0) {
+        await redisCluster.del(keys);
+      }
+    }
   }
 }
 
