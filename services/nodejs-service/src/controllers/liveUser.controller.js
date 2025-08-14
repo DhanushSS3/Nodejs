@@ -232,7 +232,7 @@ async function signup(req, res) {
 /**
  * Live User Login - returns JWT on success
  */
-async function login(req, res) {
+async function login(req, res, next) {
   const { email, password } = req.body;
   const ip = req.ip;
   const { checkAndIncrementRateLimit, resetRateLimit, storeSession } = require('../utils/redisSession.util');
@@ -251,7 +251,6 @@ async function login(req, res) {
     if (!valid) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-
     // Passed authentication: reset rate limit
     await resetRateLimit({ email, ip, userType: 'live' });
 
@@ -319,7 +318,7 @@ async function login(req, res) {
       session_id: sessionId
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Internal server error' });
+    return next(err);
   }
 }
 

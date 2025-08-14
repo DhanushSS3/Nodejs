@@ -51,6 +51,27 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  // Database not initialized (e.g., table missing)
+  if (err.name === 'SequelizeDatabaseError') {
+    const code = err.original?.code || err.parent?.code;
+    const errno = err.original?.errno || err.parent?.errno;
+    const message = (err.original?.sqlMessage || err.parent?.sqlMessage || '').toLowerCase();
+    // MySQL/MariaDB missing table error code is ER_NO_SUCH_TABLE (1146)
+    if (code === 'ER_NO_SUCH_TABLE' || errno === 1146 || message.includes('no such table')) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not initialized. Please run migrations and seed data.'
+      });
+    }
+    // MySQL/MariaDB unknown column error code is ER_BAD_FIELD_ERROR (1054)
+    if (code === 'ER_BAD_FIELD_ERROR' || errno === 1054 || message.includes('unknown column')) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database schema mismatch. Please run the latest migrations.'
+      });
+    }
+  }
+
   // Deadlock errors (should be handled by transaction service, but just in case)
   if (err.original && err.original.code === 'ER_LOCK_DEADLOCK') {
     return res.status(503).json({

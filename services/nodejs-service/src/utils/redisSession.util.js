@@ -2,10 +2,15 @@ const crypto = require('crypto');
 const { redisCluster } = require('../../config/redis');
 
 // --- RATE LIMITING ---
-const RATE_LIMIT_ATTEMPTS = 5;
+const RATE_LIMIT_ATTEMPTS = 10;
 const RATE_LIMIT_WINDOW = 900; // 15 min in seconds
 
 function getEmailKey(email, userType) {
+  if (!email) {
+    // Handle cases where email is null or undefined
+    const invalidEmailHash = crypto.createHash('sha256').update('invalid_email').digest('hex');
+    return `{${invalidEmailHash}}:${userType}:login:attempts:email`;
+  }
   const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
   // Using email hash as the hash tag to ensure same slot for all user's keys
   return `{${hash}}:${userType}:login:attempts:email`;
@@ -90,7 +95,7 @@ async function storeOTP(email, otp, userType) {
   try {
     const pipeline = redisCluster.pipeline();
     pipeline.hset(key, 'otp', otp, 'tries', 0);
-    pipeline.expire(key, OTP_TTL);
+    pipeline.expire(key, OTP_EXPIRATION);
     await pipeline.exec();
     return true;
   } catch (error) {

@@ -2,6 +2,7 @@ const express = require('express');
 const { signup } = require('../controllers/liveUser.controller');
 const { body } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
+const { handleValidationErrors } = require('../middlewares/error.middleware');
 
 const router = express.Router();
 
@@ -115,6 +116,7 @@ router.post('/login',
     body('email').isEmail(),
     body('password').isLength({ min: 6 })
   ],
+  handleValidationErrors,
   require('../controllers/liveUser.controller').login
 );
 
@@ -172,6 +174,7 @@ router.post('/refresh-token',
   [
     body('refresh_token').notEmpty().withMessage('Refresh token is required')
   ],
+  handleValidationErrors,
   require('../controllers/liveUser.controller').refreshToken
 );
 
