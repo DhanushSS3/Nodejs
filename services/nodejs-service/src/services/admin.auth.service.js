@@ -63,15 +63,32 @@ class AdminAuthService {
     const adminWithPermissions = await Admin.findByPk(admin.id, {
       include: {
         model: Role,
+        as: 'role',
         include: {
           model: Permission,
+          as: 'permissions',
           through: { attributes: [] }, // Don't include the join table attributes
         },
       },
     });
 
-    const role = adminWithPermissions.Role.name;
-    const permissions = adminWithPermissions.Role.Permissions.map(p => p.name);
+    // Debug log to inspect what is actually returned
+    if (!adminWithPermissions) {
+      console.error('ERROR: adminWithPermissions is null or undefined');
+      throw new Error('Admin not found or DB error');
+    }
+    if (!adminWithPermissions.role) {
+      console.error('ERROR: adminWithPermissions.Role is missing:', JSON.stringify(adminWithPermissions, null, 2));
+      throw new Error('Role is not associated to Admin!');
+    }
+    if (!adminWithPermissions.role.permissions || !Array.isArray(adminWithPermissions.role.permissions) || adminWithPermissions.role.permissions.length === 0) {
+      console.error('ERROR: adminWithPermissions.Role.Permissions is missing or empty:', JSON.stringify(adminWithPermissions, null, 2));
+      throw new Error('PERM_DEBUG: Permission is not associated to Role!');
+    }
+    // console.log('DEBUG adminWithPermissions:', JSON.stringify(adminWithPermissions, null, 2));
+
+    const role = adminWithPermissions.role.name;
+    const permissions = adminWithPermissions.role.permissions.map(p => p.name);
 
     // Cache permissions in Redis for faster middleware access
     const permissionsCacheKey = `permissions:${admin.id}`;
@@ -96,8 +113,11 @@ class AdminAuthService {
     };
 
     const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: `${accessTokenTTL}s` });
+    // console.log('Access Token:', accessToken);
     const refreshToken = jwt.sign(refreshTokenPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: `${refreshTokenTTL}s` });
-
+    // console.log('Refresh Token:', refreshToken);
+    // console.log('JWT Secret:', process.env.JWT_SECRET);
+    // console.log('JWT Refresh Secret:', process.env.JWT_REFRESH_SECRET);
     // Store JTI in Redis to enable revocation (logout)
     await redisCluster.set(accessTokenKey, 'valid', 'EX', refreshTokenTTL); // Use longer expiry for revocation check
 

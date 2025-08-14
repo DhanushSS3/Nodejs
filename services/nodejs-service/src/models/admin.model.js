@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 const Role = require('./role.model');
+const Permission = require('./permission.model');
+const RolePermission = require('./rolePermission.model');
 const bcrypt = require('bcryptjs');
 
 const Admin = sequelize.define('Admin', {
@@ -68,8 +70,14 @@ const Admin = sequelize.define('Admin', {
   },
 });
 
-Admin.belongsTo(Role, { foreignKey: 'role_id' });
-Role.hasMany(Admin, { foreignKey: 'role_id' });
+// Admin.belongsTo(Role, { foreignKey: 'role_id' });
+// Role.hasMany(Admin, { foreignKey: 'role_id' });
+
+Admin.belongsTo(Role, { foreignKey: 'role_id', as: 'role' });
+Role.hasMany(Admin, { foreignKey: 'role_id', as: 'admins' });
+
+Role.belongsToMany(Permission, { through: RolePermission, foreignKey: 'role_id', as: 'permissions' });
+Permission.belongsToMany(Role, { through: RolePermission, foreignKey: 'permission_id', as: 'roles' });
 
 // Instance method to compare passwords
 Admin.prototype.isValidPassword = async function (password) {
