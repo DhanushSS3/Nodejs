@@ -674,3 +674,10 @@ $8
 test:key
 $5
 hello
+*3
+$3
+set
+$8
+test:key
+$5
+hello
