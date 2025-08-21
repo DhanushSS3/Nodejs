@@ -1,20 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const adminManagementController = require('../controllers/admin.management.controller');
-const { authenticateAdmin, requirePermissions } = require('../middlewares/auth.middleware');
+const { authenticateAdmin, requireRole } = require('../middlewares/auth.middleware');
 
 // All routes in this file are protected and require authentication
 router.use(authenticateAdmin);
 
 /**
  * @swagger
- * /api/admins:
+ * /api/admin/management:
  *   post:
  *     summary: Create a new admin
  *     tags: [Admin Management]
  *     security:
  *       - bearerAuth: []
- *     description: Only superadmins with 'admin:create' permission can create new admins.
+ *     description: Only superadmins can get admin details.
  *     requestBody:
  *       required: true
  *       content:
@@ -44,28 +44,28 @@ router.use(authenticateAdmin);
  *       403:
  *         description: Forbidden
  */
-router.post('/', requirePermissions(['admin:create']), adminManagementController.createAdmin);
+router.post('/', requireRole(['superadmin']), adminManagementController.createAdmin);
 
 /**
  * @swagger
- * /api/admins:
+ * /api/admin/management:
  *   get:
  *     summary: List all admins
  *     tags: [Admin Management]
  *     security:
  *       - bearerAuth: []
- *     description: Only superadmins with 'admin:read' permission can list admins.
+ *     description: Only superadmins can list admins.
  *     responses:
  *       200:
  *         description: List of admins
  *       403:
  *         description: Forbidden
  */
-router.get('/', requirePermissions(['admin:read']), adminManagementController.listAdmins);
+router.get('/', requireRole(['superadmin']), adminManagementController.listAdmins);
 
 /**
  * @swagger
- * /api/admins/{id}:
+ * /api/admin/management/{id}:
  *   get:
  *     summary: Get a single admin by ID
  *     tags: [Admin Management]
@@ -86,11 +86,11 @@ router.get('/', requirePermissions(['admin:read']), adminManagementController.li
  *       403:
  *         description: Forbidden
  */
-router.get('/:id', requirePermissions(['admin:read']), adminManagementController.getAdminById);
+router.get('/:id', requireRole(['superadmin']), adminManagementController.getAdminById);
 
 /**
  * @swagger
- * /api/admins/{id}:
+ * /api/admin/management/{id}:
  *   put:
  *     summary: Update an admin
  *     tags: [Admin Management]
@@ -135,11 +135,11 @@ router.get('/:id', requirePermissions(['admin:read']), adminManagementController
  *       403:
  *         description: Forbidden
  */
-router.put('/:id', requirePermissions(['admin:update']), adminManagementController.updateAdmin);
+router.put('/:id', requireRole(['superadmin']), adminManagementController.updateAdmin);
 
 /**
  * @swagger
- * /api/admins/{id}:
+ * /api/admin/management/{id}:
  *   delete:
  *     summary: Delete an admin
  *     tags: [Admin Management]
@@ -160,6 +160,6 @@ router.put('/:id', requirePermissions(['admin:update']), adminManagementControll
  *       403:
  *         description: Forbidden
  */
-router.delete('/:id', requirePermissions(['admin:delete']), adminManagementController.deleteAdmin);
+router.delete('/:id', requireRole(['superadmin']), adminManagementController.deleteAdmin);
 
 module.exports = router;

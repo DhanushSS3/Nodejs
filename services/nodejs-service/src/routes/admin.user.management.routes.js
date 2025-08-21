@@ -11,7 +11,7 @@ router.use(applyScope);
 
 /**
  * @swagger
- * /api/admin-users/live-users:
+ * /api/admin/users/live-users:
  *   get:
  *     summary: List all live users
  *     tags: [Admin User Management]
@@ -28,7 +28,7 @@ router.get('/live-users', requirePermissions(['user:read']), adminUserManagement
 
 /**
  * @swagger
- * /api/admin-users/demo-users:
+ * /api/admin/users/demo-users:
  *   get:
  *     summary: List all demo users
  *     tags: [Admin User Management]

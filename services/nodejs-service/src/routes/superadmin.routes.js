@@ -131,6 +131,7 @@ const { authenticateAdmin, requireRole } = require('../middlewares/auth.middlewa
 const { handleValidationErrors } = require('../middlewares/error.middleware');
 const { 
   createRole, 
+  createPermission,
   getAllPermissions, 
   getPermissionsForDropdown,
   getRolesWithPermissions 
@@ -144,6 +145,7 @@ router.post('/roles', requireRole(['superadmin']), handleValidationErrors, creat
 router.get('/roles', requireRole(['superadmin']), getRolesWithPermissions);
 
 // Permission management routes
+router.post('/permissions', requireRole(['superadmin']), handleValidationErrors, createPermission);
 router.get('/permissions', requireRole(['superadmin']), getAllPermissions);
 router.get('/permissions/dropdown', requireRole(['superadmin']), getPermissionsForDropdown);
 

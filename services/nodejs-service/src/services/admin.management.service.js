@@ -39,9 +39,10 @@ class AdminManagementService {
       attributes: { exclude: ['password'] }, // Exclude password from the result
       include: {
         model: Role,
+        as: 'role', // Must match the alias in the association
         attributes: ['id', 'name'], // Only include role's id and name
       },
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
     });
     return admins;
   }
@@ -51,6 +52,7 @@ class AdminManagementService {
       attributes: { exclude: ['password'] },
       include: {
         model: Role,
+        as: 'role', // Must match the alias in the association
         attributes: ['id', 'name'],
       },
     });

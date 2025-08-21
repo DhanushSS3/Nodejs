@@ -3,8 +3,17 @@ const { LiveUser, DemoUser } = require('../models'); // Import all scoped models
 const applyScope = (req, res, next) => {
   const { admin } = req;
 
-  // If there's no authenticated admin or the admin is a superadmin, do nothing.
-  if (!admin || admin.role === 'superadmin') {
+  // If there's no authenticated admin, do nothing.
+  if (!admin) {
+    return next();
+  }
+
+  // If the admin is a superadmin, provide unscoped models.
+  if (admin.role === 'superadmin') {
+    req.scopedModels = {
+      LiveUser,
+      DemoUser
+    };
     return next();
   }
 

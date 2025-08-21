@@ -7,7 +7,7 @@ class AdminUserManagementService {
    */
   async listLiveUsers(ScopedLiveUser) {
     return ScopedLiveUser.findAll({
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
     });
   }
 
@@ -17,7 +17,7 @@ class AdminUserManagementService {
    */
   async listDemoUsers(ScopedDemoUser) {
     return ScopedDemoUser.findAll({
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
     });
   }
 }

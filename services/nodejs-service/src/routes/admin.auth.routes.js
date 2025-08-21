@@ -47,9 +47,8 @@ router.post('/login', adminAuthController.login);
  *             type: object
  *             required: [email, otp]
  *             properties:
- *               email:
- *                 type: string
- *                 format: email
+ *               adminId:
+ *                 type: integer
  *               otp:
  *                 type: string
  *                 length: 6
