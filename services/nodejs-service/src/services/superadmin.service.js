@@ -161,19 +161,51 @@ class SuperadminService {
 
   // Role and Permission Management
   async createRole(roleData) {
-    const { name, description } = roleData;
+    const { name, description, permission_ids = [] } = roleData;
     
     const existingRole = await Role.findOne({ where: { name } });
     if (existingRole) {
       throw new Error('Role with this name already exists');
     }
 
+    // Validate permission IDs if provided
+    if (permission_ids.length > 0) {
+      const validPermissions = await Permission.findAll({
+        where: { id: permission_ids }
+      });
+      
+      if (validPermissions.length !== permission_ids.length) {
+        const validIds = validPermissions.map(p => p.id);
+        const invalidIds = permission_ids.filter(id => !validIds.includes(id));
+        throw new Error(`Invalid permission IDs: ${invalidIds.join(', ')}`);
+      }
+    }
+
+    // Create role and assign permissions atomically
     const role = await Role.create({ name, description });
+    
+    // Bulk assign permissions if provided
+    if (permission_ids.length > 0) {
+      const rolePermissions = permission_ids.map(permissionId => ({
+        role_id: role.id,
+        permission_id: permissionId
+      }));
+      
+      await RolePermission.bulkCreate(rolePermissions);
+    }
     
     // Invalidate all permissions caches since roles changed
     await adminAuthService.invalidatePermissionsCache();
     
-    return role;
+    // Return role with permissions
+    const roleWithPermissions = await Role.findByPk(role.id, {
+      include: {
+        model: Permission,
+        through: { attributes: [] }
+      }
+    });
+    
+    return roleWithPermissions;
   }
 
   async createPermission(permissionData) {
@@ -241,6 +273,35 @@ class SuperadminService {
 
   async getAllPermissions() {
     return await Permission.findAll();
+  }
+
+  // Get permissions grouped by category for dropdown UI
+  async getPermissionsForDropdown() {
+    const permissions = await Permission.findAll({
+      order: [['name', 'ASC']]
+    });
+
+    // Group permissions by category (extract from permission name prefix)
+    const grouped = permissions.reduce((acc, permission) => {
+      const parts = permission.name.split(':');
+      const category = parts.length > 1 ? parts[0] : 'general';
+      const displayName = parts.length > 1 ? parts[1] : permission.name;
+      
+      if (!acc[category]) {
+        acc[category] = [];
+      }
+      
+      acc[category].push({
+        id: permission.id,
+        name: permission.name,
+        displayName: displayName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        description: permission.description
+      });
+      
+      return acc;
+    }, {});
+
+    return grouped;
   }
 }
 

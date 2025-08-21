@@ -197,23 +197,23 @@ class SuperadminController {
   // Role Management
   async createRole(req, res) {
     try {
-      const { name, description } = req.body;
+      const { name, description, permission_ids } = req.body;
       const { admin } = req;
 
-      const role = await superadminService.createRole({ name, description });
+      const role = await superadminService.createRole({ name, description, permission_ids });
 
       // Create audit log
       await createAuditLog(
         admin.id,
         'ROLE_CREATE',
         req.ip,
-        { role_name: name, description },
+        { role_name: name, description, permission_count: permission_ids?.length || 0 },
         'SUCCESS'
       );
 
       res.status(201).json({
         success: true,
-        message: 'Role created successfully',
+        message: 'Role created successfully with permissions',
         data: role
       });
     } catch (error) {
@@ -374,6 +374,24 @@ class SuperadminController {
         success: true,
         message: 'Permissions retrieved successfully',
         data: permissions
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Get permissions grouped for dropdown UI
+  async getPermissionsForDropdown(req, res) {
+    try {
+      const groupedPermissions = await superadminService.getPermissionsForDropdown();
+
+      res.status(200).json({
+        success: true,
+        message: 'Permissions for dropdown retrieved successfully',
+        data: groupedPermissions
       });
     } catch (error) {
       res.status(500).json({
