@@ -2,6 +2,7 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
 const DemoUser = sequelize.define('DemoUser', {
+  country_id: { type: DataTypes.INTEGER, allowNull: true },
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   name: DataTypes.STRING,
   email: { type: DataTypes.STRING, unique: true },
@@ -31,7 +32,14 @@ const DemoUser = sequelize.define('DemoUser', {
     { fields: ['email'] },
     { fields: ['phone_number'] },
     { fields: ['account_number'] }
-  ]
+  ],
+  scopes: {
+    countryScoped(countryId) {
+      return {
+        where: { country_id: countryId }
+      };
+    }
+  }
 });
 
 module.exports = DemoUser;

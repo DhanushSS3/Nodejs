@@ -94,6 +94,22 @@ async function signup(req, res) {
       // Hash password
       const hashedPassword = await hashPassword(password);
 
+      // Lookup country_id from countries table (case-insensitive)
+      const Country = require('../models/country.model');
+      let country_id = null;
+      if (country) {
+        const Sequelize = require('sequelize');
+        const countryRecord = await Country.findOne({
+          where: Sequelize.where(
+            Sequelize.fn('LOWER', Sequelize.col('name')),
+            country.toLowerCase()
+          ),
+          transaction
+        });
+        if (countryRecord) {
+          country_id = countryRecord.id;
+        }
+      }
       // Create user
       const user = await DemoUser.create({
         name,
@@ -102,7 +118,8 @@ async function signup(req, res) {
         password: hashedPassword,
         city,
         state,
-        country,
+        country, // keep string
+        country_id, // map to id
         pincode,
         security_question,
         security_answer,
