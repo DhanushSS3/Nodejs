@@ -23,7 +23,6 @@ const applyScope = (req, res, next) => {
     // This case should ideally not happen for non-superadmins, but as a safeguard:
     return res.status(403).json({ message: 'Forbidden: Your role requires a country assignment.' });
   }
-
   // Apply scope to all relevant models
   req.scopedModels = {
     LiveUser: LiveUser.scope({ method: ['countryScoped', countryId] }),
