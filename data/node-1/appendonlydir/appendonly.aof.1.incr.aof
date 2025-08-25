@@ -615,3 +615,8 @@ $3
 del
 $5
 otp:2
+*2
+$3
+DEL
+$13
+permissions:1
