@@ -39,32 +39,77 @@ class AdminManagementService {
 
   async listAdmins() {
     const admins = await Admin.findAll({
-      attributes: { exclude: ['password'] }, // Exclude password from the result
-      include: {
-        model: Role,
-        as: 'role', // Must match the alias in the association
-        attributes: ['id', 'name'], // Only include role's id and name
-      },
+      attributes: { exclude: [] }, // Include all fields including password
+      include: [
+        {
+          model: Role,
+          as: 'role',
+          attributes: ['name'],
+        },
+        {
+          model: Country,
+          as: 'country',
+          attributes: ['name'],
+          required: false
+        }
+      ],
       order: [['created_at', 'DESC']],
     });
-    return admins;
+
+    // Format the response to replace IDs with names
+    return admins.map(admin => {
+      const adminData = admin.get({ plain: true });
+      
+      // Replace role_id with role_name
+      adminData.role_name = adminData.role ? adminData.role.name : null;
+      delete adminData.role_id;
+      delete adminData.role;
+      
+      // Replace country_id with country_name
+      adminData.country_name = adminData.country ? adminData.country.name : null;
+      delete adminData.country_id;
+      delete adminData.country;
+      
+      return adminData;
+    });
   }
 
   async getAdminById(adminId) {
     const admin = await Admin.findByPk(adminId, {
-      attributes: { exclude: ['password'] },
-      include: {
-        model: Role,
-        as: 'role', // Must match the alias in the association
-        attributes: ['id', 'name'],
-      },
+      attributes: { exclude: [] }, // Include all fields including password
+      include: [
+        {
+          model: Role,
+          as: 'role',
+          attributes: ['name'],
+        },
+        {
+          model: Country,
+          as: 'country',
+          attributes: ['name'],
+          required: false
+        }
+      ],
     });
 
     if (!admin) {
       throw new Error('Admin not found');
     }
 
-    return admin;
+    // Format the response to replace IDs with names
+    const adminData = admin.get({ plain: true });
+    
+    // Replace role_id with role_name
+    adminData.role_name = adminData.role ? adminData.role.name : null;
+    delete adminData.role_id;
+    delete adminData.role;
+    
+    // Replace country_id with country_name
+    adminData.country_name = adminData.country ? adminData.country.name : null;
+    delete adminData.country_id;
+    delete adminData.country;
+    
+    return adminData;
   }
 
   async updateAdmin(adminId, updateData) {

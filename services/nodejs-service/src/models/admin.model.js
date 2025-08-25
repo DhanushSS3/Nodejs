@@ -3,6 +3,7 @@ const sequelize = require('../config/db');
 const Role = require('./role.model');
 const Permission = require('./permission.model');
 const RolePermission = require('./rolePermission.model');
+const Country = require('./country.model');
 const bcrypt = require('bcryptjs');
 
 const Admin = sequelize.define('Admin', {
@@ -75,6 +76,9 @@ const Admin = sequelize.define('Admin', {
 
 Admin.belongsTo(Role, { foreignKey: 'role_id', as: 'role' });
 Role.hasMany(Admin, { foreignKey: 'role_id', as: 'admins' });
+
+Admin.belongsTo(Country, { foreignKey: 'country_id', as: 'country' });
+Country.hasMany(Admin, { foreignKey: 'country_id', as: 'admins' });
 
 Role.belongsToMany(Permission, { through: RolePermission, foreignKey: 'role_id', as: 'permissions' });
 Permission.belongsToMany(Role, { through: RolePermission, foreignKey: 'permission_id', as: 'roles' });
