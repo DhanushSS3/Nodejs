@@ -4,6 +4,7 @@ require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 const app = require('./src/app');
 const sequelize = require('./src/config/db');
 const { redisCluster, redisReadyPromise } = require('./config/redis');
+const startupCacheService = require('./src/services/startup.cache.service');
 
 const PORT = process.env.PORT || 3000;
 
@@ -28,12 +29,22 @@ const PORT = process.env.PORT || 3000;
       console.error("❌ Redis Cluster command error:", redisErr);
     }
 
+    // 3. Initialize cache services
+    try {
+      console.log("Initializing cache services...");
+      await startupCacheService.initialize();
+      console.log("✅ Cache services initialized successfully");
+    } catch (cacheErr) {
+      console.error("❌ Cache initialization failed:", cacheErr);
+      // Continue startup even if cache fails - it can be initialized later
+    }
+
     app.use((err, req, res, next) => {
       console.error('GLOBAL ERROR HANDLER:', err);
       res.status(err.status || 500).json({ message: err.message });
     });
     
-    // 3. Start server
+    // 4. Start server
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });

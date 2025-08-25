@@ -41,6 +41,10 @@ const LiveUser = sequelize.define('LiveUser', {
   pam_id: DataTypes.INTEGER,
   pam_status: { type: DataTypes.INTEGER, defaultValue: 0 },
   pam_alloted_time: DataTypes.DATE,
+  copy_trading_wallet: { type: DataTypes.DECIMAL, defaultValue: 0 },
+  copytrader_id: DataTypes.INTEGER,
+  copytrading_status: { type: DataTypes.INTEGER, defaultValue: 0 },
+  copytrading_alloted_time: DataTypes.DATE,
   sending_orders: { type: DataTypes.STRING, allowNull: true },
 }, {
   tableName: 'live_users',

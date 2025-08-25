@@ -9,6 +9,7 @@ const logger = require('../services/logger.service');
 const { IdempotencyService } = require('../services/idempotency.service');
 const jwt = require('jsonwebtoken');
 const { comparePassword } = require('../services/password.service');
+const redisUserCache = require('../services/redis.user.cache.service');
 
 /**
  * Live User Signup with transaction handling and deadlock prevention
@@ -181,6 +182,35 @@ async function signup(req, res) {
         bank_account_number: user.bank_account_number,
         group: user.group
       });
+
+      // Add user to Redis cache after successful creation
+      try {
+        const userData = {
+          id: user.id,
+          user_type: 'live',
+          wallet_balance: parseFloat(user.wallet_balance) || 0,
+          leverage: user.leverage || 0,
+          margin: parseFloat(user.margin) || 0,
+          account_number: user.account_number,
+          group: user.group,
+          status: user.status,
+          is_active: user.is_active,
+          country_id: user.country_id,
+          mam_id: user.mam_id,
+          mam_status: user.mam_status,
+          pam_id: user.pam_id,
+          pam_status: user.pam_status,
+          copy_trading_wallet: parseFloat(user.copy_trading_wallet) || 0,
+          copytrader_id: user.copytrader_id,
+          copytrading_status: user.copytrading_status,
+          copytrading_alloted_time: user.copytrading_alloted_time ? user.copytrading_alloted_time.toISOString() : null
+        };
+        await redisUserCache.updateUser('live', user.id, userData);
+        logger.debug(`Added new live user ${user.id} to Redis cache`);
+      } catch (cacheError) {
+        logger.error('Failed to add new live user to Redis cache:', cacheError);
+        // Don't fail the signup if cache update fails
+      }
 
       return {
         success: true,

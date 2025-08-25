@@ -9,6 +9,7 @@ const { IdempotencyService } = require('../services/idempotency.service');
 const { comparePassword } = require('../services/password.service');
 const jwt = require('jsonwebtoken');
 const { logDemoUserLogin } = require('../services/loginLogger');
+const redisUserCache = require('../services/redis.user.cache.service');
 
 /**
  * Demo User Signup with transaction handling and deadlock prevention
@@ -135,6 +136,27 @@ async function signup(req, res) {
         account_number: user.account_number,
         email: user.email
       });
+
+      // Add user to Redis cache after successful creation
+      try {
+        const userData = {
+          id: user.id,
+          user_type: 'demo',
+          wallet_balance: parseFloat(user.wallet_balance) || 0,
+          leverage: user.leverage || 0,
+          margin: parseFloat(user.margin) || 0,
+          account_number: user.account_number,
+          group: user.group,
+          status: user.status,
+          is_active: user.is_active,
+          country_id: user.country_id
+        };
+        await redisUserCache.updateUser('demo', user.id, userData);
+        logger.debug(`Added new demo user ${user.id} to Redis cache`);
+      } catch (cacheError) {
+        logger.error('Failed to add new demo user to Redis cache:', cacheError);
+        // Don't fail the signup if cache update fails
+      }
 
       return {
         success: true,

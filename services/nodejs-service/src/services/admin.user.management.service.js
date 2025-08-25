@@ -1,6 +1,7 @@
 const { LiveUser, DemoUser } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('./logger.service');
+const redisUserCache = require('./redis.user.cache.service');
 
 class AdminUserManagementService {
   /**
@@ -72,6 +73,14 @@ class AdminUserManagementService {
 
       // Update the user
       await user.update(sanitizedData);
+
+      // Extract cacheable fields for Redis update
+      const cacheableFields = this.extractCacheableFields(sanitizedData, 'live');
+      
+      // Publish update to Redis Pub/Sub for real-time cache sync
+      if (Object.keys(cacheableFields).length > 0) {
+        await redisUserCache.publishUserUpdate('live', userId, cacheableFields);
+      }
 
       // Log the update operation
       logger.info('Live user updated by admin', {
@@ -147,6 +156,14 @@ class AdminUserManagementService {
       // Update the user
       await user.update(sanitizedData);
 
+      // Extract cacheable fields for Redis update
+      const cacheableFields = this.extractCacheableFields(sanitizedData, 'demo');
+      
+      // Publish update to Redis Pub/Sub for real-time cache sync
+      if (Object.keys(cacheableFields).length > 0) {
+        await redisUserCache.publishUserUpdate('demo', userId, cacheableFields);
+      }
+
       // Log the update operation
       logger.info('Demo user updated by admin', {
         operationId,
@@ -210,6 +227,46 @@ class AdminUserManagementService {
       isValid: errors.length === 0,
       errors
     };
+  }
+
+  /**
+   * Extract cacheable fields from update data based on user type
+   * @param {Object} updateData - The update data
+   * @param {string} userType - 'live' or 'demo'
+   * @returns {Object} Cacheable fields only
+   */
+  extractCacheableFields(updateData, userType) {
+    const cacheableFields = {};
+    
+    // Common fields for both user types
+    const commonFields = [
+      'wallet_balance', 'leverage', 'margin', 'account_number',
+      'group', 'status', 'is_active', 'country_id'
+    ];
+    
+    // Additional fields for live users only
+    const liveOnlyFields = [
+      'mam_id', 'mam_status', 'pam_id', 'pam_status',
+      'copy_trading_wallet', 'copytrader_id', 'copytrading_status', 'copytrading_alloted_time'
+    ];
+    
+    // Extract common fields
+    commonFields.forEach(field => {
+      if (updateData.hasOwnProperty(field)) {
+        cacheableFields[field] = updateData[field];
+      }
+    });
+    
+    // Extract live-only fields if user type is live
+    if (userType === 'live') {
+      liveOnlyFields.forEach(field => {
+        if (updateData.hasOwnProperty(field)) {
+          cacheableFields[field] = updateData[field];
+        }
+      });
+    }
+    
+    return cacheableFields;
   }
 }
 
