@@ -5,6 +5,7 @@ const Role = require('./role.model');
 const Permission = require('./permission.model');
 const RolePermission = require('./rolePermission.model');
 const AdminAuditLog = require('./adminAuditLog.model');
+const Country = require('./country.model');
 
 module.exports = {
   DemoUser,
@@ -14,4 +15,5 @@ module.exports = {
   Permission,
   RolePermission,
   AdminAuditLog,
+  Country,
 };

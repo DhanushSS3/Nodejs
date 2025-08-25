@@ -118,6 +118,69 @@ class AdminManagementController {
       res.status(400).json({ message: error.message });
     }
   }
+
+  /**
+   * Get dropdown data for admin forms (countries and roles)
+   * @route GET /api/admin/management/dropdown-data
+   */
+  async getDropdownData(req, res) {
+    try {
+      const dropdownData = await adminManagementService.getDropdownData();
+      res.status(200).json({
+        success: true,
+        message: 'Dropdown data retrieved successfully',
+        data: dropdownData
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve dropdown data',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get countries dropdown only
+   * @route GET /api/admin/management/countries
+   */
+  async getCountriesDropdown(req, res) {
+    try {
+      const countries = await adminManagementService.getCountriesDropdown();
+      res.status(200).json({
+        success: true,
+        message: 'Countries retrieved successfully',
+        data: countries
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve countries',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get roles dropdown only
+   * @route GET /api/admin/management/roles
+   */
+  async getRolesDropdown(req, res) {
+    try {
+      const roles = await adminManagementService.getRolesDropdown();
+      res.status(200).json({
+        success: true,
+        message: 'Roles retrieved successfully',
+        data: roles
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve roles',
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = new AdminManagementController();

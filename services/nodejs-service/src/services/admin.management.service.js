@@ -1,4 +1,7 @@
-const { Admin, Role } = require('../models');
+const { Admin, Role, Permission, RolePermission, Country } = require('../models');
+const { Op } = require('sequelize');
+const bcrypt = require('bcryptjs');
+const logger = require('./logger.service');
 
 class AdminManagementService {
   async createAdmin(adminData) {
@@ -112,6 +115,107 @@ class AdminManagementService {
     }
 
     await admin.destroy();
+  }
+
+  /**
+   * Get dropdown data for admin creation/editing forms
+   * Returns countries and roles with their IDs and names in a single API call
+   */
+  async getDropdownData() {
+    try {
+      // Get all countries
+      const countries = await Country.findAll({
+        attributes: ['id', 'name', 'iso_code'],
+        order: [['name', 'ASC']]
+      });
+
+      // Get all roles except superadmin (since only superadmin can create other admins)
+      const roles = await Role.findAll({
+        attributes: ['id', 'name', 'description'],
+        where: {
+          name: { [Op.ne]: 'superadmin' }
+        },
+        order: [['name', 'ASC']]
+      });
+
+      // Format countries for dropdown
+      const formattedCountries = countries.map(country => ({
+        id: country.id,
+        name: country.name,
+        iso_code: country.iso_code,
+        display_name: country.iso_code ? `${country.name} (${country.iso_code})` : country.name
+      }));
+
+      // Format roles for dropdown
+      const formattedRoles = roles.map(role => ({
+        id: role.id,
+        name: role.name,
+        description: role.description,
+        display_name: role.name.charAt(0).toUpperCase() + role.name.slice(1),
+        requires_country: role.name !== 'superadmin' // All roles except superadmin require country
+      }));
+
+      return {
+        countries: formattedCountries,
+        roles: formattedRoles,
+        metadata: {
+          total_countries: formattedCountries.length,
+          total_roles: formattedRoles.length,
+          generated_at: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      logger.error('Error fetching dropdown data:', error);
+      throw new Error('Failed to fetch dropdown data');
+    }
+  }
+
+  /**
+   * Get countries only (for specific use cases)
+   */
+  async getCountriesDropdown() {
+    try {
+      const countries = await Country.findAll({
+        attributes: ['id', 'name', 'iso_code'],
+        order: [['name', 'ASC']]
+      });
+
+      return countries.map(country => ({
+        id: country.id,
+        name: country.name,
+        iso_code: country.iso_code,
+        display_name: country.iso_code ? `${country.name} (${country.iso_code})` : country.name
+      }));
+    } catch (error) {
+      logger.error('Error fetching countries dropdown:', error);
+      throw new Error('Failed to fetch countries');
+    }
+  }
+
+  /**
+   * Get roles only (for specific use cases)
+   */
+  async getRolesDropdown() {
+    try {
+      const roles = await Role.findAll({
+        attributes: ['id', 'name', 'description'],
+        where: {
+          name: { [Op.ne]: 'superadmin' }
+        },
+        order: [['name', 'ASC']]
+      });
+
+      return roles.map(role => ({
+        id: role.id,
+        name: role.name,
+        description: role.description,
+        display_name: role.name.charAt(0).toUpperCase() + role.name.slice(1),
+        requires_country: role.name !== 'superadmin'
+      }));
+    } catch (error) {
+      logger.error('Error fetching roles dropdown:', error);
+      throw new Error('Failed to fetch roles');
+    }
   }
 }
 

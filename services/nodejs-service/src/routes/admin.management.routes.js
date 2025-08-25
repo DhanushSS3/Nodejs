@@ -65,6 +65,159 @@ router.get('/', requireRole(['superadmin']), adminManagementController.listAdmin
 
 /**
  * @swagger
+ * /api/admin/management/dropdown-data:
+ *   get:
+ *     summary: Get dropdown data for admin forms (countries and roles)
+ *     tags: [Admin Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Returns countries and roles data for admin creation/editing forms. Only superadmins can access this endpoint.
+ *     responses:
+ *       200:
+ *         description: Dropdown data retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     countries:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                           name:
+ *                             type: string
+ *                           iso_code:
+ *                             type: string
+ *                           display_name:
+ *                             type: string
+ *                     roles:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                           name:
+ *                             type: string
+ *                           description:
+ *                             type: string
+ *                           display_name:
+ *                             type: string
+ *                           requires_country:
+ *                             type: boolean
+ *                     metadata:
+ *                       type: object
+ *                       properties:
+ *                         total_countries:
+ *                           type: integer
+ *                         total_roles:
+ *                           type: integer
+ *                         generated_at:
+ *                           type: string
+ *                           format: date-time
+ *       403:
+ *         description: Forbidden
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/dropdown-data', requireRole(['superadmin']), adminManagementController.getDropdownData);
+
+/**
+ * @swagger
+ * /api/admin/management/countries:
+ *   get:
+ *     summary: Get countries dropdown only
+ *     tags: [Admin Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Returns only countries data for dropdown. Only superadmins can access this endpoint.
+ *     responses:
+ *       200:
+ *         description: Countries retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       iso_code:
+ *                         type: string
+ *                       display_name:
+ *                         type: string
+ *       403:
+ *         description: Forbidden
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/countries', requireRole(['superadmin']), adminManagementController.getCountriesDropdown);
+
+/**
+ * @swagger
+ * /api/admin/management/roles:
+ *   get:
+ *     summary: Get roles dropdown only
+ *     tags: [Admin Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Returns only roles data for dropdown. Only superadmins can access this endpoint.
+ *     responses:
+ *       200:
+ *         description: Roles retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       display_name:
+ *                         type: string
+ *                       requires_country:
+ *                         type: boolean
+ *       403:
+ *         description: Forbidden
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/roles', requireRole(['superadmin']), adminManagementController.getRolesDropdown);
+
+/**
+ * @swagger
  * /api/admin/management/{id}:
  *   get:
  *     summary: Get a single admin by ID
