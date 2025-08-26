@@ -6,6 +6,7 @@ const Permission = require('./permission.model');
 const RolePermission = require('./rolePermission.model');
 const AdminAuditLog = require('./adminAuditLog.model');
 const Country = require('./country.model');
+const CryptoPayment = require('./cryptoPayment.model');
 
 module.exports = {
   DemoUser,
@@ -16,4 +17,5 @@ module.exports = {
   RolePermission,
   AdminAuditLog,
   Country,
+  CryptoPayment,
 };
