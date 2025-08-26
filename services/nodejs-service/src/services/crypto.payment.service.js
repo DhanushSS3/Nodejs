@@ -274,7 +274,11 @@ class CryptoPaymentService {
         walletCredited: ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus)
       });
 
-      return updatedPayment;
+      // Return updated payment with previous status for logging
+      return {
+        ...updatedPayment.toJSON(),
+        previousStatus: payment.status
+      };
     } catch (error) {
       await transaction.rollback();
       logger.error('Error updating payment from webhook', { 

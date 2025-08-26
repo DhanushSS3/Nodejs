@@ -5,6 +5,12 @@
  */
 
 const rawBodyMiddleware = (req, res, next) => {
+  // Check if body is already parsed by Express
+  if (req.body !== undefined) {
+    req.rawBody = JSON.stringify(req.body);
+    return next();
+  }
+  
   let data = '';
   
   req.setEncoding('utf8');
@@ -31,6 +37,15 @@ const rawBodyMiddleware = (req, res, next) => {
   req.on('error', (error) => {
     next(error);
   });
+  
+  // Add timeout to prevent hanging
+  setTimeout(() => {
+    if (!req.rawBody) {
+      req.rawBody = '';
+      req.body = {};
+      next();
+    }
+  }, 5000); // 5 second timeout
 };
 
 module.exports = rawBodyMiddleware;

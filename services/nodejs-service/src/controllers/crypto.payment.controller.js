@@ -1,5 +1,6 @@
 const cryptoPaymentService = require('../services/crypto.payment.service');
-const logger = require('../services/logger.service');
+const logger = require('../utils/logger');
+const { cryptoPaymentLogger } = require('../services/logging');
 
 class CryptoPaymentController {
   /**
@@ -12,6 +13,14 @@ class CryptoPaymentController {
       
       // Always use authenticated user's ID for security (ignore user_id from request body)
       const userId = req.user && (req.user.sub || req.user.user_id);
+
+      // Log the deposit request from frontend
+      cryptoPaymentLogger.logDepositRequest(
+        userId, 
+        { baseAmount, baseCurrency, settledCurrency, networkSymbol, customerName, comments },
+        req.ip,
+        req.get('User-Agent')
+      );
 
       // Validate required fields
       if (!baseAmount || !baseCurrency || !settledCurrency || !networkSymbol) {
@@ -63,6 +72,13 @@ class CryptoPaymentController {
         customerName,
         comments
       });
+
+      // Log the Tylt API response
+      cryptoPaymentLogger.logTyltResponse(
+        userIdInt,
+        result.data?.merchantOrderId,
+        result.data || result
+      );
 
       res.status(200).json(result);
 
@@ -198,7 +214,18 @@ class CryptoPaymentController {
       }
 
       const isValidSignature = cryptoPaymentService.validateWebhookSignature(signature, rawBody);
+      
       if (!isValidSignature) {
+        // Log signature validation failure with expected signature for development
+        const expectedSignature = cryptoPaymentService.createSignature(process.env.TLP_API_SECRET, rawBody);
+        cryptoPaymentLogger.logSignatureValidationFailure(
+          signature,
+          expectedSignature,
+          rawBody,
+          req.ip,
+          req.get('User-Agent')
+        );
+        
         logger.error('Invalid webhook signature', { signature });
         return res.status(400).send('Invalid HMAC signature');
       }
@@ -206,6 +233,15 @@ class CryptoPaymentController {
       // Extract webhook data - handle nested data structure
       const webhookData = req.body.data || req.body;
       const { merchantOrderId } = webhookData;
+
+      // Log webhook callback
+      cryptoPaymentLogger.logWebhookCallback(
+        webhookData,
+        signature,
+        isValidSignature,
+        req.ip,
+        req.get('User-Agent')
+      );
 
       if (!merchantOrderId) {
         return res.status(400).json({
@@ -216,6 +252,14 @@ class CryptoPaymentController {
 
       // Update payment record with complete webhook data
       const updatedPayment = await cryptoPaymentService.updatePaymentFromWebhook(merchantOrderId, webhookData);
+
+      // Log payment status update
+      cryptoPaymentLogger.logPaymentUpdate(
+        merchantOrderId,
+        updatedPayment.previousStatus,
+        webhookData.status,
+        updatedPayment.id
+      );
 
       logger.info('Payment updated from webhook', { 
         merchantOrderId, 
