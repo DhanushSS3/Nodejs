@@ -7,6 +7,7 @@ const adminManagementRoutes = require('./routes/admin.management.routes');
 const adminUserManagementRoutes = require('./routes/admin.user.management.routes');
 const superadminRoutes = require('./routes/superadmin.routes');
 const cacheRoutes = require('./routes/cache.routes');
+const cryptoPaymentRoutes = require('./routes/crypto.payment.routes');
 const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');
@@ -68,6 +69,7 @@ app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/users', adminUserManagementRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/cache', cacheRoutes);
+app.use('/api/crypto-payments', cryptoPaymentRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // 404 handler
