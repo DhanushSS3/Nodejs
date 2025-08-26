@@ -1,8 +1,9 @@
 const { CryptoPayment, UserTransaction, LiveUser } = require('../models');
-const axios = require('axios');
-const crypto = require('crypto');
-const logger = require('./logger.service');
 const sequelize = require('../config/db');
+const crypto = require('crypto');
+const axios = require('axios');
+const logger = require('./logger.service');
+const redisUserCache = require('./redis.user.cache.service');
 
 class CryptoPaymentService {
   constructor() {
@@ -369,6 +370,27 @@ class CryptoPaymentService {
           webhookReceivedAt: new Date().toISOString()
         }
       }, { transaction });
+
+      // Update Redis user cache with new wallet balance
+      try {
+        await redisUserCache.updateUser('live', userId, {
+          wallet_balance: newBalance
+        });
+        logger.info('Redis user cache updated after wallet credit', {
+          userId,
+          userType,
+          previousBalance: currentBalance,
+          newBalance
+        });
+      } catch (cacheError) {
+        // Log cache update failure but don't fail the transaction
+        logger.error('Failed to update Redis cache after wallet credit', {
+          userId,
+          userType,
+          amount,
+          error: cacheError.message
+        });
+      }
 
       logger.info('User wallet credited successfully', {
         userId,
