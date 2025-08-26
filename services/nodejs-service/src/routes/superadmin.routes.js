@@ -137,6 +137,9 @@ const {
   getRolesWithPermissions 
 } = require('../controllers/superadmin.controller');
 
+// Import transaction routes
+const transactionRoutes = require('./superadmin.transaction.routes');
+
 // All endpoints in this router require the user to be authenticated as a superadmin
 router.use(authenticateAdmin);
 
@@ -148,5 +151,8 @@ router.get('/roles', requireRole(['superadmin']), getRolesWithPermissions);
 router.post('/permissions', requireRole(['superadmin']), handleValidationErrors, createPermission);
 router.get('/permissions', requireRole(['superadmin']), getAllPermissions);
 router.get('/permissions/dropdown', requireRole(['superadmin']), getPermissionsForDropdown);
+
+// Transaction management routes (all routes in transactionRoutes already have superadmin protection)
+router.use('/', transactionRoutes);
 
 module.exports = router;

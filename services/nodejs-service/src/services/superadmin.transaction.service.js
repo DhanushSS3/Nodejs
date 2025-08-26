@@ -1,0 +1,404 @@
+const { LiveUser, DemoUser, UserTransaction } = require('../models');
+const sequelize = require('../config/db');
+const { redisCluster } = require('../../config/redis');
+const logger = require('../utils/logger');
+
+class SuperadminTransactionService {
+  /**
+   * Generate unique transaction ID
+   * @returns {string} Transaction ID with TXN prefix
+   */
+  generateTransactionId() {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `TXN${timestamp}${random}`;
+  }
+
+  /**
+   * Get user model based on user type
+   * @param {string} userType - 'live' or 'demo'
+   * @returns {Object} Sequelize model
+   */
+  getUserModel(userType) {
+    return userType === 'live' ? LiveUser : DemoUser;
+  }
+
+  /**
+   * Get user balance from Redis cache
+   * @param {number} userId - User ID
+   * @param {string} userType - 'live' or 'demo'
+   * @returns {Promise<number|null>} Cached balance or null if not found
+   */
+  async getCachedBalance(userId, userType) {
+    try {
+      const cacheKey = `user_balance:${userType}:${userId}`;
+      const cachedBalance = await redisCluster.get(cacheKey);
+      return cachedBalance ? parseFloat(cachedBalance) : null;
+    } catch (error) {
+      logger.error('Redis get error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Update user balance in Redis cache
+   * @param {number} userId - User ID
+   * @param {string} userType - 'live' or 'demo'
+   * @param {number} balance - New balance
+   */
+  async updateCachedBalance(userId, userType, balance) {
+    try {
+      const cacheKey = `user_balance:${userType}:${userId}`;
+      await redisCluster.setex(cacheKey, 3600, balance.toString()); // Cache for 1 hour
+      logger.info(`Updated cached balance for ${userType} user ${userId}: ${balance}`);
+    } catch (error) {
+      logger.error('Redis set error:', error);
+      // Don't throw error for cache failures - continue with DB operation
+    }
+  }
+
+  /**
+   * Process deposit transaction for a user
+   * @param {Object} params - Deposit parameters
+   * @param {number} params.userId - User ID
+   * @param {string} params.userType - 'live' or 'demo'
+   * @param {number} params.amount - Deposit amount (must be positive)
+   * @param {number} params.adminId - Admin ID performing the operation
+   * @param {string} [params.notes] - Optional notes
+   * @param {string} [params.referenceId] - Optional external reference
+   * @returns {Promise<Object>} Transaction result
+   */
+  async processDeposit({ userId, userType, amount, adminId, notes = null, referenceId = null }) {
+    // Validate input
+    if (!userId || !userType || !amount || !adminId) {
+      throw new Error('Missing required parameters: userId, userType, amount, adminId');
+    }
+
+    if (!['live', 'demo'].includes(userType)) {
+      throw new Error('Invalid user type. Must be "live" or "demo"');
+    }
+
+    const depositAmount = parseFloat(amount);
+    if (depositAmount <= 0) {
+      throw new Error('Deposit amount must be positive');
+    }
+
+    const transaction = await sequelize.transaction();
+    
+    try {
+      // Get user model and find user
+      const UserModel = this.getUserModel(userType);
+      const user = await UserModel.findByPk(userId, { transaction });
+      
+      if (!user) {
+        throw new Error(`${userType} user not found with ID: ${userId}`);
+      }
+
+      if (!user.is_active) {
+        throw new Error('Cannot process deposit for inactive user');
+      }
+
+      const balanceBefore = parseFloat(user.wallet_balance) || 0;
+      const balanceAfter = balanceBefore + depositAmount;
+
+      // Update user balance
+      await user.update({ 
+        wallet_balance: balanceAfter 
+      }, { transaction });
+
+      // Create transaction record
+      const transactionRecord = await UserTransaction.create({
+        transaction_id: this.generateTransactionId(),
+        user_id: userId,
+        user_type: userType,
+        type: 'deposit',
+        amount: depositAmount,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        status: 'completed',
+        admin_id: adminId,
+        reference_id: referenceId,
+        notes: notes,
+        metadata: {
+          processed_by: 'superadmin',
+          processing_timestamp: new Date().toISOString()
+        }
+      }, { transaction });
+
+      // Commit database transaction
+      await transaction.commit();
+
+      // Update Redis cache (non-blocking)
+      await this.updateCachedBalance(userId, userType, balanceAfter);
+
+      logger.info(`Deposit processed successfully: ${userType} user ${userId}, amount: ${depositAmount}, new balance: ${balanceAfter}`);
+
+      return {
+        success: true,
+        transaction: transactionRecord,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          balance_before: balanceBefore,
+          balance_after: balanceAfter
+        }
+      };
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error(`Deposit failed for ${userType} user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Process withdrawal transaction for a user
+   * @param {Object} params - Withdrawal parameters
+   * @param {number} params.userId - User ID
+   * @param {string} params.userType - 'live' or 'demo'
+   * @param {number} params.amount - Withdrawal amount (must be positive)
+   * @param {number} params.adminId - Admin ID performing the operation
+   * @param {string} [params.notes] - Optional notes
+   * @param {string} [params.referenceId] - Optional external reference
+   * @returns {Promise<Object>} Transaction result
+   */
+  async processWithdrawal({ userId, userType, amount, adminId, notes = null, referenceId = null }) {
+    // Validate input
+    if (!userId || !userType || !amount || !adminId) {
+      throw new Error('Missing required parameters: userId, userType, amount, adminId');
+    }
+
+    if (!['live', 'demo'].includes(userType)) {
+      throw new Error('Invalid user type. Must be "live" or "demo"');
+    }
+
+    const withdrawalAmount = parseFloat(amount);
+    if (withdrawalAmount <= 0) {
+      throw new Error('Withdrawal amount must be positive');
+    }
+
+    const transaction = await sequelize.transaction();
+    
+    try {
+      // Get user model and find user
+      const UserModel = this.getUserModel(userType);
+      const user = await UserModel.findByPk(userId, { transaction });
+      
+      if (!user) {
+        throw new Error(`${userType} user not found with ID: ${userId}`);
+      }
+
+      if (!user.is_active) {
+        throw new Error('Cannot process withdrawal for inactive user');
+      }
+
+      const balanceBefore = parseFloat(user.wallet_balance) || 0;
+      
+      // Validate sufficient balance
+      if (balanceBefore < withdrawalAmount) {
+        throw new Error(`Insufficient balance. Available: ${balanceBefore}, Requested: ${withdrawalAmount}`);
+      }
+
+      const balanceAfter = balanceBefore - withdrawalAmount;
+
+      // Update user balance
+      await user.update({ 
+        wallet_balance: balanceAfter 
+      }, { transaction });
+
+      // Create transaction record
+      const transactionRecord = await UserTransaction.create({
+        transaction_id: this.generateTransactionId(),
+        user_id: userId,
+        user_type: userType,
+        type: 'withdraw',
+        amount: -withdrawalAmount, // Negative for withdrawal
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        status: 'completed',
+        admin_id: adminId,
+        reference_id: referenceId,
+        notes: notes,
+        metadata: {
+          processed_by: 'superadmin',
+          processing_timestamp: new Date().toISOString()
+        }
+      }, { transaction });
+
+      // Commit database transaction
+      await transaction.commit();
+
+      // Update Redis cache (non-blocking)
+      await this.updateCachedBalance(userId, userType, balanceAfter);
+
+      logger.info(`Withdrawal processed successfully: ${userType} user ${userId}, amount: ${withdrawalAmount}, new balance: ${balanceAfter}`);
+
+      return {
+        success: true,
+        transaction: transactionRecord,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          balance_before: balanceBefore,
+          balance_after: balanceAfter
+        }
+      };
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error(`Withdrawal failed for ${userType} user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user transaction history
+   * @param {Object} params - Query parameters
+   * @param {number} params.userId - User ID
+   * @param {string} [params.userType] - 'live' or 'demo' (optional, will check both if not provided)
+   * @param {number} params.limit - Number of records to return
+   * @param {number} params.offset - Offset for pagination
+   * @param {string} params.type - Transaction type filter
+   * @returns {Promise<Object>} Transaction history
+   */
+  async getUserTransactionHistory({ userId, userType = null, limit = 50, offset = 0, type }) {
+    const whereClause = {
+      user_id: userId
+    };
+
+    // If userType is provided, filter by it; otherwise get transactions from both live and demo
+    if (userType) {
+      whereClause.user_type = userType;
+    }
+
+    if (type) {
+      whereClause.type = type;
+    }
+
+    const { count, rows } = await UserTransaction.findAndCountAll({
+      where: whereClause,
+      order: [['created_at', 'DESC']],
+      limit: Math.min(limit, 100), // Cap at 100 records
+      offset,
+      attributes: [
+        'id', 'transaction_id', 'type', 'amount', 
+        'balance_before', 'balance_after', 'status',
+        'reference_id', 'notes', 'created_at'
+      ]
+    });
+
+    return {
+      total: count,
+      transactions: rows,
+      pagination: {
+        limit,
+        offset,
+        hasMore: count > (offset + limit)
+      }
+    };
+  }
+
+  /**
+   * Get user current balance (with Redis cache fallback)
+   * @param {number} userId - User ID
+   * @param {string} [userType] - 'live' or 'demo' (optional, will check both if not provided)
+   * @returns {Promise<Object>} User balance information
+   */
+  async getUserBalance(userId, userType = null) {
+    // If userType is not provided, we need to check both live and demo users
+    if (!userType) {
+      // Try to find user in both tables
+      let user = null;
+      let foundUserType = null;
+
+      // Check live users first
+      try {
+        user = await LiveUser.findByPk(userId, {
+          attributes: ['id', 'name', 'email', 'wallet_balance', 'is_active']
+        });
+        if (user) {
+          foundUserType = 'live';
+        }
+      } catch (error) {
+        // Continue to check demo users
+      }
+
+      // If not found in live users, check demo users
+      if (!user) {
+        try {
+          user = await DemoUser.findByPk(userId, {
+            attributes: ['id', 'name', 'email', 'wallet_balance', 'is_active']
+          });
+          if (user) {
+            foundUserType = 'demo';
+          }
+        } catch (error) {
+          // User not found in either table
+        }
+      }
+
+      if (!user) {
+        throw new Error(`User not found with ID: ${userId}`);
+      }
+
+      const balance = parseFloat(user.wallet_balance) || 0;
+      
+      // Update cache for next time
+      await this.updateCachedBalance(userId, foundUserType, balance);
+
+      return {
+        balance,
+        source: 'database',
+        userType: foundUserType,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          is_active: user.is_active
+        }
+      };
+    }
+
+    // If userType is provided, use the original logic with cache
+    const cachedBalance = await this.getCachedBalance(userId, userType);
+    
+    if (cachedBalance !== null) {
+      return {
+        balance: cachedBalance,
+        source: 'cache',
+        userType
+      };
+    }
+
+    // Fallback to database
+    const UserModel = this.getUserModel(userType);
+    const user = await UserModel.findByPk(userId, {
+      attributes: ['id', 'name', 'email', 'wallet_balance', 'is_active']
+    });
+
+    if (!user) {
+      throw new Error(`${userType} user not found with ID: ${userId}`);
+    }
+
+    const balance = parseFloat(user.wallet_balance) || 0;
+    
+    // Update cache for next time
+    await this.updateCachedBalance(userId, userType, balance);
+
+    return {
+      balance,
+      source: 'database',
+      userType,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        is_active: user.is_active
+      }
+    };
+  }
+}
+
+module.exports = new SuperadminTransactionService();
