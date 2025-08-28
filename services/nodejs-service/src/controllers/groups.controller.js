@@ -594,6 +594,108 @@ class GroupsController {
   }
 
   /**
+   * Delete entire group with all instruments (Superadmin only)
+   * DELETE /api/superadmin/groups/:groupName
+   */
+  async deleteEntireGroup(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { groupName } = req.params;
+      const decodedGroupName = decodeURIComponent(groupName);
+      const { admin } = req;
+
+      if (!decodedGroupName) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Group name is required'
+        });
+      }
+
+      // Find all instruments in the group
+      const groupInstruments = await Group.findAll({
+        where: { name: decodedGroupName },
+        transaction
+      });
+
+      if (groupInstruments.length === 0) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Group not found: ${decodedGroupName}`
+        });
+      }
+
+      // Store group info for audit log before deletion
+      const instrumentsToDelete = groupInstruments.map(group => ({
+        id: group.id,
+        symbol: group.symbol,
+        name: group.name
+      }));
+
+      // Delete all instruments from database
+      await Group.destroy({
+        where: { name: decodedGroupName },
+        transaction
+      });
+
+      // Commit transaction first
+      await transaction.commit();
+
+      // Delete all instruments from Redis cache
+      for (const instrument of instrumentsToDelete) {
+        await groupsCacheService.deleteGroup(instrument.name, instrument.symbol);
+      }
+
+      // Create audit log
+      await createAuditLog(
+        admin.id,
+        'GROUP_DELETE_ENTIRE',
+        req.ip,
+        {
+          group_name: decodedGroupName,
+          instruments_deleted: instrumentsToDelete.length,
+          deleted_instruments: instrumentsToDelete
+        },
+        'SUCCESS'
+      );
+
+      logger.info(`Superadmin ${admin.id} deleted entire group: ${decodedGroupName} (${instrumentsToDelete.length} instruments)`);
+
+      res.status(200).json({
+        success: true,
+        message: `Successfully deleted entire group: ${decodedGroupName} (${instrumentsToDelete.length} instruments)`,
+        data: {
+          group_name: decodedGroupName,
+          instruments_deleted: instrumentsToDelete.length,
+          deleted_instruments: instrumentsToDelete
+        }
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error(`Failed to delete entire group ${req.params.groupName}:`, error);
+
+      await createAuditLog(
+        req.admin?.id,
+        'GROUP_DELETE_ENTIRE',
+        req.ip,
+        {
+          group_name: req.params.groupName
+        },
+        'FAILED',
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete entire group'
+      });
+    }
+  }
+
+  /**
    * Delete a specific group symbol (Superadmin only)
    * DELETE /api/superadmin/groups/:groupName/:symbol
    */

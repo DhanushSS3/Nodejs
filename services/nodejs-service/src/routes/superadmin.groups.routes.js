@@ -549,6 +549,69 @@ router.post('/', groupsController.createGroupSymbol);
 
 /**
  * @swagger
+ * /api/superadmin/groups/{groupName}:
+ *   delete:
+ *     summary: Delete entire group with all instruments
+ *     description: Delete all instruments belonging to a specific group name from both database and Redis cache (superadmin only)
+ *     tags: [Superadmin - Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: groupName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Group name to delete (URL encoded for special characters)
+ *         example: "VIP"
+ *     responses:
+ *       200:
+ *         description: Entire group deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Successfully deleted entire group: VIP (50 instruments)"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     instruments_deleted:
+ *                       type: integer
+ *                       example: 50
+ *                     deleted_instruments:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                             example: 1
+ *                           symbol:
+ *                             type: string
+ *                             example: "EURUSD"
+ *                           name:
+ *                             type: string
+ *                             example: "VIP"
+ *       404:
+ *         description: Group not found
+ *       403:
+ *         description: Forbidden - Superadmin access required
+ *       401:
+ *         description: Unauthorized
+ */
+router.delete('/:groupName', groupsController.deleteEntireGroup);
+
+/**
+ * @swagger
  * /api/superadmin/groups/{groupName}/{symbol}:
  *   delete:
  *     summary: Delete a specific group symbol
