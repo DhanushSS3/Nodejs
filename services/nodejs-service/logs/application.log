@@ -10128,3 +10128,56 @@
 {"level":"info","message":"Synced 1279/1279 groups (100%)","timestamp":"2025-08-28T13:26:56.782Z"}
 {"level":"info","message":"Groups sync completed: 1279 groups in 6677ms","timestamp":"2025-08-28T13:26:56.783Z"}
 {"level":"info","message":"SYNC VERIFICATION: Synced 1279 groups, Redis cluster has 1279 total keys","timestamp":"2025-08-28T13:26:56.797Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-08-28T13:36:47.341Z"}
+{"level":"info","message":"Found 1279 groups to sync","timestamp":"2025-08-28T13:36:47.348Z"}
+{"level":"info","message":"Synced 100/1279 groups (8%)","timestamp":"2025-08-28T13:36:48.055Z"}
+{"level":"info","message":"Synced 200/1279 groups (16%)","timestamp":"2025-08-28T13:36:48.670Z"}
+{"level":"info","message":"Synced 300/1279 groups (23%)","timestamp":"2025-08-28T13:36:49.474Z"}
+{"level":"info","message":"Synced 400/1279 groups (31%)","timestamp":"2025-08-28T13:36:50.185Z"}
+{"level":"info","message":"Synced 500/1279 groups (39%)","timestamp":"2025-08-28T13:36:50.862Z"}
+{"level":"info","message":"Synced 600/1279 groups (47%)","timestamp":"2025-08-28T13:36:51.559Z"}
+{"level":"info","message":"Synced 700/1279 groups (55%)","timestamp":"2025-08-28T13:36:52.228Z"}
+{"level":"info","message":"Synced 800/1279 groups (63%)","timestamp":"2025-08-28T13:36:52.836Z"}
+{"level":"info","message":"Synced 900/1279 groups (70%)","timestamp":"2025-08-28T13:36:53.523Z"}
+{"level":"info","message":"Synced 1000/1279 groups (78%)","timestamp":"2025-08-28T13:36:54.066Z"}
+{"level":"info","message":"Synced 1100/1279 groups (86%)","timestamp":"2025-08-28T13:36:54.648Z"}
+{"level":"info","message":"Synced 1200/1279 groups (94%)","timestamp":"2025-08-28T13:36:55.261Z"}
+{"level":"info","message":"Synced 1279/1279 groups (100%)","timestamp":"2025-08-28T13:36:55.818Z"}
+{"level":"info","message":"Groups sync completed: 1279 groups in 8474ms","timestamp":"2025-08-28T13:36:55.818Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1279 groups, Redis cluster has 1279 total keys","timestamp":"2025-08-28T13:36:55.835Z"}
+{"level":"info","message":"Authentication successful for user 1 on DELETE /DHANUSH2/AUDCAD","timestamp":"2025-08-28T13:40:39.942Z"}
+{"level":"info","message":"Deleted group DHANUSH2:AUDCAD from cache","timestamp":"2025-08-28T13:40:39.985Z"}
+{"level":"info","message":"Superadmin 1 deleted group symbol: DHANUSH2:AUDCAD","timestamp":"2025-08-28T13:40:40.004Z"}
+{"level":"info","message":"Authentication successful for user 1 on POST /","timestamp":"2025-08-28T13:44:55.702Z"}
+{"level":"error","message":"Failed to sync group 1529 from database: Group with ID 1529 not found","stack":"Error: Group with ID 1529 not found\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:402:15)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async createGroupSymbol (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:762:7)","timestamp":"2025-08-28T13:44:55.742Z"}
+{"level":"error","message":"Failed to create group symbol: Group with ID 1529 not found","stack":"Error: Group with ID 1529 not found\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:402:15)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async createGroupSymbol (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:762:7)","timestamp":"2025-08-28T13:44:55.751Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-08-28T13:51:59.601Z"}
+{"level":"info","message":"Found 1278 groups to sync","timestamp":"2025-08-28T13:51:59.607Z"}
+{"level":"info","message":"Synced 100/1278 groups (8%)","timestamp":"2025-08-28T13:52:00.330Z"}
+{"level":"info","message":"Synced 200/1278 groups (16%)","timestamp":"2025-08-28T13:52:01.079Z"}
+{"level":"info","message":"Synced 300/1278 groups (23%)","timestamp":"2025-08-28T13:52:01.779Z"}
+{"level":"info","message":"Synced 400/1278 groups (31%)","timestamp":"2025-08-28T13:52:02.363Z"}
+{"level":"info","message":"Synced 500/1278 groups (39%)","timestamp":"2025-08-28T13:52:02.845Z"}
+{"level":"info","message":"Synced 600/1278 groups (47%)","timestamp":"2025-08-28T13:52:03.264Z"}
+{"level":"info","message":"Synced 700/1278 groups (55%)","timestamp":"2025-08-28T13:52:03.832Z"}
+{"level":"info","message":"Synced 800/1278 groups (63%)","timestamp":"2025-08-28T13:52:04.155Z"}
+{"level":"info","message":"Synced 900/1278 groups (70%)","timestamp":"2025-08-28T13:52:04.521Z"}
+{"level":"info","message":"Synced 1000/1278 groups (78%)","timestamp":"2025-08-28T13:52:04.874Z"}
+{"level":"info","message":"Synced 1100/1278 groups (86%)","timestamp":"2025-08-28T13:52:05.375Z"}
+{"level":"info","message":"Synced 1200/1278 groups (94%)","timestamp":"2025-08-28T13:52:05.708Z"}
+{"level":"info","message":"Synced 1278/1278 groups (100%)","timestamp":"2025-08-28T13:52:05.948Z"}
+{"level":"info","message":"Groups sync completed: 1278 groups in 6346ms","timestamp":"2025-08-28T13:52:05.948Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1278 groups, Redis cluster has 1278 total keys","timestamp":"2025-08-28T13:52:05.965Z"}
+{"level":"info","message":"Authentication successful for user 1 on POST /","timestamp":"2025-08-28T13:52:12.315Z"}
+{"level":"info","message":"Synced group TEST-1:EURUSD from database","timestamp":"2025-08-28T13:52:12.351Z"}
+{"level":"info","message":"Superadmin 1 created group symbol: TEST-1:EURUSD","timestamp":"2025-08-28T13:52:12.363Z"}
+{"level":"info","message":"Authentication successful for user 1 on GET /TEST-1","timestamp":"2025-08-28T13:53:03.661Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-08-28T13:53:03.662Z"}
+{"level":"info","message":"Raw groupName: \"TEST-1\", Decoded: \"TEST-1\"","timestamp":"2025-08-28T13:53:03.662Z"}
+{"level":"info","message":"Searching for groups with name: \"TEST-1\" (raw: \"TEST-1\")","timestamp":"2025-08-28T13:53:03.662Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1279,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-08-28T13:52:05.965Z\",\"total_synced\":1278,\"sync_duration_ms\":6346,\"sync_version\":\"1.0\"}","timestamp":"2025-08-28T13:53:03.692Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{TEST-1}:* for group: TEST-1","timestamp":"2025-08-28T13:53:03.693Z"}
+{"level":"info","message":"Found 1 total keys matching pattern: groups:{TEST-1}:*","timestamp":"2025-08-28T13:53:03.703Z"}
+{"level":"info","message":"Processing 1 keys: [\"groups:{TEST-1}:EURUSD\"]...","timestamp":"2025-08-28T13:53:03.703Z"}
+{"level":"info","message":"Successfully retrieved 1 groups for pattern: groups:{TEST-1}:*","timestamp":"2025-08-28T13:53:03.707Z"}
+{"level":"info","message":"Found 1 groups for TEST-1","timestamp":"2025-08-28T13:53:03.707Z"}

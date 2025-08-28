@@ -592,6 +592,246 @@ class GroupsController {
       });
     }
   }
+
+  /**
+   * Delete a specific group symbol (Superadmin only)
+   * DELETE /api/superadmin/groups/:groupName/:symbol
+   */
+  async deleteGroupSymbol(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { groupName, symbol } = req.params;
+      const decodedGroupName = decodeURIComponent(groupName);
+
+      if (!decodedGroupName || !symbol) {
+        return res.status(400).json({
+          success: false,
+          message: 'Group name and symbol are required'
+        });
+      }
+
+      // Check if group exists in database
+      const group = await Group.findOne({
+        where: { name: decodedGroupName, symbol: symbol },
+        transaction
+      });
+
+      if (!group) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Group not found: ${decodedGroupName}:${symbol}`
+        });
+      }
+
+      // Delete from database
+      await group.destroy({ transaction });
+
+      // Delete from Redis cache
+      await groupsCacheService.deleteGroup(decodedGroupName, symbol);
+
+      await transaction.commit();
+
+      // Create audit log
+      await createAuditLog(
+        req.admin?.id,
+        'GROUP_SYMBOL_DELETE',
+        req.ip,
+        { 
+          group_name: decodedGroupName, 
+          symbol: symbol,
+          group_id: group.id
+        },
+        'SUCCESS'
+      );
+
+      logger.info(`Superadmin ${req.admin?.id} deleted group symbol: ${decodedGroupName}:${symbol}`);
+
+      res.status(200).json({
+        success: true,
+        message: `Group symbol deleted successfully: ${decodedGroupName}:${symbol}`,
+        data: {
+          deleted_group: {
+            id: group.id,
+            name: decodedGroupName,
+            symbol: symbol
+          }
+        }
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error(`Failed to delete group symbol ${req.params.groupName}:${req.params.symbol}:`, error);
+
+      await createAuditLog(
+        req.admin?.id,
+        'GROUP_SYMBOL_DELETE',
+        req.ip,
+        { 
+          group_name: req.params.groupName, 
+          symbol: req.params.symbol
+        },
+        'FAILED',
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete group symbol'
+      });
+    }
+  }
+
+  /**
+   * Create a new group symbol record (Superadmin only)
+   * POST /api/superadmin/groups
+   */
+  async createGroupSymbol(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const {
+        symbol,
+        name,
+        commision_type = 1,
+        commision_value_type = 1,
+        type = 1,
+        pip_currency = 'USD',
+        show_points = 5,
+        swap_buy = 0,
+        swap_sell = 0,
+        commision = 0,
+        margin = 100,
+        spread = 0,
+        deviation = 10,
+        min_lot = 0.01,
+        max_lot = 100,
+        pips = 0.0001,
+        spread_pip = 0,
+        contract_size = 100000,
+        profit = 'currency'
+      } = req.body;
+
+      // Validate required fields
+      if (!symbol || !name) {
+        return res.status(400).json({
+          success: false,
+          message: 'Symbol and group name are required'
+        });
+      }
+
+      // Check if group symbol already exists
+      const existingGroup = await Group.findOne({
+        where: { name: name, symbol: symbol },
+        transaction
+      });
+
+      if (existingGroup) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: `Group symbol already exists: ${name}:${symbol}`
+        });
+      }
+
+      // Create new group in database
+      const newGroup = await Group.create({
+        symbol,
+        name,
+        commision_type,
+        commision_value_type,
+        type,
+        pip_currency,
+        show_points,
+        swap_buy,
+        swap_sell,
+        commision,
+        margin,
+        spread,
+        deviation,
+        min_lot,
+        max_lot,
+        pips,
+        spread_pip,
+        contract_size,
+        profit
+      }, { transaction });
+
+      // Commit transaction first
+      await transaction.commit();
+
+      // Add to Redis cache after successful database commit
+      await groupsCacheService.syncGroupFromDB(newGroup.id);
+
+      // Create audit log
+      await createAuditLog(
+        req.admin?.id,
+        'GROUP_SYMBOL_CREATE',
+        req.ip,
+        { 
+          group_name: name, 
+          symbol: symbol,
+          group_id: newGroup.id
+        },
+        'SUCCESS'
+      );
+
+      logger.info(`Superadmin ${req.admin?.id} created group symbol: ${name}:${symbol}`);
+
+      res.status(201).json({
+        success: true,
+        message: `Group symbol created successfully: ${name}:${symbol}`,
+        data: {
+          group: {
+            id: newGroup.id,
+            symbol: newGroup.symbol,
+            name: newGroup.name,
+            commision_type: newGroup.commision_type,
+            commision_value_type: newGroup.commision_value_type,
+            type: newGroup.type,
+            pip_currency: newGroup.pip_currency,
+            show_points: newGroup.show_points,
+            swap_buy: newGroup.swap_buy,
+            swap_sell: newGroup.swap_sell,
+            commision: newGroup.commision,
+            margin: newGroup.margin,
+            spread: newGroup.spread,
+            deviation: newGroup.deviation,
+            min_lot: newGroup.min_lot,
+            max_lot: newGroup.max_lot,
+            pips: newGroup.pips,
+            spread_pip: newGroup.spread_pip,
+            contract_size: newGroup.contract_size,
+            profit: newGroup.profit,
+            created_at: newGroup.created_at,
+            updated_at: newGroup.updated_at
+          }
+        }
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error('Failed to create group symbol:', error);
+
+      await createAuditLog(
+        req.admin?.id,
+        'GROUP_SYMBOL_CREATE',
+        req.ip,
+        { 
+          group_name: req.body.name, 
+          symbol: req.body.symbol
+        },
+        'FAILED',
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create group symbol'
+      });
+    }
+  }
 }
 
 module.exports = new GroupsController();

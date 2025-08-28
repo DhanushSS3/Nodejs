@@ -331,4 +331,202 @@ router.post('/cache/resync', groupsController.forceResync);
  */
 router.delete('/cache', groupsController.clearCache);
 
+/**
+ * @swagger
+ * /api/superadmin/groups:
+ *   post:
+ *     summary: Create a new group symbol record
+ *     description: Create a new group symbol with trading configuration (superadmin only)
+ *     tags: [Superadmin - Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - symbol
+ *               - name
+ *             properties:
+ *               symbol:
+ *                 type: string
+ *                 example: "EURUSD"
+ *                 description: Trading symbol
+ *               name:
+ *                 type: string
+ *                 example: "VIP"
+ *                 description: Group name
+ *               commision_type:
+ *                 type: integer
+ *                 example: 1
+ *                 default: 1
+ *               commision_value_type:
+ *                 type: integer
+ *                 example: 1
+ *                 default: 1
+ *               type:
+ *                 type: integer
+ *                 example: 1
+ *                 default: 1
+ *               pip_currency:
+ *                 type: string
+ *                 example: "USD"
+ *                 default: "USD"
+ *               show_points:
+ *                 type: integer
+ *                 example: 5
+ *                 default: 5
+ *               swap_buy:
+ *                 type: number
+ *                 format: decimal
+ *                 example: -2.5
+ *                 default: 0
+ *               swap_sell:
+ *                 type: number
+ *                 format: decimal
+ *                 example: -1.8
+ *                 default: 0
+ *               commision:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 3.0
+ *                 default: 0
+ *               margin:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 100.0
+ *                 default: 100
+ *               spread:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 1.5
+ *                 default: 0
+ *               deviation:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 10.0
+ *                 default: 10
+ *               min_lot:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 0.01
+ *                 default: 0.01
+ *               max_lot:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 100.0
+ *                 default: 100
+ *               pips:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 0.0001
+ *                 default: 0.0001
+ *               spread_pip:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 1.5
+ *                 default: 0
+ *               contract_size:
+ *                 type: number
+ *                 format: decimal
+ *                 example: 100000.0
+ *                 default: 100000
+ *               profit:
+ *                 type: string
+ *                 example: "currency"
+ *                 default: "currency"
+ *     responses:
+ *       201:
+ *         description: Group symbol created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Group symbol created successfully: VIP:EURUSD"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group:
+ *                       $ref: '#/components/schemas/Group'
+ *       400:
+ *         description: Bad request - Missing required fields
+ *       409:
+ *         description: Conflict - Group symbol already exists
+ *       403:
+ *         description: Forbidden - Superadmin access required
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/', groupsController.createGroupSymbol);
+
+/**
+ * @swagger
+ * /api/superadmin/groups/{groupName}/{symbol}:
+ *   delete:
+ *     summary: Delete a specific group symbol
+ *     description: Delete a group symbol from both database and Redis cache (superadmin only)
+ *     tags: [Superadmin - Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: groupName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Group name (URL encoded for special characters)
+ *         example: "VIP"
+ *       - in: path
+ *         name: symbol
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Trading symbol
+ *         example: "EURUSD"
+ *     responses:
+ *       200:
+ *         description: Group symbol deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Group symbol deleted successfully: VIP:EURUSD"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     deleted_group:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                           example: 1
+ *                         name:
+ *                           type: string
+ *                           example: "VIP"
+ *                         symbol:
+ *                           type: string
+ *                           example: "EURUSD"
+ *       404:
+ *         description: Group not found
+ *       403:
+ *         description: Forbidden - Superadmin access required
+ *       401:
+ *         description: Unauthorized
+ */
+router.delete('/:groupName/:symbol', groupsController.deleteGroupSymbol);
+
 module.exports = router;
