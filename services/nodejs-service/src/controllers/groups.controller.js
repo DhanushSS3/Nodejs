@@ -313,7 +313,8 @@ class GroupsController {
         });
       }
 
-      // Filter allowed fields (exclude id, created_at)
+      // Filter allowed fields (exclude id, name, symbol, created_at, updated_at)
+      const restrictedFields = ['id', 'name', 'symbol', 'created_at', 'updated_at'];
       const allowedFields = [
         'commision_type', 'commision_value_type', 'type', 'pip_currency', 
         'show_points', 'swap_buy', 'swap_sell', 'commision', 'margin', 
@@ -325,7 +326,7 @@ class GroupsController {
       const originalValues = {};
 
       for (const [key, value] of Object.entries(updates)) {
-        if (allowedFields.includes(key)) {
+        if (!restrictedFields.includes(key)) {
           originalValues[key] = group[key];
           filteredUpdates[key] = value;
         }
