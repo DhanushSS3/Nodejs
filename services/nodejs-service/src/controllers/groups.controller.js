@@ -684,6 +684,154 @@ class GroupsController {
   }
 
   /**
+   * Copy all instruments from an existing group to a new group (Superadmin only)
+   * POST /api/superadmin/groups/copy
+   */
+  async copyGroupInstruments(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { sourceGroupName, targetGroupName } = req.body;
+      const { admin } = req;
+
+      // Validate required fields
+      if (!sourceGroupName || !targetGroupName) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Source group name and target group name are required'
+        });
+      }
+
+      if (sourceGroupName === targetGroupName) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Source and target group names must be different'
+        });
+      }
+
+      // Check if source group exists
+      const sourceGroups = await Group.findAll({
+        where: { name: sourceGroupName },
+        transaction
+      });
+
+      if (sourceGroups.length === 0) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Source group not found: ${sourceGroupName}`
+        });
+      }
+
+      // Check if target group already exists
+      const existingTargetGroups = await Group.findAll({
+        where: { name: targetGroupName },
+        transaction
+      });
+
+      if (existingTargetGroups.length > 0) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: `Target group already exists: ${targetGroupName}. Found ${existingTargetGroups.length} instruments.`
+        });
+      }
+
+      // Copy all instruments from source to target group
+      const newGroups = [];
+      for (const sourceGroup of sourceGroups) {
+        const groupData = {
+          symbol: sourceGroup.symbol,
+          name: targetGroupName, // Use new group name
+          commision_type: sourceGroup.commision_type,
+          commision_value_type: sourceGroup.commision_value_type,
+          type: sourceGroup.type,
+          pip_currency: sourceGroup.pip_currency,
+          show_points: sourceGroup.show_points,
+          swap_buy: sourceGroup.swap_buy,
+          swap_sell: sourceGroup.swap_sell,
+          commision: sourceGroup.commision,
+          margin: sourceGroup.margin,
+          spread: sourceGroup.spread,
+          deviation: sourceGroup.deviation,
+          min_lot: sourceGroup.min_lot,
+          max_lot: sourceGroup.max_lot,
+          pips: sourceGroup.pips,
+          spread_pip: sourceGroup.spread_pip,
+          contract_size: sourceGroup.contract_size,
+          profit: sourceGroup.profit
+        };
+
+        const newGroup = await Group.create(groupData, { transaction });
+        newGroups.push(newGroup);
+      }
+
+      // Commit transaction first
+      await transaction.commit();
+
+      // Sync all new groups to Redis cache
+      for (const newGroup of newGroups) {
+        await groupsCacheService.syncGroupFromDB(newGroup.id);
+      }
+
+      // Create audit log
+      await createAuditLog(
+        admin.id,
+        'GROUP_COPY_INSTRUMENTS',
+        req.ip,
+        {
+          source_group_name: sourceGroupName,
+          target_group_name: targetGroupName,
+          instruments_copied: newGroups.length,
+          copied_group_ids: newGroups.map(g => g.id)
+        },
+        'SUCCESS'
+      );
+
+      logger.info(`Superadmin ${admin.id} copied ${newGroups.length} instruments from ${sourceGroupName} to ${targetGroupName}`);
+
+      res.status(201).json({
+        success: true,
+        message: `Successfully copied ${newGroups.length} instruments from ${sourceGroupName} to ${targetGroupName}`,
+        data: {
+          source_group_name: sourceGroupName,
+          target_group_name: targetGroupName,
+          instruments_copied: newGroups.length,
+          instruments: newGroups.map(group => ({
+            id: group.id,
+            symbol: group.symbol,
+            name: group.name,
+            created_at: group.created_at
+          }))
+        }
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error('Failed to copy group instruments:', error);
+
+      await createAuditLog(
+        req.admin?.id,
+        'GROUP_COPY_INSTRUMENTS',
+        req.ip,
+        {
+          source_group_name: req.body.sourceGroupName,
+          target_group_name: req.body.targetGroupName
+        },
+        'FAILED',
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to copy group instruments'
+      });
+    }
+  }
+
+  /**
    * Create a new group symbol record (Superadmin only)
    * POST /api/superadmin/groups
    */

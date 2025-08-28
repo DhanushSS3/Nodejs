@@ -333,6 +333,86 @@ router.delete('/cache', groupsController.clearCache);
 
 /**
  * @swagger
+ * /api/superadmin/groups/copy:
+ *   post:
+ *     summary: Copy all instruments from existing group to new group
+ *     description: Copy all instruments from a source group to a new target group with the same configuration (superadmin only)
+ *     tags: [Superadmin - Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - sourceGroupName
+ *               - targetGroupName
+ *             properties:
+ *               sourceGroupName:
+ *                 type: string
+ *                 example: "VIP"
+ *                 description: Name of the existing group to copy from
+ *               targetGroupName:
+ *                 type: string
+ *                 example: "Premium"
+ *                 description: Name of the new group to create
+ *     responses:
+ *       201:
+ *         description: Group instruments copied successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Successfully copied 50 instruments from VIP to Premium"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     source_group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     target_group_name:
+ *                       type: string
+ *                       example: "Premium"
+ *                     instruments_copied:
+ *                       type: integer
+ *                       example: 50
+ *                     instruments:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                           symbol:
+ *                             type: string
+ *                           name:
+ *                             type: string
+ *                           created_at:
+ *                             type: string
+ *                             format: date-time
+ *       400:
+ *         description: Bad request - Missing required fields or same group names
+ *       404:
+ *         description: Source group not found
+ *       409:
+ *         description: Target group already exists
+ *       403:
+ *         description: Forbidden - Superadmin access required
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/copy', groupsController.copyGroupInstruments);
+
+/**
+ * @swagger
  * /api/superadmin/groups:
  *   post:
  *     summary: Create a new group symbol record
