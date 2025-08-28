@@ -85,7 +85,6 @@ class AdminAuthService {
       console.error('ERROR: adminWithPermissions.Role.Permissions is missing or empty:', JSON.stringify(adminWithPermissions, null, 2));
       throw new Error('PERM_DEBUG: Permission is not associated to Role!');
     }
-    // console.log('DEBUG adminWithPermissions:', JSON.stringify(adminWithPermissions, null, 2));
 
     const role = adminWithPermissions.role.name;
     const permissions = adminWithPermissions.role.permissions.map(p => p.name);
@@ -113,11 +112,7 @@ class AdminAuthService {
     };
 
     const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: `${accessTokenTTL}s` });
-    // console.log('Access Token:', accessToken);
     const refreshToken = jwt.sign(refreshTokenPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: `${refreshTokenTTL}s` });
-    // console.log('Refresh Token:', refreshToken);
-    // console.log('JWT Secret:', process.env.JWT_SECRET);
-    // console.log('JWT Refresh Secret:', process.env.JWT_REFRESH_SECRET);
     // Store JTI in Redis to enable revocation (logout)
     await redisCluster.set(accessTokenKey, 'valid', 'EX', refreshTokenTTL); // Use longer expiry for revocation check
 

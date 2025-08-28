@@ -8,6 +8,7 @@ const AdminAuditLog = require('./adminAuditLog.model');
 const Country = require('./country.model');
 const CryptoPayment = require('./cryptoPayment.model');
 const UserTransaction = require('./userTransaction.model');
+const Group = require('./group.model');
 
 module.exports = {
   DemoUser,
@@ -20,4 +21,5 @@ module.exports = {
   Country,
   CryptoPayment,
   UserTransaction,
+  Group,
 };

@@ -44,16 +44,24 @@ async function authenticateAdmin(req, res, next) {
 
 // Legacy JWT authentication (for backward compatibility)
 function authenticateJWT(req, res, next) {
+  const logger = require('../utils/logger');
+  
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    logger.warn(`Authentication failed - Missing or invalid Authorization header for ${req.method} ${req.url}`);
     return res.status(401).json({ success: false, message: 'Missing or invalid Authorization header' });
   }
+  
   const token = authHeader.split(' ')[1];
   const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
+  
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
+      logger.warn(`Authentication failed - Invalid or expired token for ${req.method} ${req.url}: ${err.message}`);
       return res.status(401).json({ success: false, message: 'Invalid or expired token' });
     }
+    
+    logger.info(`Authentication successful for user ${user.sub || user.id} on ${req.method} ${req.url}`);
     req.user = user;
     next();
   });

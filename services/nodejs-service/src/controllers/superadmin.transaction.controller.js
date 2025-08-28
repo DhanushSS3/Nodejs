@@ -297,10 +297,27 @@ class SuperadminTransactionController {
         type
       });
 
+      // Enhanced pagination response
+      const totalPages = Math.ceil(result.total / limitNum);
+      const currentPage = Math.floor(offsetNum / limitNum) + 1;
+
       res.status(200).json({
         success: true,
         message: 'Transaction history retrieved successfully',
-        data: result
+        data: {
+          transactions: result.transactions,
+          pagination: {
+            total: result.total,
+            limit: limitNum,
+            offset: offsetNum,
+            currentPage,
+            totalPages,
+            hasNextPage: currentPage < totalPages,
+            hasPreviousPage: currentPage > 1,
+            nextOffset: currentPage < totalPages ? offsetNum + limitNum : null,
+            previousOffset: currentPage > 1 ? Math.max(0, offsetNum - limitNum) : null
+          }
+        }
       });
 
     } catch (error) {

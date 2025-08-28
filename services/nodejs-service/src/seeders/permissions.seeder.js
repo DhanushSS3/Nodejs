@@ -34,6 +34,12 @@ class PermissionSeeder {
       { name: 'financial:delete', description: 'Delete financial records' },
       { name: 'financial:approve', description: 'Approve financial transactions' },
 
+      // Transaction Permissions
+      { name: 'transaction:read', description: 'View user transaction history' },
+      { name: 'transaction:create', description: 'Create transactions (deposits/withdrawals)' },
+      { name: 'transaction:approve', description: 'Approve pending transactions' },
+      { name: 'transaction:stats', description: 'View transaction statistics and reports' },
+
       // Trading Permissions
       { name: 'trading:view', description: 'View trading data' },
       { name: 'trading:create', description: 'Create trading orders' },

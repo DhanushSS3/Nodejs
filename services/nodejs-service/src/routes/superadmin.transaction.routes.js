@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const superadminTransactionController = require('../controllers/superadmin.transaction.controller');
-const { authenticateAdmin, requireRole } = require('../middlewares/auth.middleware');
+const { authenticateAdmin, requireRole, requirePermissions } = require('../middlewares/auth.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
 
 /**
@@ -108,7 +108,7 @@ const { handleValidationErrors } = require('../middlewares/error.middleware');
  *       401:
  *         description: Unauthorized (missing or invalid token)
  *       403:
- *         description: Forbidden (not a superadmin)
+ *         description: Forbidden (superadmin role required)
  *       404:
  *         description: User not found
  */
@@ -157,7 +157,7 @@ router.post('/users/:userId/deposit',
  *       401:
  *         description: Unauthorized (missing or invalid token)
  *       403:
- *         description: Forbidden (not a superadmin)
+ *         description: Forbidden (superadmin role required)
  *       404:
  *         description: User not found
  */
@@ -172,7 +172,7 @@ router.post('/users/:userId/withdraw',
  * @swagger
  * /api/superadmin/users/{userId}/balance:
  *   get:
- *     summary: Get user current balance (Superadmin only)
+ *     summary: Get user current balance (Admin with transaction:read permission)
  *     tags: [Superadmin Transactions]
  *     security:
  *       - bearerAuth: []
@@ -210,6 +210,9 @@ router.post('/users/:userId/withdraw',
  *                     source:
  *                       type: string
  *                       enum: [cache, database]
+ *                     userType:
+ *                       type: string
+ *                       enum: [live, demo]
  *                     user:
  *                       type: object
  *                       properties:
@@ -226,13 +229,13 @@ router.post('/users/:userId/withdraw',
  *       401:
  *         description: Unauthorized
  *       403:
- *         description: Forbidden (not a superadmin)
+ *         description: Forbidden (requires transaction:read permission)
  *       404:
  *         description: User not found
  */
 router.get('/users/:userId/balance', 
   authenticateAdmin, 
-  requireRole(['superadmin']), 
+  requirePermissions(['transaction:read']), 
   superadminTransactionController.getUserBalance
 );
 
@@ -342,7 +345,7 @@ router.get('/users/:userId/balance',
  */
 router.get('/users/:userId/transactions', 
   authenticateAdmin, 
-  requireRole(['superadmin']), 
+  requirePermissions(['transaction:read']), 
   superadminTransactionController.getUserTransactionHistory
 );
 
@@ -419,7 +422,7 @@ router.get('/users/:userId/transactions',
  */
 router.get('/transactions/stats', 
   authenticateAdmin, 
-  requireRole(['superadmin']), 
+  requirePermissions(['transaction:stats']), 
   superadminTransactionController.getTransactionStats
 );
 
