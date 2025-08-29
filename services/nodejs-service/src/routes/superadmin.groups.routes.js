@@ -187,6 +187,51 @@ router.post('/sync/:groupId', groupsController.syncGroup);
 
 /**
  * @swagger
+ * /api/superadmin/groups/dropdown:
+ *   get:
+ *     summary: Get all unique group names for dropdown
+ *     description: Retrieve all unique group names for frontend dropdown selection (superadmin only)
+ *     tags: [Superadmin - Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Groups dropdown retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Groups dropdown retrieved successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total_groups:
+ *                       type: integer
+ *                       example: 5
+ *                       description: Total number of unique group names
+ *                     groups:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["VIP", "Royal+", "ECN", "Standard", "Premium"]
+ *                       description: Array of unique group names sorted alphabetically
+ *       403:
+ *         description: Forbidden - Superadmin access required
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/dropdown', groupsController.getGroupsDropdown);
+
+/**
+ * @swagger
  * /api/superadmin/groups/cache/stats:
  *   get:
  *     summary: Get groups cache statistics

@@ -934,6 +934,66 @@ class GroupsController {
   }
 
   /**
+   * Get all unique group names for dropdown (Superadmin only)
+   * GET /api/superadmin/groups/dropdown
+   */
+  async getGroupsDropdown(req, res) {
+    try {
+      const { admin } = req;
+
+      // Get all unique group names from database
+      const uniqueGroups = await Group.findAll({
+        attributes: ['name'],
+        group: ['name'],
+        order: [['name', 'ASC']]
+      });
+
+      const groupNames = uniqueGroups.map(group => group.name);
+
+      // Create audit log
+      await createAuditLog(
+        admin.id,
+        'GROUPS_DROPDOWN_ACCESS',
+        req.ip,
+        {
+          total_groups: groupNames.length,
+          accessed_for: 'frontend_dropdown'
+        },
+        'SUCCESS'
+      );
+
+      logger.info(`Superadmin ${admin.id} accessed groups dropdown - ${groupNames.length} groups`);
+
+      res.status(200).json({
+        success: true,
+        message: 'Groups dropdown retrieved successfully',
+        data: {
+          total_groups: groupNames.length,
+          groups: groupNames
+        }
+      });
+
+    } catch (error) {
+      logger.error('Failed to get groups dropdown:', error);
+
+      // Create audit log for failure
+      await createAuditLog(
+        req.admin?.id,
+        'GROUPS_DROPDOWN_ACCESS',
+        req.ip,
+        { accessed_for: 'frontend_dropdown' },
+        'FAILED',
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
    * Create a new group symbol record (Superadmin only)
    * POST /api/superadmin/groups
    */

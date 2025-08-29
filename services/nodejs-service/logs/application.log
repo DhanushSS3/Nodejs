@@ -10796,3 +10796,255 @@
 {"level":"info","message":"Processing 174 keys: [\"groups:{TEST-3}:USDCZK\",\"groups:{TEST-3}:GASOLINE\",\"groups:{TEST-3}:EURNOK\"]...","timestamp":"2025-08-28T14:08:59.237Z"}
 {"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{TEST-3}:*","timestamp":"2025-08-28T14:08:59.458Z"}
 {"level":"info","message":"Found 174 groups for TEST-3","timestamp":"2025-08-28T14:08:59.458Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-08-29T09:12:35.257Z"}
+{"level":"info","message":"Found 1453 groups to sync","timestamp":"2025-08-29T09:12:35.268Z"}
+{"level":"info","message":"Synced 100/1453 groups (7%)","timestamp":"2025-08-29T09:12:35.664Z"}
+{"level":"info","message":"Synced 200/1453 groups (14%)","timestamp":"2025-08-29T09:12:36.092Z"}
+{"level":"info","message":"Synced 300/1453 groups (21%)","timestamp":"2025-08-29T09:12:36.461Z"}
+{"level":"info","message":"Synced 400/1453 groups (28%)","timestamp":"2025-08-29T09:12:36.820Z"}
+{"level":"info","message":"Synced 500/1453 groups (34%)","timestamp":"2025-08-29T09:12:37.125Z"}
+{"level":"info","message":"Synced 600/1453 groups (41%)","timestamp":"2025-08-29T09:12:37.497Z"}
+{"level":"info","message":"Synced 700/1453 groups (48%)","timestamp":"2025-08-29T09:12:37.889Z"}
+{"level":"info","message":"Synced 800/1453 groups (55%)","timestamp":"2025-08-29T09:12:38.209Z"}
+{"level":"info","message":"Synced 900/1453 groups (62%)","timestamp":"2025-08-29T09:12:38.533Z"}
+{"level":"info","message":"Synced 1000/1453 groups (69%)","timestamp":"2025-08-29T09:12:38.868Z"}
+{"level":"info","message":"Synced 1100/1453 groups (76%)","timestamp":"2025-08-29T09:12:39.196Z"}
+{"level":"info","message":"Synced 1200/1453 groups (83%)","timestamp":"2025-08-29T09:12:39.575Z"}
+{"level":"info","message":"Synced 1300/1453 groups (89%)","timestamp":"2025-08-29T09:12:39.908Z"}
+{"level":"info","message":"Synced 1400/1453 groups (96%)","timestamp":"2025-08-29T09:12:40.197Z"}
+{"level":"info","message":"Synced 1453/1453 groups (100%)","timestamp":"2025-08-29T09:12:40.382Z"}
+{"level":"info","message":"Groups sync completed: 1453 groups in 5124ms","timestamp":"2025-08-29T09:12:40.382Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1453 groups, Redis cluster has 1453 total keys","timestamp":"2025-08-29T09:12:40.394Z"}
+{"level":"info","message":"Authentication successful for user 1 on GET /TEST-3","timestamp":"2025-08-29T09:35:37.352Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-08-29T09:35:37.357Z"}
+{"level":"info","message":"Raw groupName: \"TEST-3\", Decoded: \"TEST-3\"","timestamp":"2025-08-29T09:35:37.357Z"}
+{"level":"info","message":"Searching for groups with name: \"TEST-3\" (raw: \"TEST-3\")","timestamp":"2025-08-29T09:35:37.357Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1453,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-08-29T09:12:40.394Z\",\"total_synced\":1453,\"sync_duration_ms\":5124,\"sync_version\":\"1.0\"}","timestamp":"2025-08-29T09:35:37.378Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{TEST-3}:* for group: TEST-3","timestamp":"2025-08-29T09:35:37.380Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{TEST-3}:*","timestamp":"2025-08-29T09:35:37.389Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{TEST-3}:SNDUSD\",\"groups:{TEST-3}:JPN225\",\"groups:{TEST-3}:XAUJPY\"]...","timestamp":"2025-08-29T09:35:37.389Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{TEST-3}:*","timestamp":"2025-08-29T09:35:37.856Z"}
+{"level":"info","message":"Found 174 groups for TEST-3","timestamp":"2025-08-29T09:35:37.857Z"}
+{"level":"info","message":"Authentication successful for user 1 on POST /copy","timestamp":"2025-08-29T09:43:25.436Z"}
+{"level":"info","message":"Synced group TEST-5:AUDCAD from database","timestamp":"2025-08-29T09:43:26.758Z"}
+{"level":"info","message":"Synced group TEST-5:AUDCHF from database","timestamp":"2025-08-29T09:43:26.770Z"}
+{"level":"info","message":"Synced group TEST-5:AUDJPY from database","timestamp":"2025-08-29T09:43:26.783Z"}
+{"level":"info","message":"Synced group TEST-5:AUDNZD from database","timestamp":"2025-08-29T09:43:26.796Z"}
+{"level":"info","message":"Synced group TEST-5:AUDSGD from database","timestamp":"2025-08-29T09:43:26.808Z"}
+{"level":"info","message":"Synced group TEST-5:AUDUSD from database","timestamp":"2025-08-29T09:43:26.817Z"}
+{"level":"info","message":"Synced group TEST-5:AUS200 from database","timestamp":"2025-08-29T09:43:26.833Z"}
+{"level":"info","message":"Synced group TEST-5:BTCUSD from database","timestamp":"2025-08-29T09:43:26.849Z"}
+{"level":"info","message":"Synced group TEST-5:CADCHF from database","timestamp":"2025-08-29T09:43:26.875Z"}
+{"level":"info","message":"Synced group TEST-5:CADJPY from database","timestamp":"2025-08-29T09:43:26.897Z"}
+{"level":"info","message":"Synced group TEST-5:CHFJPY from database","timestamp":"2025-08-29T09:43:26.918Z"}
+{"level":"info","message":"Synced group TEST-5:CHFSGD from database","timestamp":"2025-08-29T09:43:26.935Z"}
+{"level":"info","message":"Synced group TEST-5:CN50U from database","timestamp":"2025-08-29T09:43:26.953Z"}
+{"level":"info","message":"Synced group TEST-5:D30 from database","timestamp":"2025-08-29T09:43:26.971Z"}
+{"level":"info","message":"Synced group TEST-5:DE30 from database","timestamp":"2025-08-29T09:43:26.986Z"}
+{"level":"info","message":"Synced group TEST-5:EURAUD from database","timestamp":"2025-08-29T09:43:26.995Z"}
+{"level":"info","message":"Synced group TEST-5:EURCAD from database","timestamp":"2025-08-29T09:43:27.014Z"}
+{"level":"info","message":"Synced group TEST-5:EURCHF from database","timestamp":"2025-08-29T09:43:27.026Z"}
+{"level":"info","message":"Synced group TEST-5:EURCZK from database","timestamp":"2025-08-29T09:43:27.035Z"}
+{"level":"info","message":"Synced group TEST-5:EURGBP from database","timestamp":"2025-08-29T09:43:27.056Z"}
+{"level":"info","message":"Synced group TEST-5:EURJPY from database","timestamp":"2025-08-29T09:43:27.070Z"}
+{"level":"info","message":"Synced group TEST-5:EURNOK from database","timestamp":"2025-08-29T09:43:27.084Z"}
+{"level":"info","message":"Synced group TEST-5:EURNZD from database","timestamp":"2025-08-29T09:43:27.098Z"}
+{"level":"info","message":"Synced group TEST-5:EURPLN from database","timestamp":"2025-08-29T09:43:27.110Z"}
+{"level":"info","message":"Synced group TEST-5:EURSEK from database","timestamp":"2025-08-29T09:43:27.119Z"}
+{"level":"info","message":"Synced group TEST-5:EURSGD from database","timestamp":"2025-08-29T09:43:27.130Z"}
+{"level":"info","message":"Synced group TEST-5:EURTRY from database","timestamp":"2025-08-29T09:43:27.143Z"}
+{"level":"info","message":"Synced group TEST-5:EURUSD from database","timestamp":"2025-08-29T09:43:27.154Z"}
+{"level":"info","message":"Synced group TEST-5:EURZAR from database","timestamp":"2025-08-29T09:43:27.162Z"}
+{"level":"info","message":"Synced group TEST-5:FR40 from database","timestamp":"2025-08-29T09:43:27.174Z"}
+{"level":"info","message":"Synced group TEST-5:GBPAUD from database","timestamp":"2025-08-29T09:43:27.187Z"}
+{"level":"info","message":"Synced group TEST-5:GBPCAD from database","timestamp":"2025-08-29T09:43:27.196Z"}
+{"level":"info","message":"Synced group TEST-5:GBPCHF from database","timestamp":"2025-08-29T09:43:27.209Z"}
+{"level":"info","message":"Synced group TEST-5:GBPJPY from database","timestamp":"2025-08-29T09:43:27.221Z"}
+{"level":"info","message":"Synced group TEST-5:GBPNOK from database","timestamp":"2025-08-29T09:43:27.231Z"}
+{"level":"info","message":"Synced group TEST-5:GBPNZD from database","timestamp":"2025-08-29T09:43:27.245Z"}
+{"level":"info","message":"Synced group TEST-5:GBPSEK from database","timestamp":"2025-08-29T09:43:27.257Z"}
+{"level":"info","message":"Synced group TEST-5:GBPSGD from database","timestamp":"2025-08-29T09:43:27.269Z"}
+{"level":"info","message":"Synced group TEST-5:GBPTRY from database","timestamp":"2025-08-29T09:43:27.281Z"}
+{"level":"info","message":"Synced group TEST-5:GBPUSD from database","timestamp":"2025-08-29T09:43:27.293Z"}
+{"level":"info","message":"Synced group TEST-5:HKG50 from database","timestamp":"2025-08-29T09:43:27.307Z"}
+{"level":"info","message":"Synced group TEST-5:IND50 from database","timestamp":"2025-08-29T09:43:27.317Z"}
+{"level":"info","message":"Synced group TEST-5:JP225 from database","timestamp":"2025-08-29T09:43:27.331Z"}
+{"level":"info","message":"Synced group TEST-5:NGas from database","timestamp":"2025-08-29T09:43:27.348Z"}
+{"level":"info","message":"Synced group TEST-5:NOKJPY from database","timestamp":"2025-08-29T09:43:27.360Z"}
+{"level":"info","message":"Synced group TEST-5:NOKSEK from database","timestamp":"2025-08-29T09:43:27.369Z"}
+{"level":"info","message":"Synced group TEST-5:NZDCAD from database","timestamp":"2025-08-29T09:43:27.381Z"}
+{"level":"info","message":"Synced group TEST-5:NZDCHF from database","timestamp":"2025-08-29T09:43:27.400Z"}
+{"level":"info","message":"Synced group TEST-5:NZDJPY from database","timestamp":"2025-08-29T09:43:27.415Z"}
+{"level":"info","message":"Synced group TEST-5:NZDUSD from database","timestamp":"2025-08-29T09:43:27.428Z"}
+{"level":"info","message":"Synced group TEST-5:SEKJPY from database","timestamp":"2025-08-29T09:43:27.441Z"}
+{"level":"info","message":"Synced group TEST-5:SGDJPY from database","timestamp":"2025-08-29T09:43:27.460Z"}
+{"level":"info","message":"Synced group TEST-5:UK100 from database","timestamp":"2025-08-29T09:43:27.472Z"}
+{"level":"info","message":"Synced group TEST-5:UKOil from database","timestamp":"2025-08-29T09:43:27.492Z"}
+{"level":"info","message":"Synced group TEST-5:US100 from database","timestamp":"2025-08-29T09:43:27.506Z"}
+{"level":"info","message":"Synced group TEST-5:US2000 from database","timestamp":"2025-08-29T09:43:27.526Z"}
+{"level":"info","message":"Synced group TEST-5:US30 from database","timestamp":"2025-08-29T09:43:27.538Z"}
+{"level":"info","message":"Synced group TEST-5:US500 from database","timestamp":"2025-08-29T09:43:27.548Z"}
+{"level":"info","message":"Synced group TEST-5:USDCAD from database","timestamp":"2025-08-29T09:43:27.561Z"}
+{"level":"info","message":"Synced group TEST-5:USDCHF from database","timestamp":"2025-08-29T09:43:27.572Z"}
+{"level":"info","message":"Synced group TEST-5:USDCNH from database","timestamp":"2025-08-29T09:43:27.590Z"}
+{"level":"info","message":"Synced group TEST-5:USDCZK from database","timestamp":"2025-08-29T09:43:27.606Z"}
+{"level":"info","message":"Synced group TEST-5:USDJPY from database","timestamp":"2025-08-29T09:43:27.622Z"}
+{"level":"info","message":"Synced group TEST-5:USDMXN from database","timestamp":"2025-08-29T09:43:27.635Z"}
+{"level":"info","message":"Synced group TEST-5:USDNOK from database","timestamp":"2025-08-29T09:43:27.653Z"}
+{"level":"info","message":"Synced group TEST-5:USDPLN from database","timestamp":"2025-08-29T09:43:27.662Z"}
+{"level":"info","message":"Synced group TEST-5:USDSEK from database","timestamp":"2025-08-29T09:43:27.670Z"}
+{"level":"info","message":"Synced group TEST-5:USDSGD from database","timestamp":"2025-08-29T09:43:27.685Z"}
+{"level":"info","message":"Synced group TEST-5:USDTHB from database","timestamp":"2025-08-29T09:43:27.706Z"}
+{"level":"info","message":"Synced group TEST-5:USDTRY from database","timestamp":"2025-08-29T09:43:27.723Z"}
+{"level":"info","message":"Synced group TEST-5:USDTUSD from database","timestamp":"2025-08-29T09:43:27.741Z"}
+{"level":"info","message":"Synced group TEST-5:USDZAR from database","timestamp":"2025-08-29T09:43:27.757Z"}
+{"level":"info","message":"Synced group TEST-5:USOil from database","timestamp":"2025-08-29T09:43:27.766Z"}
+{"level":"info","message":"Synced group TEST-5:W20 from database","timestamp":"2025-08-29T09:43:27.781Z"}
+{"level":"info","message":"Synced group TEST-5:XAGUSD from database","timestamp":"2025-08-29T09:43:27.798Z"}
+{"level":"info","message":"Synced group TEST-5:XAUUSD from database","timestamp":"2025-08-29T09:43:27.812Z"}
+{"level":"info","message":"Synced group TEST-5:ZARJPY from database","timestamp":"2025-08-29T09:43:27.825Z"}
+{"level":"info","message":"Synced group TEST-5:AUDCNH from database","timestamp":"2025-08-29T09:43:27.836Z"}
+{"level":"info","message":"Synced group TEST-5:CNHJPY from database","timestamp":"2025-08-29T09:43:27.845Z"}
+{"level":"info","message":"Synced group TEST-5:EURCNH from database","timestamp":"2025-08-29T09:43:27.855Z"}
+{"level":"info","message":"Synced group TEST-5:GBPCNH from database","timestamp":"2025-08-29T09:43:27.865Z"}
+{"level":"info","message":"Synced group TEST-5:NZDCNH from database","timestamp":"2025-08-29T09:43:27.876Z"}
+{"level":"info","message":"Synced group TEST-5:AUDHKD from database","timestamp":"2025-08-29T09:43:27.884Z"}
+{"level":"info","message":"Synced group TEST-5:CADHKD from database","timestamp":"2025-08-29T09:43:27.898Z"}
+{"level":"info","message":"Synced group TEST-5:CHFHKD from database","timestamp":"2025-08-29T09:43:27.915Z"}
+{"level":"info","message":"Synced group TEST-5:EURDKK from database","timestamp":"2025-08-29T09:43:27.927Z"}
+{"level":"info","message":"Synced group TEST-5:EURHKD from database","timestamp":"2025-08-29T09:43:27.946Z"}
+{"level":"info","message":"Synced group TEST-5:EURHUF from database","timestamp":"2025-08-29T09:43:27.960Z"}
+{"level":"info","message":"Synced group TEST-5:EURMXN from database","timestamp":"2025-08-29T09:43:27.976Z"}
+{"level":"info","message":"Synced group TEST-5:GBPHKD from database","timestamp":"2025-08-29T09:43:27.992Z"}
+{"level":"info","message":"Synced group TEST-5:GBPMXN from database","timestamp":"2025-08-29T09:43:28.005Z"}
+{"level":"info","message":"Synced group TEST-5:HKDJPY from database","timestamp":"2025-08-29T09:43:28.018Z"}
+{"level":"info","message":"Synced group TEST-5:MXNJPY from database","timestamp":"2025-08-29T09:43:28.030Z"}
+{"level":"info","message":"Synced group TEST-5:NZDHKD from database","timestamp":"2025-08-29T09:43:28.042Z"}
+{"level":"info","message":"Synced group TEST-5:NZDSGD from database","timestamp":"2025-08-29T09:43:28.053Z"}
+{"level":"info","message":"Synced group TEST-5:SGDHKD from database","timestamp":"2025-08-29T09:43:28.064Z"}
+{"level":"info","message":"Synced group TEST-5:TRYJPY from database","timestamp":"2025-08-29T09:43:28.074Z"}
+{"level":"info","message":"Synced group TEST-5:USDDKK from database","timestamp":"2025-08-29T09:43:28.085Z"}
+{"level":"info","message":"Synced group TEST-5:USDHKD from database","timestamp":"2025-08-29T09:43:28.095Z"}
+{"level":"info","message":"Synced group TEST-5:USDHUF from database","timestamp":"2025-08-29T09:43:28.104Z"}
+{"level":"info","message":"Synced group TEST-5:GAUCNH from database","timestamp":"2025-08-29T09:43:28.114Z"}
+{"level":"info","message":"Synced group TEST-5:GAUUSD from database","timestamp":"2025-08-29T09:43:28.125Z"}
+{"level":"info","message":"Synced group TEST-5:XAGAUD from database","timestamp":"2025-08-29T09:43:28.136Z"}
+{"level":"info","message":"Synced group TEST-5:XAGEUR from database","timestamp":"2025-08-29T09:43:28.146Z"}
+{"level":"info","message":"Synced group TEST-5:XAUAUD from database","timestamp":"2025-08-29T09:43:28.160Z"}
+{"level":"info","message":"Synced group TEST-5:XAUCNH from database","timestamp":"2025-08-29T09:43:28.170Z"}
+{"level":"info","message":"Synced group TEST-5:XAUEUR from database","timestamp":"2025-08-29T09:43:28.180Z"}
+{"level":"info","message":"Synced group TEST-5:XAUGBP from database","timestamp":"2025-08-29T09:43:28.189Z"}
+{"level":"info","message":"Synced group TEST-5:XAUJPY from database","timestamp":"2025-08-29T09:43:28.200Z"}
+{"level":"info","message":"Synced group TEST-5:XPDUSD from database","timestamp":"2025-08-29T09:43:28.210Z"}
+{"level":"info","message":"Synced group TEST-5:XPTUSD from database","timestamp":"2025-08-29T09:43:28.220Z"}
+{"level":"info","message":"Synced group TEST-5:UKOUSD from database","timestamp":"2025-08-29T09:43:28.229Z"}
+{"level":"info","message":"Synced group TEST-5:USOUSD from database","timestamp":"2025-08-29T09:43:28.241Z"}
+{"level":"info","message":"Synced group TEST-5:COCOA from database","timestamp":"2025-08-29T09:43:28.253Z"}
+{"level":"info","message":"Synced group TEST-5:COFFEE_ARABICA from database","timestamp":"2025-08-29T09:43:28.263Z"}
+{"level":"info","message":"Synced group TEST-5:COFFEE_ROBUSTA from database","timestamp":"2025-08-29T09:43:28.273Z"}
+{"level":"info","message":"Synced group TEST-5:COTTON from database","timestamp":"2025-08-29T09:43:28.288Z"}
+{"level":"info","message":"Synced group TEST-5:GASOIL from database","timestamp":"2025-08-29T09:43:28.301Z"}
+{"level":"info","message":"Synced group TEST-5:GASOLINE from database","timestamp":"2025-08-29T09:43:28.312Z"}
+{"level":"info","message":"Synced group TEST-5:ORANGE-JUICE from database","timestamp":"2025-08-29T09:43:28.323Z"}
+{"level":"info","message":"Synced group TEST-5:SOYBEAN from database","timestamp":"2025-08-29T09:43:28.333Z"}
+{"level":"info","message":"Synced group TEST-5:SUGAR-RAW from database","timestamp":"2025-08-29T09:43:28.344Z"}
+{"level":"info","message":"Synced group TEST-5:WHEAT from database","timestamp":"2025-08-29T09:43:28.356Z"}
+{"level":"info","message":"Synced group TEST-5:GER40 from database","timestamp":"2025-08-29T09:43:28.366Z"}
+{"level":"info","message":"Synced group TEST-5:NAS100 from database","timestamp":"2025-08-29T09:43:28.377Z"}
+{"level":"info","message":"Synced group TEST-5:SPX500 from database","timestamp":"2025-08-29T09:43:28.388Z"}
+{"level":"info","message":"Synced group TEST-5:ESP35 from database","timestamp":"2025-08-29T09:43:28.401Z"}
+{"level":"info","message":"Synced group TEST-5:EU50 from database","timestamp":"2025-08-29T09:43:28.411Z"}
+{"level":"info","message":"Synced group TEST-5:FRA40 from database","timestamp":"2025-08-29T09:43:28.424Z"}
+{"level":"info","message":"Synced group TEST-5:HK50 from database","timestamp":"2025-08-29T09:43:28.435Z"}
+{"level":"info","message":"Synced group TEST-5:JPN225 from database","timestamp":"2025-08-29T09:43:28.448Z"}
+{"level":"info","message":"Synced group TEST-5:US Small Cap 2000 from database","timestamp":"2025-08-29T09:43:28.463Z"}
+{"level":"info","message":"Synced group TEST-5:ADAUSD from database","timestamp":"2025-08-29T09:43:28.473Z"}
+{"level":"info","message":"Synced group TEST-5:ALGUSD from database","timestamp":"2025-08-29T09:43:28.484Z"}
+{"level":"info","message":"Synced group TEST-5:ATMUSD from database","timestamp":"2025-08-29T09:43:28.498Z"}
+{"level":"info","message":"Synced group TEST-5:AVEUSD from database","timestamp":"2025-08-29T09:43:28.510Z"}
+{"level":"info","message":"Synced group TEST-5:AVXUSD from database","timestamp":"2025-08-29T09:43:28.520Z"}
+{"level":"info","message":"Synced group TEST-5:AXSUSD from database","timestamp":"2025-08-29T09:43:28.529Z"}
+{"level":"info","message":"Synced group TEST-5:BATUSD from database","timestamp":"2025-08-29T09:43:28.540Z"}
+{"level":"info","message":"Synced group TEST-5:BNBUSD from database","timestamp":"2025-08-29T09:43:28.552Z"}
+{"level":"info","message":"Synced group TEST-5:BTCEUR from database","timestamp":"2025-08-29T09:43:28.562Z"}
+{"level":"info","message":"Synced group TEST-5:CHRUSD from database","timestamp":"2025-08-29T09:43:28.571Z"}
+{"level":"info","message":"Synced group TEST-5:COMUSD from database","timestamp":"2025-08-29T09:43:28.585Z"}
+{"level":"info","message":"Synced group TEST-5:CRVUSD from database","timestamp":"2025-08-29T09:43:28.594Z"}
+{"level":"info","message":"Synced group TEST-5:DOGUSD from database","timestamp":"2025-08-29T09:43:28.605Z"}
+{"level":"info","message":"Synced group TEST-5:DOTUSD from database","timestamp":"2025-08-29T09:43:28.615Z"}
+{"level":"info","message":"Synced group TEST-5:DSHUSD from database","timestamp":"2025-08-29T09:43:28.626Z"}
+{"level":"info","message":"Synced group TEST-5:ENJUSD from database","timestamp":"2025-08-29T09:43:28.635Z"}
+{"level":"info","message":"Synced group TEST-5:EOSUSD from database","timestamp":"2025-08-29T09:43:28.646Z"}
+{"level":"info","message":"Synced group TEST-5:GRTUSD from database","timestamp":"2025-08-29T09:43:28.654Z"}
+{"level":"info","message":"Synced group TEST-5:INCUSD from database","timestamp":"2025-08-29T09:43:28.666Z"}
+{"level":"info","message":"Synced group TEST-5:KNCUSD from database","timestamp":"2025-08-29T09:43:28.676Z"}
+{"level":"info","message":"Synced group TEST-5:LNKUSD from database","timestamp":"2025-08-29T09:43:28.691Z"}
+{"level":"info","message":"Synced group TEST-5:LRCUSD from database","timestamp":"2025-08-29T09:43:28.704Z"}
+{"level":"info","message":"Synced group TEST-5:MANUSD from database","timestamp":"2025-08-29T09:43:28.714Z"}
+{"level":"info","message":"Synced group TEST-5:MKRUSD from database","timestamp":"2025-08-29T09:43:28.728Z"}
+{"level":"info","message":"Synced group TEST-5:NERUSD from database","timestamp":"2025-08-29T09:43:28.741Z"}
+{"level":"info","message":"Synced group TEST-5:OMGUSD from database","timestamp":"2025-08-29T09:43:28.752Z"}
+{"level":"info","message":"Synced group TEST-5:SKLUSD from database","timestamp":"2025-08-29T09:43:28.767Z"}
+{"level":"info","message":"Synced group TEST-5:SNDUSD from database","timestamp":"2025-08-29T09:43:28.777Z"}
+{"level":"info","message":"Synced group TEST-5:SNXUSD from database","timestamp":"2025-08-29T09:43:28.787Z"}
+{"level":"info","message":"Synced group TEST-5:SOLUSD from database","timestamp":"2025-08-29T09:43:28.804Z"}
+{"level":"info","message":"Synced group TEST-5:SXPUSD from database","timestamp":"2025-08-29T09:43:28.818Z"}
+{"level":"info","message":"Synced group TEST-5:TRXUSD from database","timestamp":"2025-08-29T09:43:28.832Z"}
+{"level":"info","message":"Synced group TEST-5:UNIUSD from database","timestamp":"2025-08-29T09:43:28.842Z"}
+{"level":"info","message":"Synced group TEST-5:XBNUSD from database","timestamp":"2025-08-29T09:43:28.853Z"}
+{"level":"info","message":"Synced group TEST-5:XETEUR from database","timestamp":"2025-08-29T09:43:28.865Z"}
+{"level":"info","message":"Synced group TEST-5:XETUSD from database","timestamp":"2025-08-29T09:43:28.875Z"}
+{"level":"info","message":"Synced group TEST-5:XLCUSD from database","timestamp":"2025-08-29T09:43:28.884Z"}
+{"level":"info","message":"Synced group TEST-5:XLMUSD from database","timestamp":"2025-08-29T09:43:28.896Z"}
+{"level":"info","message":"Synced group TEST-5:XMRUSD from database","timestamp":"2025-08-29T09:43:28.908Z"}
+{"level":"info","message":"Synced group TEST-5:XRPUSD from database","timestamp":"2025-08-29T09:43:28.918Z"}
+{"level":"info","message":"Synced group TEST-5:XSIUSD from database","timestamp":"2025-08-29T09:43:28.930Z"}
+{"level":"info","message":"Synced group TEST-5:XTZUSD from database","timestamp":"2025-08-29T09:43:28.944Z"}
+{"level":"info","message":"Superadmin 1 copied 174 instruments from VIP to TEST-5","timestamp":"2025-08-29T09:43:28.990Z"}
+{"level":"info","message":"Authentication successful for user 1 on PUT /Royal+/AUDCAD","timestamp":"2025-08-29T09:44:42.082Z"}
+{"level":"info","message":"Updated group Royal+:AUDCAD fields: profit","timestamp":"2025-08-29T09:44:42.138Z"}
+{"level":"info","message":"Group updated by admin 1: Royal+:AUDCAD","timestamp":"2025-08-29T09:44:42.163Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-08-29T09:59:46.279Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-08-29T09:59:46.292Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-08-29T09:59:46.910Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-08-29T09:59:47.642Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-08-29T09:59:48.162Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-08-29T09:59:48.578Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-08-29T09:59:49.235Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-08-29T09:59:49.763Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-08-29T09:59:50.389Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-08-29T09:59:50.829Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-08-29T09:59:51.382Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-08-29T09:59:51.987Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-08-29T09:59:52.585Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-08-29T09:59:53.163Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-08-29T09:59:53.677Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-08-29T09:59:54.282Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-08-29T09:59:54.873Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-08-29T09:59:55.441Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-08-29T09:59:55.601Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 9319ms","timestamp":"2025-08-29T09:59:55.601Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-08-29T09:59:55.614Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-08-29T10:04:16.091Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-08-29T10:04:16.095Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-08-29T10:04:16.345Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-08-29T10:04:16.624Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-08-29T10:04:16.838Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-08-29T10:04:17.116Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-08-29T10:04:17.384Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-08-29T10:04:17.599Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-08-29T10:04:17.758Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-08-29T10:04:17.940Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-08-29T10:04:18.078Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-08-29T10:04:18.215Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-08-29T10:04:18.343Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-08-29T10:04:18.469Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-08-29T10:04:18.668Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-08-29T10:04:18.800Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-08-29T10:04:19.038Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-08-29T10:04:19.237Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-08-29T10:04:19.275Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 3183ms","timestamp":"2025-08-29T10:04:19.275Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-08-29T10:04:19.280Z"}
+{"level":"info","message":"Authentication successful for user 1 on GET /dropdown","timestamp":"2025-08-29T10:06:22.743Z"}
+{"level":"info","message":"Superadmin 1 accessed groups dropdown - 12 groups","timestamp":"2025-08-29T10:06:22.775Z"}
