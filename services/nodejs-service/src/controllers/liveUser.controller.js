@@ -1,6 +1,7 @@
 const LiveUser = require('../models/liveUser.model');
 const { generateAccountNumber } = require('../services/accountNumber.service');
 const { hashPassword, generateViewPassword, hashViewPassword, compareViewPassword } = require('../services/password.service');
+const LiveUserAuthService = require('../services/liveUser.auth.service');
 const { generateReferralCode } = require('../services/referralCode.service');
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
@@ -303,19 +304,9 @@ async function login(req, res, next) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     
-    // Check master password first
-    const validMasterPassword = await comparePassword(password, user.password);
-    let isViewerLogin = false;
-    
-    // If master password fails, check view_password
-    if (!validMasterPassword && user.view_password) {
-      const validViewPassword = await compareViewPassword(password, user.view_password);
-      if (validViewPassword) {
-        isViewerLogin = true;
-      } else {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-      }
-    } else if (!validMasterPassword) {
+    // Validate credentials using auth service
+    const { isValid, loginType } = await LiveUserAuthService.validateCredentials(password, user);
+    if (!isValid) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     // Passed authentication: reset rate limit
@@ -325,18 +316,8 @@ async function login(req, res, next) {
     const jwt = require('jsonwebtoken');
     const { v4: uuidv4 } = require('uuid');
     const sessionId = uuidv4();
-    const jwtPayload = {
-      user_type: user.user_type,
-      mam_status: user.mam_status,
-      pam_status: user.pam_status,
-      sending_orders: user.sending_orders,
-      group: user.group,
-      account_number: user.account_number,
-      session_id: sessionId,
-      user_id: user.id,
-      status: user.status,
-      role: isViewerLogin ? 'viewer' : 'user' // Set role based on login type
-    };
+    // Generate JWT payload using auth service
+    const jwtPayload = LiveUserAuthService.generateJWTPayload(user, loginType, sessionId);
     // Generate access token (15 min expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '15m', jwtid: sessionId });
     
@@ -352,14 +333,8 @@ async function login(req, res, next) {
       user.id, 
       sessionId, 
       {
-        user_type: user.user_type,
-        mam_status: user.mam_status,
-        pam_status: user.pam_status,
-        sending_orders: user.sending_orders,
-        group: user.group,
-        account_number: user.account_number,
+        ...jwtPayload,
         jwt: token,
-        user_id: user.id,
         refresh_token: refreshToken // Store refresh token in session for reference
       },
       'live',
@@ -433,17 +408,13 @@ async function refreshToken(req, res) {
 
     // Generate new access token
     const sessionId = tokenData.sessionId; // Keep the same session
-    const jwtPayload = {
-      user_type: user.user_type,
-      mam_status: user.mam_status,
-      pam_status: user.pam_status,
-      sending_orders: user.sending_orders,
-      group: user.group,
-      account_number: user.account_number,
-      session_id: sessionId,
-      user_id: user.id,
-      status: user.status
-    };
+    
+    // Determine login type from stored session data (fallback to 'master' for existing sessions)
+    const storedRole = tokenData.role || 'trader';
+    const loginType = storedRole === 'viewer' ? 'view' : 'master';
+    
+    // Generate JWT payload using auth service
+    const jwtPayload = LiveUserAuthService.generateJWTPayload(user, loginType, sessionId);
     
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
       expiresIn: '15m', 
