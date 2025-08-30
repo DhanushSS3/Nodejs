@@ -1,6 +1,6 @@
 const LiveUser = require('../models/liveUser.model');
 const { generateAccountNumber } = require('../services/accountNumber.service');
-const { hashPassword } = require('../services/password.service');
+const { hashPassword, generateViewPassword, hashViewPassword, compareViewPassword } = require('../services/password.service');
 const { generateReferralCode } = require('../services/referralCode.service');
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
@@ -31,7 +31,7 @@ async function signup(req, res) {
       name, phone_number, email, password, city, state, country, pincode, group,
       bank_ifsc_code, bank_account_number, bank_holder_name, bank_branch_name,
       security_question, security_answer, address_proof, is_self_trading, is_active, 
-      id_proof, address_proof_image, id_proof_image, 
+      id_proof, address_proof_image, id_proof_image, book,
       ...optionalFields
     } = req.body;
 
@@ -97,6 +97,10 @@ async function signup(req, res) {
       // Hash password
       const hashedPassword = await hashPassword(password);
 
+      // Generate and hash view password
+      const plainViewPassword = generateViewPassword(14);
+      const hashedViewPassword = await hashViewPassword(plainViewPassword);
+
       // Handle file uploads
       let address_proof_image = req.files && req.files.address_proof_image 
         ? `/uploads/${req.files.address_proof_image[0].filename}` 
@@ -147,6 +151,8 @@ async function signup(req, res) {
         is_active,
         account_number,
         user_type: 'live',
+        view_password: hashedViewPassword,
+        book: book || null,
         ...optionalFields
       }, { transaction });
 
@@ -222,7 +228,8 @@ async function signup(req, res) {
           referral_code: user.referral_code,
           name: user.name,
           is_active: user.is_active,
-          group: user.group
+          group: user.group,
+          view_password: plainViewPassword // Return plain password only once
         }
       };
     });
@@ -278,6 +285,7 @@ async function signup(req, res) {
 
 /**
  * Live User Login - returns JWT on success
+ * Supports both master password and view_password authentication
  */
 async function login(req, res, next) {
   const { email, password } = req.body;
@@ -294,8 +302,20 @@ async function login(req, res, next) {
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-    const valid = await comparePassword(password, user.password);
-    if (!valid) {
+    
+    // Check master password first
+    const validMasterPassword = await comparePassword(password, user.password);
+    let isViewerLogin = false;
+    
+    // If master password fails, check view_password
+    if (!validMasterPassword && user.view_password) {
+      const validViewPassword = await compareViewPassword(password, user.view_password);
+      if (validViewPassword) {
+        isViewerLogin = true;
+      } else {
+        return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      }
+    } else if (!validMasterPassword) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     // Passed authentication: reset rate limit
@@ -314,7 +334,8 @@ async function login(req, res, next) {
       account_number: user.account_number,
       session_id: sessionId,
       user_id: user.id,
-      status: user.status
+      status: user.status,
+      role: isViewerLogin ? 'viewer' : 'user' // Set role based on login type
     };
     // Generate access token (15 min expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '15m', jwtid: sessionId });
@@ -505,4 +526,70 @@ async function logout(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken, logout };
+/**
+ * Regenerate view password for a live user
+ * POST /users/{id}/regenerate-view-password
+ */
+async function regenerateViewPassword(req, res) {
+  const { id } = req.params;
+  const operationId = `regenerate_view_password_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  try {
+    // Validate that the user exists
+    const user = await LiveUser.findByPk(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Execute regeneration within transaction
+    const result = await TransactionService.executeWithRetry(async (transaction) => {
+      // Generate new view password
+      const plainViewPassword = generateViewPassword(14);
+      const hashedViewPassword = await hashViewPassword(plainViewPassword);
+
+      // Update user with new view password
+      await user.update({ 
+        view_password: hashedViewPassword 
+      }, { transaction });
+
+      logger.financial('view_password_regenerated', {
+        operationId,
+        userId: user.id,
+        account_number: user.account_number,
+        email: user.email
+      });
+
+      return {
+        success: true,
+        message: 'View password regenerated successfully',
+        data: {
+          view_password: plainViewPassword // Return plain password only once
+        }
+      };
+    });
+
+    logger.transactionSuccess('regenerate_view_password', { 
+      operationId, 
+      userId: user.id 
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    logger.transactionFailure('regenerate_view_password', error, { 
+      operationId, 
+      userId: id 
+    });
+
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error',
+      operationId 
+    });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout, regenerateViewPassword };

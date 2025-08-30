@@ -1,6 +1,6 @@
 const express = require('express');
-const { signup } = require('../controllers/liveUser.controller');
-const { body } = require('express-validator');
+const { signup, regenerateViewPassword } = require('../controllers/liveUser.controller');
+const { body, param } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
@@ -72,6 +72,7 @@ router.post('/signup',
     body('id_proof_image').optional(),
     body('is_self_trading').notEmpty().isInt({ min: 0, max: 1 }).withMessage('is_self_trading must be 0 or 1'),
     body('is_active').notEmpty().isInt({ min: 0, max: 1 }).withMessage('is_active must be 0 or 1'),
+    body('book').optional().isLength({ max: 5 }).withMessage('book must be maximum 5 characters').isAlphanumeric().withMessage('book must contain only alphanumeric characters'),
   ],
   signup
 );
@@ -206,5 +207,54 @@ router.post('/refresh-token',
  *         description: Internal server error
  */
 router.post('/logout', authenticateJWT, require('../controllers/liveUser.controller').logout);
+
+/**
+ * @swagger
+ * /api/live-users/{id}/regenerate-view-password:
+ *   post:
+ *     summary: Regenerate view password for a live user
+ *     tags: [Live Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Live user ID
+ *     responses:
+ *       200:
+ *         description: View password regenerated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     view_password:
+ *                       type: string
+ *                       description: New plain text view password (returned only once)
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/:id/regenerate-view-password',
+  authenticateJWT,
+  [
+    param('id').isInt({ min: 1 }).withMessage('User ID must be a positive integer')
+  ],
+  handleValidationErrors,
+  regenerateViewPassword
+);
 
 module.exports = router;
