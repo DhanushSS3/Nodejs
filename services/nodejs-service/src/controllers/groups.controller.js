@@ -12,6 +12,28 @@ const sequelize = require('../config/db');
 
 class GroupsController {
   /**
+   * Calculate half spread for a group item
+   * @param {Object} group - Group object with spread and spread_pip fields
+   * @returns {number} - Calculated half spread
+   */
+  _calculateHalfSpread(group) {
+    const spread = parseFloat(group.spread) || 0;
+    const spreadPip = parseFloat(group.spread_pip) || 0;
+    return (spread * spreadPip) / 2;
+  }
+
+  /**
+   * Add half spread calculations to groups array for user access
+   * @param {Array} groups - Array of group objects
+   * @returns {Array} - Groups with half_spread field added
+   */
+  _addHalfSpreadsToGroups(groups) {
+    return groups.map(group => ({
+      ...group,
+      half_spread: this._calculateHalfSpread(group)
+    }));
+  }
+  /**
    * Get group by name and symbol
    * GET /api/groups/:groupName/:symbol
    */
@@ -130,11 +152,12 @@ class GroupsController {
           logger.info(`After caching, found ${cachedGroups.length} groups for ${groupName}`);
           
           // If cache still returns 0, return the DB groups directly
-          const groupsToReturn = cachedGroups.length > 0 ? cachedGroups : dbGroups.map(group => ({
+          let groupsToReturn = cachedGroups.length > 0 ? cachedGroups : dbGroups.map(group => ({
             id: group.id,
             symbol: group.symbol,
             name: group.name,
             spread: group.spread,
+            spread_pip: group.spread_pip,
             margin: group.margin,
             swap_long: group.swap_long,
             swap_short: group.swap_short,
@@ -206,6 +229,18 @@ class GroupsController {
             margin_rate: group.margin_rate
           }));
           
+          // Add half_spread calculations for user access
+          if (isUserAccess) {
+            groupsToReturn = groupsToReturn.map(group => {
+              const spread = parseFloat(group.spread) || 0;
+              const spreadPip = parseFloat(group.spread_pip) || 0;
+              return {
+                ...group,
+                half_spread: (spread * spreadPip) / 2
+              };
+            });
+          }
+          
           return res.status(200).json({
             success: true,
             message: `Groups retrieved successfully for ${groupName} (loaded from database)`,
@@ -229,13 +264,26 @@ class GroupsController {
         }
       }
 
+      // Add half_spread calculations for user access
+      let finalGroups = groups;
+      if (isUserAccess) {
+        finalGroups = groups.map(group => {
+          const spread = parseFloat(group.spread) || 0;
+          const spreadPip = parseFloat(group.spread_pip) || 0;
+          return {
+            ...group,
+            half_spread: (spread * spreadPip) / 2
+          };
+        });
+      }
+      
       res.status(200).json({
         success: true,
         message: `Groups retrieved successfully for ${groupName}`,
         data: {
           group_name: groupName,
-          symbols: groups.length,
-          groups: groups,
+          symbols: finalGroups.length,
+          groups: finalGroups,
           access_type: accessType.toLowerCase()
         }
       });
@@ -353,7 +401,7 @@ class GroupsController {
           if (spread !== null && spreadPip !== null) {
             const spreadValue = parseFloat(spread) || 0;
             const spreadPipValue = parseFloat(spreadPip) || 0;
-            const halfSpread = spreadValue * spreadPipValue;
+            const halfSpread = (spreadValue * spreadPipValue) / 2;
             
             halfSpreads[symbol] = halfSpread;
             processedCount++;

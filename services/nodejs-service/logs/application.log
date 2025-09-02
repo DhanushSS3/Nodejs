@@ -11387,3 +11387,138 @@
 {"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-02T07:30:04.164Z"}
 {"level":"info","message":"Total keys found across cluster: 174","timestamp":"2025-09-02T07:30:04.164Z"}
 {"level":"info","message":"Successfully processed 174/174 instruments for group ECN","timestamp":"2025-09-02T07:30:04.395Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-02T07:31:15.725Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-02T07:31:15.730Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-02T07:31:16.147Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-02T07:31:16.556Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-02T07:31:16.924Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-02T07:31:17.238Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-02T07:31:17.542Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-02T07:31:17.839Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-02T07:31:18.210Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-02T07:31:18.585Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-02T07:31:18.877Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-02T07:31:19.213Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-02T07:31:19.524Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-02T07:31:19.833Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-02T07:31:20.159Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-02T07:31:20.492Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-02T07:31:20.826Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-02T07:31:21.128Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-02T07:31:21.203Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 5476ms","timestamp":"2025-09-02T07:31:21.203Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-02T07:31:21.211Z"}
+{"level":"info","message":"Authentication successful for user 5 on GET /half-spreads","timestamp":"2025-09-02T07:31:29.125Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-02T07:31:29.126Z"}
+{"level":"info","message":"User group from JWT: \"ECN\"","timestamp":"2025-09-02T07:31:29.126Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:31:29.126Z"}
+{"level":"info","message":"Found 174 keys on node 127.0.0.1:7001","timestamp":"2025-09-02T07:31:29.130Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-02T07:31:29.135Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-02T07:31:29.138Z"}
+{"level":"info","message":"Total keys found across cluster: 174","timestamp":"2025-09-02T07:31:29.138Z"}
+{"level":"info","message":"Successfully processed 174/174 instruments for group ECN","timestamp":"2025-09-02T07:31:29.418Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-02T07:37:11.454Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-02T07:37:11.457Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-02T07:37:11.908Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-02T07:37:12.246Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-02T07:37:12.613Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-02T07:37:12.981Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-02T07:37:13.383Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-02T07:37:14.039Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-02T07:37:14.577Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-02T07:37:15.288Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-02T07:37:15.894Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-02T07:37:16.358Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-02T07:37:16.705Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-02T07:37:16.998Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-02T07:37:17.254Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-02T07:37:17.525Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-02T07:37:17.820Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-02T07:37:18.080Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-02T07:37:18.155Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 6700ms","timestamp":"2025-09-02T07:37:18.155Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-02T07:37:18.163Z"}
+{"level":"info","message":"Authentication successful for user 5 on GET /half-spreads","timestamp":"2025-09-02T07:37:26.113Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-02T07:37:26.115Z"}
+{"level":"info","message":"User group from JWT: \"ECN\"","timestamp":"2025-09-02T07:37:26.115Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:37:26.115Z"}
+{"level":"info","message":"Found 174 keys on node 127.0.0.1:7001","timestamp":"2025-09-02T07:37:26.119Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-02T07:37:26.121Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-02T07:37:26.123Z"}
+{"level":"info","message":"Total keys found across cluster: 174","timestamp":"2025-09-02T07:37:26.123Z"}
+{"level":"info","message":"Successfully processed 174/174 instruments for group ECN","timestamp":"2025-09-02T07:37:26.485Z"}
+{"level":"info","message":"Authentication successful for user 5 on GET /my-group","timestamp":"2025-09-02T07:37:43.366Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-02T07:37:43.368Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"ECN\"","timestamp":"2025-09-02T07:37:43.368Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"ECN\"","timestamp":"2025-09-02T07:37:43.368Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-02T07:37:18.163Z\",\"total_synced\":1627,\"sync_duration_ms\":6700,\"sync_version\":\"1.0\"}","timestamp":"2025-09-02T07:37:43.385Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{ECN}:* for group: ECN","timestamp":"2025-09-02T07:37:43.386Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:37:43.409Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{ECN}:UK100\",\"groups:{ECN}:USDTUSD\",\"groups:{ECN}:EURZAR\"]...","timestamp":"2025-09-02T07:37:43.409Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:37:43.980Z"}
+{"level":"info","message":"[USER] Found 174 groups for ECN","timestamp":"2025-09-02T07:37:43.980Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: Cannot read properties of undefined (reading '_addHalfSpreadsToGroups')","stack":"TypeError: Cannot read properties of undefined (reading '_addHalfSpreadsToGroups')\n    at getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:263:28)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)","timestamp":"2025-09-02T07:37:43.983Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-02T07:41:17.806Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-02T07:41:17.814Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-02T07:41:18.393Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-02T07:41:18.871Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-02T07:41:19.320Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-02T07:41:19.643Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-02T07:41:19.951Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-02T07:41:20.253Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-02T07:41:20.607Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-02T07:41:20.953Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-02T07:41:21.285Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-02T07:41:21.652Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-02T07:41:22.066Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-02T07:41:22.475Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-02T07:41:22.816Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-02T07:41:23.287Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-02T07:41:23.637Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-02T07:41:23.935Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-02T07:41:24.011Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 6203ms","timestamp":"2025-09-02T07:41:24.011Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-02T07:41:24.019Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /my-group: jwt expired","timestamp":"2025-09-02T07:41:31.664Z"}
+{"level":"info","message":"Authentication successful for user 5 on GET /my-group","timestamp":"2025-09-02T07:41:52.286Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-02T07:41:52.287Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"ECN\"","timestamp":"2025-09-02T07:41:52.288Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"ECN\"","timestamp":"2025-09-02T07:41:52.289Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-02T07:41:24.019Z\",\"total_synced\":1627,\"sync_duration_ms\":6203,\"sync_version\":\"1.0\"}","timestamp":"2025-09-02T07:41:52.315Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{ECN}:* for group: ECN","timestamp":"2025-09-02T07:41:52.315Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:41:52.323Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{ECN}:UK100\",\"groups:{ECN}:USDTUSD\",\"groups:{ECN}:EURZAR\"]...","timestamp":"2025-09-02T07:41:52.323Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:41:52.568Z"}
+{"level":"info","message":"[USER] Found 174 groups for ECN","timestamp":"2025-09-02T07:41:52.568Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: Cannot read properties of undefined (reading '_calculateHalfSpread')","stack":"TypeError: Cannot read properties of undefined (reading '_calculateHalfSpread')\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:268:29\n    at Array.map (<anonymous>)\n    at getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:266:30)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)","timestamp":"2025-09-02T07:41:52.569Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-02T07:43:35.300Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-02T07:43:35.308Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-02T07:43:35.705Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-02T07:43:36.434Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-02T07:43:36.814Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-02T07:43:37.134Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-02T07:43:37.446Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-02T07:43:37.773Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-02T07:43:38.083Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-02T07:43:38.646Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-02T07:43:40.040Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-02T07:43:40.515Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-02T07:43:41.248Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-02T07:43:41.804Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-02T07:43:42.183Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-02T07:43:42.594Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-02T07:43:43.433Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-02T07:43:43.873Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-02T07:43:44.012Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 8710ms","timestamp":"2025-09-02T07:43:44.012Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-02T07:43:44.021Z"}
+{"level":"info","message":"Authentication successful for user 5 on GET /my-group","timestamp":"2025-09-02T07:44:46.117Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-02T07:44:46.118Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"ECN\"","timestamp":"2025-09-02T07:44:46.119Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"ECN\"","timestamp":"2025-09-02T07:44:46.119Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-02T07:43:44.021Z\",\"total_synced\":1627,\"sync_duration_ms\":8710,\"sync_version\":\"1.0\"}","timestamp":"2025-09-02T07:44:46.131Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{ECN}:* for group: ECN","timestamp":"2025-09-02T07:44:46.132Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:44:46.137Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{ECN}:UK100\",\"groups:{ECN}:USDTUSD\",\"groups:{ECN}:EURZAR\"]...","timestamp":"2025-09-02T07:44:46.138Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{ECN}:*","timestamp":"2025-09-02T07:44:46.418Z"}
+{"level":"info","message":"[USER] Found 174 groups for ECN","timestamp":"2025-09-02T07:44:46.419Z"}
