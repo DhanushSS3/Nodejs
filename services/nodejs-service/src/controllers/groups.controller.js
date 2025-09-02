@@ -241,6 +241,10 @@ class GroupsController {
             });
           }
           
+          if (isUserAccess) {
+            return res.status(200).json(groupsToReturn);
+          }
+          
           return res.status(200).json({
             success: true,
             message: `Groups retrieved successfully for ${groupName} (loaded from database)`,
@@ -275,6 +279,10 @@ class GroupsController {
             half_spread: (spread * spreadPip) / 2
           };
         });
+      }
+      
+      if (isUserAccess) {
+        return res.status(200).json(finalGroups);
       }
       
       res.status(200).json({
