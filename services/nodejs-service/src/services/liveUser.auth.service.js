@@ -60,6 +60,7 @@ class LiveUserAuthService {
     const role = this.getUserRole(loginType);
     
     return {
+      sub: user.id,
       user_type: user.user_type,
       mam_status: user.mam_status,
       pam_status: user.pam_status,
@@ -70,7 +71,9 @@ class LiveUserAuthService {
       user_id: user.id,
       status: user.status,
       role: role,
-      is_self_trading: user.is_self_trading
+      is_self_trading: user.is_self_trading,
+      is_active: user.is_active,
+      account_type: 'live'
     };
   }
 }

@@ -237,6 +237,11 @@ async function login(req, res) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
+    // Check if user account is active
+    if (!user.is_active) {
+      return res.status(401).json({ success: false, message: 'User account is inactive' });
+    }
+
     const valid = await comparePassword(password, user.password);
     if (!valid) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
@@ -250,11 +255,15 @@ async function login(req, res) {
     const sessionId = uuidv4();
 
     const jwtPayload = {
+      sub: user.id,
       user_id: user.id,
       user_type: user.user_type,
       account_number: user.account_number,
       group: user.group,
       status: user.status,
+      is_active: user.is_active,
+      account_type: 'demo',
+      role: 'trader',
       session_id: sessionId
     };
 
@@ -339,11 +348,15 @@ async function refreshToken(req, res) {
 
     const sessionId = tokenData.sessionId;
     const jwtPayload = {
+      sub: user.id,
       user_id: user.id,
       user_type: user.user_type,
       account_number: user.account_number,
       group: user.group,
       status: user.status,
+      is_active: user.is_active,
+      account_type: 'demo',
+      role: 'trader',
       session_id: sessionId
     };
     

@@ -24,12 +24,18 @@ async function authenticateAdmin(req, res, next) {
       return res.status(401).json({ success: false, message: 'Token has been revoked' });
     }
 
+    // Check admin is_active status from JWT payload
+    if (!decoded.is_active) {
+      return res.status(401).json({ success: false, message: 'Admin account is inactive' });
+    }
+
     // Attach admin info to request
     req.admin = {
       id: sub,
       role,
       permissions,
       country_id,
+      is_active: decoded.is_active,
       jti
     };
 
@@ -55,13 +61,19 @@ function authenticateJWT(req, res, next) {
   const token = authHeader.split(' ')[1];
   const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
   
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, async (err, user) => {
     if (err) {
       logger.warn(`Authentication failed - Invalid or expired token for ${req.method} ${req.url}: ${err.message}`);
       return res.status(401).json({ success: false, message: 'Invalid or expired token' });
     }
     
-    logger.info(`Authentication successful for user ${user.sub || user.id} on ${req.method} ${req.url}`);
+    // Check user is_active status from JWT payload
+    if (!user.is_active) {
+      logger.warn(`Authentication failed - User ${user.sub || user.user_id || user.id} is inactive for ${req.method} ${req.url}`);
+      return res.status(401).json({ success: false, message: 'User account is inactive' });
+    }
+    
+    logger.info(`Authentication successful for user ${user.sub || user.user_id || user.id} on ${req.method} ${req.url}`);
     req.user = user;
     next();
   });

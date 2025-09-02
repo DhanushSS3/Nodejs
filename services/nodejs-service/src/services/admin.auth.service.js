@@ -103,6 +103,7 @@ class AdminAuthService {
       role,
       permissions,
       country_id: admin.country_id,
+      is_active: admin.is_active,
       jti,
     };
 

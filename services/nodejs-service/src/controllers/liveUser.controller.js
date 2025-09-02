@@ -304,6 +304,11 @@ async function login(req, res, next) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     
+    // Check if user account is active
+    if (!user.is_active) {
+      return res.status(401).json({ success: false, message: 'User account is inactive' });
+    }
+    
     // Validate credentials using auth service
     const { isValid, loginType } = await LiveUserAuthService.validateCredentials(password, user);
     if (!isValid) {
