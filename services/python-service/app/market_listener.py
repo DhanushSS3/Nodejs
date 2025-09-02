@@ -109,7 +109,7 @@ class MarketListener:
         try:
             # Parse JSON message with orjson (5-10x faster)
             data = orjson.loads(message)
-            
+            logger.debug(f"Received message: {data}")
             # Validate message structure
             if 'datafeeds' not in data:
                 logger.debug("Message does not contain datafeeds, skipping")
