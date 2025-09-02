@@ -328,4 +328,55 @@ router.get('/my-group',
   groupsController.getGroupsByName
 );
 
+/**
+ * @swagger
+ * /api/groups/half-spreads:
+ *   get:
+ *     summary: Get half spreads for user's group
+ *     description: Calculate and return half spreads for all instruments in user's group from JWT
+ *     tags: [Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Half spreads calculated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Half spreads calculated successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     total_instruments:
+ *                       type: integer
+ *                       example: 50
+ *                     half_spreads:
+ *                       type: object
+ *                       additionalProperties:
+ *                         type: number
+ *                       example:
+ *                         AUDCAD: 0.000035
+ *                         USDZAR: 4
+ *                         USDSGD: 2
+ *       400:
+ *         description: User group information not available
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: No instruments found for user's group
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/half-spreads', authenticateJWT, groupsController.getHalfSpreads);
+
 module.exports = router;

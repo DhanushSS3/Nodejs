@@ -251,6 +251,144 @@ class GroupsController {
   }
 
   /**
+   * Get half spreads for user's group
+   * GET /api/groups/half-spreads
+   */
+  async getHalfSpreads(req, res) {
+    const logger = require('../utils/logger');
+    const { redisCluster } = require('../../config/redis');
+    
+    try {
+      logger.info('=== CONTROLLER START: getHalfSpreads ===');
+      
+      // Extract group from JWT
+      const user = req.user;
+      if (!user || !user.group) {
+        logger.warn('User group not found in JWT token');
+        return res.status(400).json({
+          success: false,
+          message: 'User group information not available'
+        });
+      }
+      
+      const groupName = user.group;
+      logger.info(`User group from JWT: "${groupName}"`);
+      
+      // Scan for keys matching groups:{groupName}:*
+      const pattern = `groups:{${groupName}}:*`;
+      logger.info(`Scanning Redis cluster for pattern: ${pattern}`);
+      
+      let allKeys = [];
+      
+      try {
+        // Try to get keys from all cluster nodes
+        const nodes = redisCluster.nodes('master');
+        for (const node of nodes) {
+          try {
+            const nodeKeys = await node.keys(pattern);
+            allKeys = allKeys.concat(nodeKeys);
+            logger.info(`Found ${nodeKeys.length} keys on node ${node.options.host}:${node.options.port}`);
+          } catch (nodeError) {
+            logger.warn(`Failed to scan node ${node.options.host}:${node.options.port}:`, nodeError);
+          }
+        }
+      } catch (clusterError) {
+        logger.warn('Cluster scan failed, trying single node scan:', clusterError);
+        // Fallback to single node scan
+        allKeys = await redisCluster.keys(pattern);
+      }
+      
+      logger.info(`Total keys found across cluster: ${allKeys.length}`);
+      
+      if (allKeys.length === 0) {
+        // Fallback to database if no keys found in Redis
+        logger.warn(`No Redis keys found for group ${groupName}, checking database...`);
+        
+        const { Group } = require('../models');
+        const dbGroups = await Group.findAll({
+          where: { name: groupName },
+          attributes: ['symbol', 'spread', 'spread_pip']
+        });
+        
+        if (dbGroups.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: `No instruments found for group: ${groupName}`
+          });
+        }
+        
+        // Calculate half spreads from database data
+        const halfSpreads = {};
+        for (const group of dbGroups) {
+          const spread = parseFloat(group.spread) || 0;
+          const spreadPip = parseFloat(group.spread_pip) || 0;
+          halfSpreads[group.symbol] = (spread * spreadPip)/2;
+        }
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Half spreads calculated successfully (from database)',
+          data: {
+            group_name: groupName,
+            total_instruments: dbGroups.length,
+            half_spreads: halfSpreads
+          }
+        });
+      }
+      
+      // Process Redis keys to calculate half spreads
+      const halfSpreads = {};
+      let processedCount = 0;
+      
+      for (const key of allKeys) {
+        try {
+          // Extract symbol from key: groups:{groupName}:SYMBOL
+          const keyParts = key.split(':');
+          const symbol = keyParts[keyParts.length - 1];
+          
+          // Fetch spread and spread_pip fields
+          const fields = await redisCluster.hmget(key, 'spread', 'spread_pip');
+          const [spread, spreadPip] = fields;
+          
+          if (spread !== null && spreadPip !== null) {
+            const spreadValue = parseFloat(spread) || 0;
+            const spreadPipValue = parseFloat(spreadPip) || 0;
+            const halfSpread = spreadValue * spreadPipValue;
+            
+            halfSpreads[symbol] = halfSpread;
+            processedCount++;
+            
+            logger.debug(`${symbol}: spread=${spreadValue}, spread_pip=${spreadPipValue}, half_spread=${halfSpread}`);
+          } else {
+            logger.warn(`Missing spread/spread_pip data for ${symbol} in key ${key}`);
+          }
+        } catch (keyError) {
+          logger.warn(`Failed to process key ${key}:`, keyError);
+        }
+      }
+      
+      logger.info(`Successfully processed ${processedCount}/${allKeys.length} instruments for group ${groupName}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Half spreads calculated successfully',
+        data: {
+          group_name: groupName,
+          total_instruments: processedCount,
+          half_spreads: halfSpreads
+        }
+      });
+      
+    } catch (error) {
+      logger.error('Failed to calculate half spreads:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
    * Get specific fields from a group (optimized for trading calculations)
    * GET /api/groups/:groupName/:symbol/fields?fields=spread,margin,swap_buy
    */
