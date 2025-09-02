@@ -52,7 +52,8 @@ class GroupsController {
 
   /**
    * Get all groups by name (all symbols)
-   * GET /api/groups/:groupName
+   * GET /api/groups/admin/:groupName (admin access)
+   * GET /api/groups/my-group (user access - gets group from JWT)
    */
   async getGroupsByName(req, res) {
     const logger = require('../utils/logger');
@@ -60,39 +61,58 @@ class GroupsController {
     try {
       logger.info(`=== CONTROLLER START: getGroupsByName ===`);
     
-    // Decode URL-encoded group name (e.g., "Royal+" becomes "Royal ")
-    const { groupName: rawGroupName } = req.params;
-    const groupName = decodeURIComponent(rawGroupName);
+      let groupName;
+      let isUserAccess = false;
+      
+      // Check if this is user access (my-group route) or admin access
+      if (req.route.path === '/my-group') {
+        isUserAccess = true;
+        // Extract group from JWT for users
+        const user = req.user;
+        if (!user || !user.group) {
+          logger.warn('User group not found in JWT token');
+          return res.status(400).json({
+            success: false,
+            message: 'User group information not available'
+          });
+        }
+        groupName = user.group;
+        logger.info(`User access: extracting group from JWT: "${groupName}"`);
+      } else {
+        // Admin access - get group from URL parameter
+        const { groupName: rawGroupName } = req.params;
+        groupName = decodeURIComponent(rawGroupName);
+        logger.info(`Admin access: Raw groupName: "${rawGroupName}", Decoded: "${groupName}"`);
+        
+        if (!groupName) {
+          logger.warn('Group name is missing or empty');
+          return res.status(400).json({
+            success: false,
+            message: 'Group name is required'
+          });
+        }
+      }
 
-    logger.info(`Raw groupName: "${rawGroupName}", Decoded: "${groupName}"`);
-
-    if (!groupName) {
-      logger.warn('Group name is missing or empty');
-      return res.status(400).json({
-        success: false,
-        message: 'Group name is required'
-      });
-    }
-
-    logger.info(`Searching for groups with name: "${groupName}" (raw: "${rawGroupName}")`);
+      const accessType = isUserAccess ? 'USER' : 'ADMIN';
+      logger.info(`[${accessType}] Searching for groups with name: "${groupName}"`);
       
       // First check cache stats to see if cache is populated
       const cacheStats = await groupsCacheService.getCacheStats();
       logger.info(`Cache stats: ${JSON.stringify(cacheStats)}`);
 
       const groups = await groupsCacheService.getGroupsByName(groupName);
-      logger.info(`Found ${groups.length} groups for ${groupName}`);
+      logger.info(`[${accessType}] Found ${groups.length} groups for ${groupName}`);
 
       // If no groups found in cache, try fallback to database
       if (groups.length === 0) {
-        logger.warn(`No groups found in cache for ${groupName}, checking database...`);
+        logger.warn(`[${accessType}] No groups found in cache for ${groupName}, checking database...`);
         
         const { Group } = require('../models');
         const dbGroups = await Group.findAll({
           where: { name: groupName }
         });
         
-        logger.info(`Found ${dbGroups.length} groups in database for ${groupName}`);
+        logger.info(`[${accessType}] Found ${dbGroups.length} groups in database for ${groupName}`);
         
         if (dbGroups.length > 0) {
           logger.info(`Caching ${dbGroups.length} groups for ${groupName}...`);
@@ -192,11 +212,20 @@ class GroupsController {
             data: {
               group_name: groupName,
               symbols: groupsToReturn.length,
-              groups: groupsToReturn
+              groups: groupsToReturn,
+              access_type: accessType.toLowerCase()
             }
           });
         } else {
-          logger.warn(`No groups found in database for ${groupName}`);
+          logger.warn(`[${accessType}] No groups found in database for ${groupName}`);
+          return res.status(404).json({
+            success: false,
+            message: `No groups found for ${groupName}`,
+            data: {
+              group_name: groupName,
+              access_type: accessType.toLowerCase()
+            }
+          });
         }
       }
 
@@ -206,12 +235,14 @@ class GroupsController {
         data: {
           group_name: groupName,
           symbols: groups.length,
-          groups: groups
+          groups: groups,
+          access_type: accessType.toLowerCase()
         }
       });
 
     } catch (error) {
-      logger.error(`Failed to get groups for ${req.params.groupName}:`, error);
+      const groupParam = req.params.groupName || 'user-group-from-jwt';
+      logger.error(`Failed to get groups for ${groupParam}:`, error);
       res.status(500).json({
         success: false,
         message: 'Internal server error'

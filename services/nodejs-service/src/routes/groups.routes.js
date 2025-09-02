@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const groupsController = require('../controllers/groups.controller');
-const { authenticateJWT } = require('../middlewares/auth.middleware');
+const { authenticateAdmin, authenticateJWT, requirePermission } = require('../middlewares/auth.middleware');
 
 /**
  * @swagger
@@ -91,8 +91,8 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
 
 /**
  * Groups Routes
- * Public routes for group data access (used by trading engine)
- * All routes require authentication
+ * Admin-only routes for group data access with permission-based authorization
+ * All routes require admin authentication and GROUPS_READ permission
  */
 
 /**
@@ -103,7 +103,7 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
  *     description: Retrieve complete group configuration for trading calculations
  *     tags: [Groups]
  *     security:
- *       - bearerAuth: []
+ *       - adminAuth: []
  *     parameters:
  *       - in: path
  *         name: groupName
@@ -141,7 +141,8 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
  *         description: Unauthorized
  */
 router.get('/:groupName/:symbol', 
-  authenticateJWT, 
+  authenticateAdmin,
+  requirePermission('GROUPS_READ'),
   groupsController.getGroup
 );
 
@@ -153,7 +154,7 @@ router.get('/:groupName/:symbol',
  *     description: Retrieve only specific fields from group configuration for optimized trading calculations
  *     tags: [Groups]
  *     security:
- *       - bearerAuth: []
+ *       - adminAuth: []
  *     parameters:
  *       - in: path
  *         name: groupName
@@ -211,19 +212,20 @@ router.get('/:groupName/:symbol',
  *         description: Unauthorized
  */
 router.get('/:groupName/:symbol/fields', 
-  authenticateJWT, 
+  authenticateAdmin,
+  requirePermission('GROUPS_READ'),
   groupsController.getGroupFields
 );
 
 /**
  * @swagger
- * /api/groups/{groupName}:
+ * /api/groups/admin/{groupName}:
  *   get:
- *     summary: Get all symbols for a group
- *     description: Retrieve all trading symbols available for a specific group
+ *     summary: Get all symbols for a group (Admin access)
+ *     description: Retrieve all trading symbols available for a specific group - Admin only
  *     tags: [Groups]
  *     security:
- *       - bearerAuth: []
+ *       - adminAuth: []
  *     parameters:
  *       - in: path
  *         name: groupName
@@ -259,11 +261,70 @@ router.get('/:groupName/:symbol/fields',
  *                       type: array
  *                       items:
  *                         $ref: '#/components/schemas/Group'
+ *                     access_type:
+ *                       type: string
+ *                       example: "admin"
  *       401:
  *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: Group not found
+ *
+ * /api/groups/my-group:
+ *   get:
+ *     summary: Get user's group symbols (User access)
+ *     description: Retrieve all trading symbols for the user's group from JWT token
+ *     tags: [Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User's group retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Groups retrieved successfully for VIP"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     symbols:
+ *                       type: integer
+ *                       example: 50
+ *                     groups:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Group'
+ *                     access_type:
+ *                       type: string
+ *                       example: "user"
+ *       400:
+ *         description: User group information not available
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Group not found
  */
-router.get('/:groupName', 
-  authenticateJWT, 
+// Admin route - can query any group
+router.get('/admin/:groupName', 
+  authenticateAdmin,
+  requirePermission('GROUPS_READ'),
+  groupsController.getGroupsByName
+);
+
+// User route - gets their own group from JWT
+router.get('/my-group', 
+  authenticateJWT,
   groupsController.getGroupsByName
 );
 

@@ -1,5 +1,5 @@
 const express = require('express');
-const { signup, regenerateViewPassword } = require('../controllers/liveUser.controller');
+const { signup, regenerateViewPassword, getUserInfo } = require('../controllers/liveUser.controller');
 const { body, param } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
@@ -256,5 +256,86 @@ router.post('/:id/regenerate-view-password',
   handleValidationErrors,
   regenerateViewPassword
 );
+
+/**
+ * @swagger
+ * /api/live-users/me:
+ *   get:
+ *     summary: Get authenticated live user information
+ *     tags: [Live Users]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve current user's profile information using JWT authentication
+ *     responses:
+ *       200:
+ *         description: User information retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "User information retrieved successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                         name:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         phone_number:
+ *                           type: string
+ *                         user_type:
+ *                           type: string
+ *                         wallet_balance:
+ *                           type: number
+ *                         leverage:
+ *                           type: integer
+ *                         margin:
+ *                           type: number
+ *                         net_profit:
+ *                           type: number
+ *                         account_number:
+ *                           type: string
+ *                         group:
+ *                           type: string
+ *                         city:
+ *                           type: string
+ *                         state:
+ *                           type: string
+ *                         pincode:
+ *                           type: string
+ *                         country:
+ *                           type: string
+ *                         bank_ifsc_code:
+ *                           type: string
+ *                         bank_holder_name:
+ *                           type: string
+ *                         bank_account_number:
+ *                           type: string
+ *                         referral_code:
+ *                           type: string
+ *                         is_self_trading:
+ *                           type: integer
+ *                         created_at:
+ *                           type: string
+ *                           format: date-time
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/me', authenticateJWT, getUserInfo);
 
 module.exports = router;

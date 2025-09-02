@@ -1,5 +1,5 @@
 const express = require('express');
-const { signup, login, refreshToken, logout } = require('../controllers/demoUser.controller');
+const { signup, login, refreshToken, logout, getUserInfo } = require('../controllers/demoUser.controller');
 const { body } = require('express-validator');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 const upload = require('../middlewares/upload.middleware');
@@ -201,5 +201,76 @@ router.post('/refresh-token', refreshToken);
  *               $ref: '#/components/schemas/Error'
  */
 router.post('/logout', authenticateJWT, logout);
+
+/**
+ * @swagger
+ * /api/demo-users/me:
+ *   get:
+ *     summary: Get authenticated demo user information
+ *     tags: [Demo Users]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve current user's profile information using JWT authentication
+ *     responses:
+ *       200:
+ *         description: User information retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "User information retrieved successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                         name:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         phone_number:
+ *                           type: string
+ *                         user_type:
+ *                           type: string
+ *                         wallet_balance:
+ *                           type: number
+ *                         leverage:
+ *                           type: integer
+ *                         margin:
+ *                           type: number
+ *                         net_profit:
+ *                           type: number
+ *                         account_number:
+ *                           type: string
+ *                         group:
+ *                           type: string
+ *                         city:
+ *                           type: string
+ *                         state:
+ *                           type: string
+ *                         pincode:
+ *                           type: string
+ *                         country:
+ *                           type: string
+ *                         created_at:
+ *                           type: string
+ *                           format: date-time
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/me', authenticateJWT, getUserInfo);
 
 module.exports = router; 
