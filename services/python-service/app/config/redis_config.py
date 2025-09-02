@@ -1,5 +1,5 @@
 import os
-from rediscluster import RedisCluster
+from redis import asyncio as aioredis
 
 class RedisConfig:
     """Redis Cluster configuration for market data storage"""
@@ -31,8 +31,8 @@ class RedisConfig:
         }
     
     def get_cluster(self):
-        """Get Redis cluster connection"""
-        return RedisCluster(**self.cluster_config)
+        """Get async Redis cluster connection"""
+        return aioredis.RedisCluster(**self.cluster_config)
 
-# Global Redis cluster instance
+# Global async Redis cluster instance
 redis_cluster = RedisConfig().get_cluster()

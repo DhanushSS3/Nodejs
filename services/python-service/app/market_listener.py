@@ -1,9 +1,9 @@
 import asyncio
-import json
+import orjson
 import logging
 import time
 import websockets
-from typing import Dict, Any
+from typing import Dict, Any, List
 from .services.market_data_service import MarketDataService
 
 # Configure logging
@@ -22,37 +22,63 @@ class MarketListener:
         self.reconnect_delay = 5  # seconds
         self.max_reconnect_attempts = 10
         self.is_running = False
+        self.message_queue = []
+        self.batch_size = 10  # Process messages in batches
+        self.batch_timeout = 0.1  # 100ms batch timeout
         
     async def start(self):
-        """Start the market listener with auto-reconnection"""
+        """Start the market listener with auto-reconnection and batch processing"""
         self.is_running = True
         reconnect_count = 0
         
         logger.info("Starting market data listener...")
         
-        while self.is_running and reconnect_count < self.max_reconnect_attempts:
-            try:
-                await self._connect_and_listen()
-                reconnect_count = 0  # Reset on successful connection
-                
-            except websockets.exceptions.ConnectionClosed:
-                reconnect_count += 1
-                logger.warning(f"WebSocket connection closed. Reconnecting... (attempt {reconnect_count})")
-                await asyncio.sleep(self.reconnect_delay)
-                
-            except websockets.exceptions.InvalidURI:
-                logger.error(f"Invalid WebSocket URI: {self.ws_url}")
-                break
-                
-            except Exception as e:
-                reconnect_count += 1
-                logger.error(f"Unexpected error in market listener: {e}")
-                await asyncio.sleep(self.reconnect_delay)
+        # Start batch timeout task
+        batch_task = asyncio.create_task(self._batch_timeout_handler())
         
-        if reconnect_count >= self.max_reconnect_attempts:
-            logger.error("Max reconnection attempts reached. Stopping market listener.")
+        try:
+            while self.is_running and reconnect_count < self.max_reconnect_attempts:
+                try:
+                    await self._connect_and_listen()
+                    reconnect_count = 0  # Reset on successful connection
+                    
+                except websockets.exceptions.ConnectionClosed:
+                    reconnect_count += 1
+                    logger.warning(f"WebSocket connection closed. Reconnecting... (attempt {reconnect_count})")
+                    await asyncio.sleep(self.reconnect_delay)
+                    
+                except websockets.exceptions.InvalidURI:
+                    logger.error(f"Invalid WebSocket URI: {self.ws_url}")
+                    break
+                    
+                except Exception as e:
+                    reconnect_count += 1
+                    logger.error(f"Unexpected error in market listener: {e}")
+                    await asyncio.sleep(self.reconnect_delay)
+            
+            if reconnect_count >= self.max_reconnect_attempts:
+                logger.error("Max reconnection attempts reached. Stopping market listener.")
+        
+        finally:
+            # Clean up batch task
+            batch_task.cancel()
+            try:
+                await batch_task
+            except asyncio.CancelledError:
+                pass
+            
+            # Process any remaining messages
+            if self.message_queue:
+                await self._process_message_batch()
         
         logger.info("Market listener stopped")
+    
+    async def _batch_timeout_handler(self):
+        """Handle batch timeout to prevent messages from sitting too long"""
+        while self.is_running:
+            await asyncio.sleep(self.batch_timeout)
+            if self.message_queue:
+                await self._process_message_batch()
     
     async def _connect_and_listen(self):
         """Establish WebSocket connection and listen for market data"""
@@ -75,14 +101,14 @@ class MarketListener:
     
     async def _process_message(self, message: str):
         """
-        Process incoming WebSocket message
+        Queue incoming WebSocket message for batch processing
         
         Args:
             message: Raw WebSocket message string
         """
         try:
-            # Parse JSON message
-            data = json.loads(message)
+            # Parse JSON message with orjson (5-10x faster)
+            data = orjson.loads(message)
             
             # Validate message structure
             if 'datafeeds' not in data:
@@ -94,22 +120,50 @@ class MarketListener:
                 logger.warning("Invalid datafeeds format, expected dict")
                 return
             
-            # Log feed statistics
-            symbol_count = len(datafeeds)
-            logger.debug(f"Processing market feed with {symbol_count} symbols")
+            # Add to batch queue
+            self.message_queue.append(data)
             
-            # Process the market feed
-            success = await self.market_service.process_market_feed(data)
-            
-            if success:
-                logger.debug(f"Successfully processed {symbol_count} symbols")
-            else:
-                logger.warning("Failed to process market feed")
+            # Process batch if size threshold reached
+            if len(self.message_queue) >= self.batch_size:
+                await self._process_message_batch()
                 
-        except json.JSONDecodeError as e:
+        except orjson.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e}")
         except Exception as e:
             logger.error(f"Unexpected error processing message: {e}")
+    
+    async def _process_message_batch(self):
+        """
+        Process queued messages in batch for better performance
+        """
+        if not self.message_queue:
+            return
+        
+        batch = self.message_queue.copy()
+        self.message_queue.clear()
+        
+        try:
+            # Merge all datafeeds from batch into single feed
+            merged_datafeeds = {}
+            total_symbols = 0
+            
+            for data in batch:
+                datafeeds = data.get('datafeeds', {})
+                merged_datafeeds.update(datafeeds)
+                total_symbols += len(datafeeds)
+            
+            if merged_datafeeds:
+                # Process merged feed
+                merged_data = {'datafeeds': merged_datafeeds}
+                success = await self.market_service.process_market_feed(merged_data)
+                
+                if success:
+                    logger.debug(f"Batch processed {len(merged_datafeeds)} unique symbols from {len(batch)} messages")
+                else:
+                    logger.warning(f"Failed to process batch of {len(batch)} messages")
+            
+        except Exception as e:
+            logger.error(f"Error processing message batch: {e}")
     
     async def stop(self):
         """Stop the market listener gracefully"""
@@ -122,7 +176,10 @@ class MarketListener:
             "is_running": self.is_running,
             "ws_url": self.ws_url,
             "reconnect_delay": self.reconnect_delay,
-            "max_reconnect_attempts": self.max_reconnect_attempts
+            "max_reconnect_attempts": self.max_reconnect_attempts,
+            "batch_size": self.batch_size,
+            "batch_timeout": self.batch_timeout,
+            "queued_messages": len(self.message_queue)
         }
 
 # Global market listener instance

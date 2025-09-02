@@ -1,9 +1,10 @@
-import json
+import orjson
 import time
 import asyncio
 from typing import Dict, Any, Optional
 from ..config.redis_config import redis_cluster
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ class MarketDataService:
     
     async def process_market_feed(self, feed_data: Dict[str, Any]) -> bool:
         """
-        Process bulk market feed data and store in Redis
+        Process bulk market feed data and store in Redis with pipeline sharding
         
         Args:
             feed_data: Dictionary containing 'datafeeds' with symbol price data
@@ -32,36 +33,81 @@ class MarketDataService:
             
             current_timestamp = int(time.time() * 1000)  # epoch milliseconds
             
-            # Use Redis pipeline for batch operations
-            pipe = self.redis.pipeline()
-            
-            processed_count = 0
+            # Batch validate and prepare data first
+            valid_prices = []
             for symbol, price_data in datafeeds.items():
-                if await self._process_symbol_price(pipe, symbol, price_data, current_timestamp):
-                    processed_count += 1
+                processed_data = self._validate_and_parse_price(symbol, price_data, current_timestamp)
+                if processed_data:
+                    valid_prices.append(processed_data)
             
-            # Execute all Redis operations in batch
-            pipe.execute()
+            if not valid_prices:
+                logger.warning("No valid prices to process")
+                return False
             
-            logger.info(f"Processed {processed_count} symbols in market feed")
+            # Shard into multiple pipelines for high-volume bursts
+            await self._process_prices_sharded(valid_prices)
+            
+            logger.info(f"Processed {len(valid_prices)} symbols in market feed")
             return True
             
         except Exception as e:
             logger.error(f"Failed to process market feed: {e}")
             return False
     
-    async def _process_symbol_price(self, pipe, symbol: str, price_data: Dict[str, str], timestamp: int) -> bool:
+    async def _process_prices_sharded(self, valid_prices: list, shard_size: int = 500):
         """
-        Process individual symbol price data
+        Process prices using multiple Redis pipelines for better performance
         
         Args:
-            pipe: Redis pipeline for batch operations
+            valid_prices: List of validated price tuples
+            shard_size: Number of symbols per pipeline shard
+        """
+        # Split into shards
+        shards = [valid_prices[i:i + shard_size] for i in range(0, len(valid_prices), shard_size)]
+        
+        # Process shards concurrently
+        tasks = []
+        for shard in shards:
+            task = self._process_price_shard(shard)
+            tasks.append(task)
+        
+        # Wait for all shards to complete
+        await asyncio.gather(*tasks)
+    
+    async def _process_price_shard(self, price_shard: list):
+        """
+        Process a single shard of prices with one pipeline
+        
+        Args:
+            price_shard: List of price tuples for this shard
+        """
+        try:
+            async with self.redis.pipeline() as pipe:
+                for symbol, bid, ask, timestamp in price_shard:
+                    # Use hash-tagging for better cluster distribution
+                    key = f"market:{{{symbol[:3]}}}:{symbol}"
+                    pipe.hset(key, mapping={
+                        "bid": bid,
+                        "ask": ask,
+                        "ts": timestamp
+                    })
+                
+                await pipe.execute()
+                
+        except Exception as e:
+            logger.error(f"Failed to process price shard: {e}")
+    
+    def _validate_and_parse_price(self, symbol: str, price_data: Dict[str, str], timestamp: int) -> Optional[tuple]:
+        """
+        Validate and parse individual symbol price data (sync for batch processing)
+        
+        Args:
             symbol: Trading symbol (e.g., 'EURUSD')
             price_data: Dict with 'buy' and 'sell' price strings
             timestamp: Current timestamp in milliseconds
             
         Returns:
-            bool: True if processing successful
+            tuple: (symbol, bid, ask, timestamp) if valid, None otherwise
         """
         try:
             # Extract and validate price data
@@ -69,8 +115,8 @@ class MarketDataService:
             sell_str = price_data.get('sell')
             
             if not buy_str or not sell_str:
-                logger.warning(f"Missing price data for {symbol}: buy={buy_str}, sell={sell_str}")
-                return False
+                logger.debug(f"Missing price data for {symbol}: buy={buy_str}, sell={sell_str}")
+                return None
             
             # Parse prices to floats
             # buy = market's ask price (what user pays when buying)
@@ -80,36 +126,21 @@ class MarketDataService:
             
             # Validate prices
             if ask_price <= 0 or bid_price <= 0:
-                logger.warning(f"Invalid prices for {symbol}: ask={ask_price}, bid={bid_price}")
-                return False
+                logger.debug(f"Invalid prices for {symbol}: ask={ask_price}, bid={bid_price}")
+                return None
             
             if bid_price > ask_price:
-                logger.warning(f"Bid > Ask for {symbol}: bid={bid_price}, ask={ask_price}")
-                return False
+                logger.debug(f"Bid > Ask for {symbol}: bid={bid_price}, ask={ask_price}")
+                return None
             
-            # 1. Store in global snapshot hash (JSON format)
-            price_json = json.dumps({
-                "bid": bid_price,
-                "ask": ask_price,
-                "ts": timestamp
-            })
-            pipe.hset("market:prices", symbol, price_json)
-            
-            # 2. Store in per-symbol structured hash (direct floats)
-            pipe.hset(f"market:{symbol}", mapping={
-                "bid": bid_price,
-                "ask": ask_price,
-                "ts": timestamp
-            })
-            
-            return True
+            return (symbol, bid_price, ask_price, timestamp)
             
         except (ValueError, TypeError) as e:
-            logger.error(f"Failed to parse prices for {symbol}: {e}")
-            return False
+            logger.debug(f"Failed to parse prices for {symbol}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Unexpected error processing {symbol}: {e}")
-            return False
+            return None
     
     async def get_symbol_price(self, symbol: str) -> Optional[Dict[str, float]]:
         """
@@ -122,8 +153,9 @@ class MarketDataService:
             Dict with bid, ask, ts or None if stale/missing
         """
         try:
-            # Fetch from structured hash for O(1) access
-            price_data = self.redis.hmget(f"market:{symbol}", ["bid", "ask", "ts"])
+            # Fetch from structured hash with hash-tagging for O(1) access
+            key = f"market:{{{symbol[:3]}}}:{symbol}"
+            price_data = await self.redis.hmget(key, ["bid", "ask", "ts"])
             
             if not all(price_data):
                 logger.debug(f"No price data found for {symbol}")
@@ -159,13 +191,14 @@ class MarketDataService:
             Dict mapping symbol to price data
         """
         try:
-            pipe = self.redis.pipeline()
+            async with self.redis.pipeline() as pipe:
+                # Batch fetch all symbols with hash-tagging
+                for symbol in symbols:
+                    key = f"market:{{{symbol[:3]}}}:{symbol}"
+                    pipe.hmget(key, ["bid", "ask", "ts"])
+                
+                results = await pipe.execute()
             
-            # Batch fetch all symbols
-            for symbol in symbols:
-                pipe.hmget(f"market:{symbol}", ["bid", "ask", "ts"])
-            
-            results = pipe.execute()
             current_time = int(time.time() * 1000)
             
             prices = {}
@@ -192,30 +225,54 @@ class MarketDataService:
     async def get_all_prices_snapshot(self) -> Dict[str, Any]:
         """
         Get complete market snapshot for monitoring/dashboards
+        Build from structured hashes instead of separate JSON storage
         
         Returns:
             Dict with all current prices
         """
         try:
-            # Fetch from global snapshot hash
-            snapshot = self.redis.hgetall("market:prices")
+            # Scan for all market: keys to get symbols (handle hash-tagged keys)
+            symbols = []
+            async for key in self.redis.scan_iter(match="market:*", count=1000):
+                if key.startswith("market:"):
+                    # Extract symbol from hash-tagged key: market:{EUR}:EURUSD -> EURUSD
+                    if "}:" in key:
+                        symbol = key.split("}:", 1)[1]
+                    else:
+                        # Fallback for non-hash-tagged keys
+                        symbol = key[7:]  # Remove "market:" prefix
+                    
+                    if symbol and symbol != "prices":  # Skip market:prices if it exists
+                        symbols.append(symbol)
             
-            # Parse JSON values and check staleness
+            if not symbols:
+                return {"timestamp": int(time.time() * 1000), "total_symbols": 0, "prices": {}}
+            
+            # Batch fetch all symbol prices with hash-tagging
+            async with self.redis.pipeline() as pipe:
+                for symbol in symbols:
+                    key = f"market:{{{symbol[:3]}}}:{symbol}"
+                    pipe.hmget(key, ["bid", "ask", "ts"])
+                
+                results = await pipe.execute()
+            
+            # Build snapshot with staleness check
             current_time = int(time.time() * 1000)
             valid_prices = {}
             
-            for symbol, price_json in snapshot.items():
-                try:
-                    price_data = json.loads(price_json)
-                    timestamp = price_data.get('ts', 0)
+            for i, symbol in enumerate(symbols):
+                price_data = results[i]
+                if all(price_data):
+                    bid, ask, ts = price_data
+                    timestamp = int(ts)
                     
                     # Check staleness
                     if current_time - timestamp <= (self.staleness_threshold * 1000):
-                        valid_prices[symbol] = price_data
-                        
-                except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON for {symbol}: {price_json}")
-                    continue
+                        valid_prices[symbol] = {
+                            "bid": float(bid),
+                            "ask": float(ask),
+                            "ts": timestamp
+                        }
             
             return {
                 "timestamp": current_time,

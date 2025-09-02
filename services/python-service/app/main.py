@@ -66,7 +66,7 @@ async def health_check():
         # Test Redis connection
         redis_status = "connected"
         try:
-            redis_cluster.ping()
+            await redis_cluster.ping()
         except Exception as e:
             redis_status = f"error: {str(e)}"
         

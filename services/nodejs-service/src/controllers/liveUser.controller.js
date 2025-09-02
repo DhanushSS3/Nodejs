@@ -575,59 +575,60 @@ async function regenerateViewPassword(req, res) {
 async function getUserInfo(req, res) {
   try {
     const userId = req.user.sub || req.user.user_id || req.user.id;
-    
+
     const user = await LiveUser.findByPk(userId, {
       attributes: [
-        'id', 'name', 'email', 'phone_number', 'user_type', 
-        'wallet_balance', 'leverage', 'margin', 'net_profit', 
-        'account_number', 'group', 'city', 'state', 'pincode', 
-        'country', 'bank_ifsc_code', 'bank_holder_name', 
-        'bank_account_number', 'referral_code', 'is_self_trading', 
+        'id', 'name', 'email', 'phone_number', 'user_type',
+        'wallet_balance', 'leverage', 'margin', 'net_profit',
+        'account_number', 'group', 'city', 'state', 'pincode',
+        'country', 'bank_ifsc_code', 'bank_holder_name',
+        'bank_account_number', 'referral_code', 'is_self_trading',
         'created_at'
       ]
     });
 
     if (!user) {
+      // Error case remains the same for clarity
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'User information retrieved successfully',
-      data: {
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          phone_number: user.phone_number,
-          user_type: user.user_type,
-          wallet_balance: parseFloat(user.wallet_balance) || 0,
-          leverage: user.leverage,
-          margin: parseFloat(user.margin) || 0,
-          net_profit: parseFloat(user.net_profit) || 0,
-          account_number: user.account_number,
-          group: user.group,
-          city: user.city,
-          state: user.state,
-          pincode: user.pincode,
-          country: user.country,
-          bank_ifsc_code: user.bank_ifsc_code,
-          bank_holder_name: user.bank_holder_name,
-          bank_account_number: user.bank_account_number,
-          referral_code: user.referral_code,
-          is_self_trading: user.is_self_trading,
-          created_at: user.created_at
-        }
-      }
-    });
+    // Construct the plain user object
+    const userInfo = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone_number: user.phone_number,
+      user_type: user.user_type,
+      wallet_balance: parseFloat(user.wallet_balance) || 0,
+      leverage: user.leverage,
+      margin: parseFloat(user.margin) || 0,
+      net_profit: parseFloat(user.net_profit) || 0,
+      account_number: user.account_number,
+      group: user.group,
+      city: user.city,
+      state: user.state,
+      pincode: user.pincode,
+      country: user.country,
+      bank_ifsc_code: user.bank_ifsc_code,
+      bank_holder_name: user.bank_holder_name,
+      bank_account_number: user.bank_account_number,
+      referral_code: user.referral_code,
+      is_self_trading: user.is_self_trading,
+      created_at: user.created_at
+    };
+
+    // Return the user object directly
+    return res.status(200).json(userInfo);
+
   } catch (error) {
-    logger.error('Failed to get live user info', { 
-      error: error.message, 
-      userId: req.user.sub || req.user.user_id || req.user.id 
+    logger.error('Failed to get live user info', {
+      error: error.message,
+      userId: req.user.sub || req.user.user_id || req.user.id
     });
+    // Error case remains the same for clarity
     return res.status(500).json({
       success: false,
       message: 'Internal server error'

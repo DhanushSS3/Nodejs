@@ -440,52 +440,53 @@ async function logout(req, res) {
 async function getUserInfo(req, res) {
   try {
     const userId = req.user.sub || req.user.user_id || req.user.id;
-    
+
     const user = await DemoUser.findByPk(userId, {
       attributes: [
-        'id', 'name', 'email', 'phone_number', 'user_type', 
-        'wallet_balance', 'leverage', 'margin', 'net_profit', 
-        'account_number', 'group', 'city', 'state', 'pincode', 
+        'id', 'name', 'email', 'phone_number', 'user_type',
+        'wallet_balance', 'leverage', 'margin', 'net_profit',
+        'account_number', 'group', 'city', 'state', 'pincode',
         'country', 'created_at'
       ]
     });
 
     if (!user) {
+      // Error response remains unchanged for clarity
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'User information retrieved successfully',
-      data: {
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          phone_number: user.phone_number,
-          user_type: user.user_type,
-          wallet_balance: parseFloat(user.wallet_balance) || 0,
-          leverage: user.leverage,
-          margin: parseFloat(user.margin) || 0,
-          net_profit: parseFloat(user.net_profit) || 0,
-          account_number: user.account_number,
-          group: user.group,
-          city: user.city,
-          state: user.state,
-          pincode: user.pincode,
-          country: user.country,
-          created_at: user.created_at
-        }
-      }
-    });
+    // Construct the plain user object from the database result
+    const userInfo = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone_number: user.phone_number,
+      user_type: user.user_type,
+      wallet_balance: parseFloat(user.wallet_balance) || 0,
+      leverage: user.leverage,
+      margin: parseFloat(user.margin) || 0,
+      net_profit: parseFloat(user.net_profit) || 0,
+      account_number: user.account_number,
+      group: user.group,
+      city: user.city,
+      state: user.state,
+      pincode: user.pincode,
+      country: user.country,
+      created_at: user.created_at
+    };
+
+    // Return the user object directly as the JSON response
+    return res.status(200).json(userInfo);
+
   } catch (error) {
-    logger.error('Failed to get demo user info', { 
-      error: error.message, 
-      userId: req.user.sub || req.user.user_id || req.user.id 
+    logger.error('Failed to get demo user info', {
+      error: error.message,
+      userId: req.user.sub || req.user.user_id || req.user.id
     });
+    // Error response remains unchanged
     return res.status(500).json({
       success: false,
       message: 'Internal server error'
