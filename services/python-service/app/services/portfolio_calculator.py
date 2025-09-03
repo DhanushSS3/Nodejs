@@ -44,6 +44,12 @@ class PortfolioCalculatorListener:
             'calculation_errors': 0
         }
         
+        # In-memory FX cache with short TTL to reduce Redis calls for conversion pairs
+        self._fx_cache = {
+            'ttl': 1.0,  # seconds
+            'rates': {}  # mapping: symbol -> {'ts': epoch_seconds, 'bid': float, 'ask': float}
+        }
+        
         # Redis pub/sub subscription
         self._pubsub = None
         self._running = False
@@ -86,7 +92,7 @@ class PortfolioCalculatorListener:
         """
         Throttled batch calculation loop (every 200ms):
         - Copies and clears dirty user sets
-        - For each user, fetches holdings, market prices, calculates portfolio, writes to Redis
+        - For each user, fetches all open orders, market prices, calculates portfolio, writes to Redis
         """
         self.logger.info("Starting throttled portfolio calculation loop (200ms interval)")
         while self._running:
@@ -103,47 +109,69 @@ class PortfolioCalculatorListener:
 
     async def _process_dirty_users_batch(self, user_ids: Set[str], user_type: str):
         """
-        For each dirty user, fetch holdings, fetch prices, calculate, and update Redis
+        For each dirty user, fetch all open orders, fetch prices, calculate, and update Redis
         """
         for user_key in user_ids:
             try:
-                # user_key format: 'live:12345' or 'demo:67890'
                 if not user_key.startswith(f"{user_type}:"):
                     self.logger.warning(f"Invalid user_key format: {user_key}")
                     continue
                 user_id = user_key.split(":", 1)[1]
-                holdings = await self._fetch_user_holdings(user_type, user_id)
-                if not holdings:
+                orders = await self._fetch_user_orders(user_type, user_id)
+                if not orders:
                     continue
-                symbols = list(holdings.keys())
+                symbols = list({order['symbol'] for order in orders if 'symbol' in order})
                 prices = await self._fetch_market_prices(symbols)
-                group_data = await self._fetch_user_group_data(user_type, user_id)
-                portfolio = self._calculate_portfolio_metrics(holdings, prices, group_data)
+                # Fetch user config (balance, leverage, group)
+                balance, leverage, group = await self._fetch_user_balance_and_leverage(user_type, user_id)
+                # Fetch group data for all symbols (user group with fallback to Standard)
+                group_data = await self._fetch_group_data_batch(symbols, group)
+                portfolio = await self._calculate_portfolio_metrics(orders, prices, group_data, balance, leverage)
                 await self._update_user_portfolio(user_type, user_id, portfolio)
                 self._stats['users_processed'] += 1
             except Exception as e:
                 self.logger.error(f"Portfolio calculation error for {user_key}: {e}")
                 self._stats['calculation_errors'] += 1
 
-    async def _fetch_user_holdings(self, user_type: str, user_id: str) -> dict:
-        """Fetch all open positions for a user from Redis hash user_holdings:{user_type}:{user_id}"""
-        redis_key = f"user_holdings:{user_type}:{user_id}"
+    async def _fetch_user_orders(self, user_type: str, user_id: str) -> list:
+        """
+        Fetch all open order hashes for a user from Redis: user_holdings:{user_type}:{user_id}:{order_id}
+        Returns a list of order dicts.
+        """
+        pattern = f"user_holdings:{user_type}:{user_id}:*"
         try:
-            holdings = await redis_cluster.hgetall(redis_key)
-            # holdings: {symbol: quantity}
-            return {symbol: float(qty) for symbol, qty in holdings.items()} if holdings else {}
+            # Scan for all order keys for this user
+            cursor = b'0'
+            order_keys = []
+            while cursor:
+                cursor, keys = await redis_cluster.scan(cursor=cursor, match=pattern, count=50)
+                order_keys.extend(keys)
+                if cursor == b'0' or cursor == 0:
+                    break
+            if not order_keys:
+                return []
+            # Pipeline hgetall for all orders
+            orders = await asyncio.gather(*(redis_cluster.hgetall(k) for k in order_keys))
+            # Add symbol field from key if missing
+            for i, k in enumerate(order_keys):
+                if 'symbol' not in orders[i]:
+                    # Try to extract symbol from order fields or key
+                    pass  # Extend as needed
+            return orders
         except Exception as e:
-            self.logger.error(f"Error fetching holdings for {redis_key}: {e}")
-            return {}
+            self.logger.error(f"Error fetching orders for {user_type}:{user_id}: {e}")
+            return []
 
     async def _fetch_market_prices(self, symbols: list) -> dict:
-        """Fetch latest market prices for all given symbols from Redis hashes market:{symbol}"""
+        """
+        Fetch latest market prices for all given symbols from Redis hashes market:{symbol}
+        Returns dict: {symbol: {'bid':..., 'ask':...}}
+        """
         prices = {}
         try:
             for symbol in symbols:
                 redis_key = f"market:{symbol}"
                 price_data = await redis_cluster.hgetall(redis_key)
-                # Expecting {bid, ask, ts}
                 if price_data:
                     prices[symbol] = {k: float(v) for k, v in price_data.items() if k in ('bid', 'ask') and v is not None}
             return prices
@@ -151,48 +179,244 @@ class PortfolioCalculatorListener:
             self.logger.error(f"Error fetching market prices for symbols {symbols}: {e}")
             return prices
 
-    async def _fetch_user_group_data(self, user_type: str, user_id: str) -> dict:
-        """Stub for group data/currency conversion, can be extended for margin, contract size, etc."""
-        # For now, return empty dict; extend as needed for margin, contract size, etc.
-        return {}
+    async def _fetch_user_balance_and_leverage(self, user_type: str, user_id: str):
+        """
+        Fetch user's wallet balance, leverage, and group from Redis:
+        Key: user:{user_type}:{user_id}:config (Hash)
+        Fallbacks: balance=0.0, leverage=100.0, group="Standard"
+        """
+        try:
+            key = f"user:{user_type}:{user_id}:config"
+            data = await redis_cluster.hgetall(key)
+            if not data:
+                return 0.0, 100.0, "Standard"
+            # Safe parsing
+            balance_raw = data.get('wallet_balance', 0)
+            leverage_raw = data.get('leverage', 100)
+            group = data.get('group', 'Standard') or 'Standard'
+            try:
+                balance = float(balance_raw)
+            except (TypeError, ValueError):
+                balance = 0.0
+            try:
+                leverage = float(leverage_raw)
+            except (TypeError, ValueError):
+                leverage = 100.0
+            if leverage <= 0:
+                leverage = 100.0
+            return balance, leverage, group
+        except Exception as e:
+            self.logger.error(f"Error fetching user config for {user_type}:{user_id}: {e}")
+            return 0.0, 100.0, "Standard"
 
-    def _calculate_portfolio_metrics(self, holdings: dict, prices: dict, group_data: dict) -> dict:
+    async def _fetch_group_data_batch(self, symbols: list, group: str) -> dict:
+        """
+        Fetch contract_size and profit currency for each symbol from groups:{group}:{symbol},
+        with fallback to groups:{Standard}:{symbol} if missing.
+        Returns dict: {symbol: {'contract_size': float, 'profit': str}}
+        """
+        group_data = {}
+        try:
+            # First try user-specific group keys in parallel
+            grp_keys = [f"groups:{{{group}}}:{symbol}" for symbol in symbols]
+            grp_results = await asyncio.gather(*(redis_cluster.hgetall(k) for k in grp_keys))
+
+            # Collect missing symbols to fallback to Standard
+            missing_indices = [i for i, data in enumerate(grp_results) if not data]
+            std_results_map = {}
+            if missing_indices:
+                std_keys = [f"groups:{{Standard}}:{symbols[i]}" for i in missing_indices]
+                std_results = await asyncio.gather(*(redis_cluster.hgetall(k) for k in std_keys))
+                for idx, data in zip(missing_indices, std_results):
+                    std_results_map[idx] = data
+
+            for i, symbol in enumerate(symbols):
+                data = grp_results[i] if grp_results[i] else std_results_map.get(i, None)
+                if data:
+                    try:
+                        contract_size = float(data.get('contract_size', 1))
+                    except (TypeError, ValueError):
+                        contract_size = 1.0
+                    profit = data.get('profit', 'USD') or 'USD'
+                else:
+                    contract_size = 1.0
+                    profit = 'USD'
+                group_data[symbol] = {'contract_size': contract_size, 'profit': profit}
+            return group_data
+        except Exception as e:
+            self.logger.error(f"Error fetching group data for symbols {symbols}: {e}")
+            return group_data
+
+    async def _calculate_portfolio_metrics(self, orders: list, prices: dict, group_data: dict, balance: float, leverage: float) -> dict:
         """
         Calculate PnL, equity, used margin, free margin, margin level, etc.
-        holdings: {symbol: quantity}
-        prices: {symbol: {bid, ask}}
-        group_data: for future extension
+        - Swap and commission are handled per order
+        - Contract size and profit currency are fetched from user's group (fallback to Standard)
+        - PnL is always converted to USD
         """
-        balance = 10000  # Placeholder, should be fetched from user balance in DB/Redis
-        contract_size = 1  # Placeholder, should be fetched from group_data or per-symbol
-        total_pl = 0
-        used_margin = 0
-        for symbol, qty in holdings.items():
-            price_info = prices.get(symbol)
-            if not price_info:
+        total_pl_usd = 0.0
+        used_margin = 0.0
+        for order in orders:
+            try:
+                symbol = order.get('symbol')
+                if not symbol or symbol not in prices or symbol not in group_data:
+                    continue
+                order_type = (order.get('order_type') or '').upper()
+                # Safe float parsing from Redis string values
+                try:
+                    entry_price = float(order.get('order_price', 0) or 0)
+                except (TypeError, ValueError):
+                    entry_price = 0.0
+                try:
+                    quantity = float(order.get('order_quantity', 0) or 0)
+                except (TypeError, ValueError):
+                    quantity = 0.0
+                try:
+                    margin = float(order.get('margin', 0) or 0)
+                except (TypeError, ValueError):
+                    margin = 0.0
+                try:
+                    swap = float(order.get('swap', 0) or 0)
+                except (TypeError, ValueError):
+                    swap = 0.0
+                try:
+                    commission = float(order.get('commission', 0) or 0)
+                except (TypeError, ValueError):
+                    commission = 0.0
+                try:
+                    contract_size = float(group_data[symbol].get('contract_size', 1) or 1)
+                except (TypeError, ValueError):
+                    contract_size = 1.0
+                profit_currency = group_data[symbol].get('profit', 'USD')
+                # Use latest market prices
+                market_bid = prices[symbol].get('bid', 0)
+                market_ask = prices[symbol].get('ask', 0)
+                if order_type == 'BUY':
+                    pnl = (market_bid - entry_price) * quantity * contract_size
+                elif order_type == 'SELL':
+                    pnl = (entry_price - market_ask) * quantity * contract_size
+                else:
+                    pnl = 0
+                pnl += swap - commission
+                pnl_usd = await self.convert_to_usd(pnl, profit_currency, symbol, prices)
+                total_pl_usd += pnl_usd
+                # Dynamic margin calculation if missing or non-positive
+                if margin and margin > 0:
+                    used_margin += margin
+                else:
+                    if leverage and leverage > 0:
+                        dyn_margin = (contract_size * quantity) / leverage
+                    else:
+                        dyn_margin = (contract_size * quantity) / 100.0  # default leverage fallback
+                    used_margin += dyn_margin
+            except Exception as e:
+                self.logger.error(f"Error calculating order PnL: {order}: {e}")
                 continue
-            entry_price = 1  # Placeholder, should be fetched per order
-            # Assume positive qty = BUY, negative qty = SELL
-            if qty > 0:
-                pnl = (price_info.get('bid', 0) - entry_price) * qty * contract_size
-            else:
-                pnl = (entry_price - price_info.get('ask', 0)) * abs(qty) * contract_size
-            total_pl += pnl
-            # used_margin calculation placeholder
-            used_margin += abs(qty) * contract_size * 0.01  # Dummy margin formula
-        equity = balance + total_pl
+        equity = balance + total_pl_usd
         free_margin = equity - used_margin
         margin_level = (equity / used_margin * 100) if used_margin > 0 else 0
         return {
             'equity': round(equity, 2),
+            'balance': round(balance, 2),
             'free_margin': round(free_margin, 2),
             'used_margin': round(used_margin, 2),
             'margin_level': round(margin_level, 2),
-            'total_pl': round(total_pl, 2)
+            'open_pnl': round(total_pl_usd, 2),
+            'total_pl': round(total_pl_usd, 2),
+            'ts': int(time.time() * 1000),
         }
 
+    async def convert_to_usd(self, amount: float, from_currency: str, symbol: str, prices: dict = None) -> float:
+        """
+        Convert amount from from_currency to USD using current market rates.
+        - If from_currency is USD, return amount.
+        - Otherwise, fetch the appropriate market:{symbol} for conversion.
+        - 'prices' may be passed in for efficiency.
+        """
+        try:
+            if from_currency.upper() == 'USD':
+                return amount
+            # Determine available conversion symbol and orientation
+            conversion_symbol = None
+            invert = False
+            prices = prices or {}
+
+            # 1) Check passed-in prices
+            if f"{from_currency}USD" in prices:
+                conversion_symbol = f"{from_currency}USD"
+                invert = False
+                conv_price = float(prices[conversion_symbol].get('bid', 0) or 0)
+            elif f"USD{from_currency}" in prices:
+                conversion_symbol = f"USD{from_currency}"
+                invert = True
+                conv_price = float(prices[conversion_symbol].get('bid', 0) or 0)
+            else:
+                conv_price = 0.0
+
+            # 2) Check cache if not found or zero
+            if (not conversion_symbol) or (conv_price == 0):
+                now = time.time()
+                # Prefer direct from_currencyUSD
+                cached = self._fx_cache['rates'].get(f"{from_currency}USD")
+                if cached and (now - cached['ts'] <= self._fx_cache['ttl']):
+                    conversion_symbol = f"{from_currency}USD"
+                    invert = False
+                    conv_price = cached.get('bid', 0) or 0
+                else:
+                    cached_inv = self._fx_cache['rates'].get(f"USD{from_currency}")
+                    if cached_inv and (now - cached_inv['ts'] <= self._fx_cache['ttl']):
+                        conversion_symbol = f"USD{from_currency}"
+                        invert = True
+                        conv_price = cached_inv.get('bid', 0) or 0
+
+            # 3) Fetch from Redis if still missing or zero
+            if (not conversion_symbol) or (conv_price == 0):
+                # Try direct pair first
+                conv_price_data = await redis_cluster.hgetall(f"market:{from_currency}USD")
+                if conv_price_data:
+                    conversion_symbol = f"{from_currency}USD"
+                    invert = False
+                    try:
+                        conv_price = float(conv_price_data.get('bid', 0) or 0)
+                    except (TypeError, ValueError):
+                        conv_price = 0.0
+                    # Update cache
+                    self._fx_cache['rates'][conversion_symbol] = {
+                        'ts': time.time(),
+                        'bid': conv_price,
+                        'ask': float(conv_price_data.get('ask', 0) or 0) if conv_price_data else 0,
+                    }
+                else:
+                    conv_price_data2 = await redis_cluster.hgetall(f"market:USD{from_currency}")
+                    if conv_price_data2:
+                        conversion_symbol = f"USD{from_currency}"
+                        invert = True
+                        try:
+                            conv_price = float(conv_price_data2.get('bid', 0) or 0)
+                        except (TypeError, ValueError):
+                            conv_price = 0.0
+                        self._fx_cache['rates'][conversion_symbol] = {
+                            'ts': time.time(),
+                            'bid': conv_price,
+                            'ask': float(conv_price_data2.get('ask', 0) or 0) if conv_price_data2 else 0,
+                        }
+
+            if conv_price == 0:
+                self.logger.warning(f"Conversion rate for {conversion_symbol} is 0, returning amount unchanged.")
+                return amount
+            # If USD is base, invert
+            if invert:
+                return amount / conv_price
+            else:
+                return amount * conv_price
+        except Exception as e:
+            self.logger.error(f"Error converting {amount} {from_currency} to USD: {e}")
+            return amount
+
     async def _update_user_portfolio(self, user_type: str, user_id: str, portfolio: dict):
-        """Write portfolio metrics to Redis hash user_portfolio:{user_type}:{user_id}"""
+        """
+        Write portfolio metrics to Redis hash user_portfolio:{user_type}:{user_id}
+        """
         redis_key = f"user_portfolio:{user_type}:{user_id}"
         try:
             await redis_cluster.hset(redis_key, mapping=portfolio)

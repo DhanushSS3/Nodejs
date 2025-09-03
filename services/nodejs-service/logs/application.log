@@ -11719,3 +11719,9 @@
 {"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-03T11:50:06.112Z"}
 {"level":"info","message":"Groups sync completed: 1627 groups in 3347ms","timestamp":"2025-09-03T11:50:06.112Z"}
 {"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-03T11:50:06.116Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-03T12:51:42.107Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-03T12:51:42.112Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-03T12:51:42.599Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-03T12:51:43.111Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-03T12:51:44.234Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-03T12:51:44.654Z"}
