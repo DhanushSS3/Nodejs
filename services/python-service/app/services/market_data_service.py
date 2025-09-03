@@ -2,7 +2,7 @@ import orjson
 import time
 import asyncio
 from typing import Dict, Any, Optional
-from ..config.redis_config import redis_cluster
+from ..config.redis_config import redis_cluster, redis_pubsub_client
 import logging
 import math
 
@@ -13,6 +13,7 @@ class MarketDataService:
     
     def __init__(self):
         self.redis = redis_cluster
+        self.pubsub_redis = redis_pubsub_client
         self.staleness_threshold = 5  # 5 seconds
     
     async def process_market_feed(self, feed_data: Dict[str, Any]) -> bool:
@@ -48,6 +49,9 @@ class MarketDataService:
             
             # Process partial updates with Redis merge logic
             await self._process_partial_updates_sharded(valid_updates)
+            
+            # Publish price update notifications for Portfolio Calculator
+            await self._publish_price_update_notifications(valid_updates)
             
             logger.debug(f"Processed {len(market_prices)} symbol updates")
             return True
@@ -358,6 +362,30 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"Failed to get price snapshot: {e}")
             return {"timestamp": int(time.time() * 1000), "total_symbols": 0, "prices": {}}
+    
+    async def _publish_price_update_notifications(self, valid_updates: list):
+        """
+        Publish symbol notifications to Redis Pub/Sub for Portfolio Calculator
+        
+        Args:
+            valid_updates: List of validated price update tuples (symbol, update_fields, timestamp)
+        """
+        if not valid_updates:
+            return
+        
+        # Extract unique symbols from valid updates
+        symbols_in_message = [update[0] for update in valid_updates]  # symbol is first element in tuple
+        
+        logger.debug(f"Publishing price update notifications for {len(symbols_in_message)} symbols")
+        
+        # Use dedicated Redis client for pub/sub operations
+        for symbol in symbols_in_message:
+            try:
+                await self.pubsub_redis.publish("market_price_updates", symbol)
+                logger.debug(f"Published price update notification for {symbol}")
+            except Exception as e:
+                logger.error(f"Failed to publish symbol {symbol}: {e}")
+                # Continue with other symbols even if one fails
     
     def is_price_stale(self, timestamp: int) -> bool:
         """Check if price timestamp is stale (>5s old)"""

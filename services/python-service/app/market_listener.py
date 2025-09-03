@@ -189,7 +189,7 @@ class MarketListener:
                 success = await self.market_service.process_market_feed(merged_data)
                 
                 if success:
-                    logger.info(f"[BATCH] ✅ Successfully processed {len(merged_market_prices)} unique symbols from {len(batch)} messages")
+                    logger.debug(f"[BATCH] ✅ Successfully processed {len(merged_market_prices)} unique symbols from {len(batch)} messages")
                 else:
                     logger.error(f"[BATCH] ❌ Failed to process batch of {len(batch)} messages with {len(merged_market_prices)} symbols")
             else:

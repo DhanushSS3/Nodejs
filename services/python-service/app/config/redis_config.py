@@ -53,3 +53,7 @@ class RedisConfig:
 
 # Global async Redis cluster instance
 redis_cluster = RedisConfig().get_cluster()
+
+# Single Redis connection for pub/sub operations (cluster doesn't support pub/sub directly)
+import redis.asyncio as redis
+redis_pubsub_client = redis.Redis(host='127.0.0.1', port=7001, decode_responses=True)
