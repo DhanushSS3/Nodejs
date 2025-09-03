@@ -27,7 +27,7 @@ class MarketDataService:
         """
         try:
             datafeeds = feed_data.get('datafeeds', {})
-            logger.debug(f"Received datafeeds: {datafeeds}")
+            logger.info(f"Received datafeeds: {datafeeds}")
             if not datafeeds:
                 logger.warning("No datafeeds found in market feed")
                 return False
