@@ -5,6 +5,7 @@ import logging
 import asyncio
 from .api.market_api import router as market_router
 from .market_listener import start_market_listener
+from .services.portfolio_calculator import start_portfolio_listener
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +23,10 @@ async def lifespan(app: FastAPI):
     # Start market listener as background task
     asyncio.create_task(start_market_listener())
     logger.info("Market listener started")
+    
+    # Start portfolio calculator listener as background task
+    asyncio.create_task(start_portfolio_listener())
+    logger.info("Portfolio calculator listener started")
     
     yield
     

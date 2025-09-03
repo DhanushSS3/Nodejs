@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Dict, Any, List, Optional
 from ..services.market_data_service import MarketDataService
 from ..market_listener import market_listener
+from ..services.portfolio_calculator import portfolio_listener
 import logging
 
 logger = logging.getLogger(__name__)
@@ -161,3 +162,54 @@ async def stop_listener():
     except Exception as e:
         logger.error(f"Failed to stop listener: {e}")
         raise HTTPException(status_code=500, detail="Failed to stop market listener")
+
+@router.get("/portfolio/status", response_model=Dict[str, Any])
+async def get_portfolio_calculator_status():
+    """
+    Get portfolio calculator listener status and statistics
+    
+    Returns:
+        Dict containing portfolio calculator status and metrics
+    """
+    try:
+        stats = portfolio_listener.get_statistics()
+        return {
+            "success": True,
+            "message": "Portfolio calculator status retrieved successfully",
+            "data": stats
+        }
+    except Exception as e:
+        logger.error(f"Failed to get portfolio calculator status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve portfolio calculator status")
+
+@router.get("/portfolio/dirty-users/{user_type}", response_model=Dict[str, Any])
+async def get_dirty_users(user_type: str):
+    """
+    Get current dirty users for a specific user type (for monitoring)
+    
+    Args:
+        user_type: 'live' or 'demo'
+        
+    Returns:
+        Dict containing current dirty users count and list
+    """
+    try:
+        if user_type not in ['live', 'demo']:
+            raise HTTPException(status_code=400, detail="user_type must be 'live' or 'demo'")
+        
+        dirty_users = portfolio_listener.get_dirty_users(user_type)
+        
+        return {
+            "success": True,
+            "message": f"Dirty {user_type} users retrieved successfully",
+            "data": {
+                "user_type": user_type,
+                "count": len(dirty_users),
+                "users": list(dirty_users) if len(dirty_users) <= 100 else list(dirty_users)[:100]  # Limit for API response
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get dirty users for {user_type}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve dirty {user_type} users")
