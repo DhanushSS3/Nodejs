@@ -1,10 +1,14 @@
+
+
+
 import asyncio
 import orjson
 import logging
 import time
 import websockets
 from typing import Dict, Any, List
-from .services.market_data_service import MarketDataService
+# from services.market_data_service import MarketDataService
+from app.services.market_data_service import MarketDataService
 
 # Configure logging
 logging.basicConfig(
@@ -109,61 +113,90 @@ class MarketListener:
         try:
             # Parse JSON message with orjson (5-10x faster)
             data = orjson.loads(message)
-            logger.info(f"Received message: {data}")
-            # Validate message structure
-            if 'datafeeds' not in data:
-                logger.debug("Message does not contain datafeeds, skipping")
+            logger.debug(f"[WEBSOCKET] Received message: {len(message)} chars")
+            
+            # Validate new message structure
+            if data.get('type') != 'market_update':
+                logger.warning(f"[WEBSOCKET] Message type is not 'market_update': {data.get('type')}")
                 return
             
-            datafeeds = data['datafeeds']
-            if not isinstance(datafeeds, dict):
-                logger.warning("Invalid datafeeds format, expected dict")
+            if 'data' not in data:
+                logger.warning(f"[WEBSOCKET] Message missing 'data' key. Available keys: {list(data.keys())}")
                 return
             
-            # Add to batch queue
-            self.message_queue.append(data)
+            message_data = data['data']
+            if 'market_prices' not in message_data:
+                logger.warning(f"[WEBSOCKET] Message data missing 'market_prices' key. Available keys: {list(message_data.keys())}")
+                return
+            
+            market_prices = message_data['market_prices']
+            if not isinstance(market_prices, dict):
+                logger.error(f"[WEBSOCKET] Invalid market_prices format: {type(market_prices)}, expected dict")
+                return
+            
+            logger.debug(f"[WEBSOCKET] Valid market_prices: {len(market_prices)} symbols")
+            
+            # Add to batch queue with normalized structure
+            normalized_data = {'market_prices': market_prices}
+            self.message_queue.append(normalized_data)
             
             # Process batch if size threshold reached
             if len(self.message_queue) >= self.batch_size:
                 await self._process_message_batch()
                 
         except orjson.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in message: {e}")
+            logger.error(f"[WEBSOCKET] Invalid JSON in message: {e}. Message preview: {message[:200]}...")
         except Exception as e:
-            logger.error(f"Unexpected error processing message: {e}")
+            logger.error(f"[WEBSOCKET] Unexpected error processing message: {e}")
     
     async def _process_message_batch(self):
         """
         Process queued messages in batch for better performance
         """
         if not self.message_queue:
+            logger.debug("[BATCH] No messages in queue to process")
             return
         
         batch = self.message_queue.copy()
         self.message_queue.clear()
         
+        logger.debug(f"[BATCH] Processing {len(batch)} messages")
+        
         try:
-            # Merge all datafeeds from batch into single feed
-            merged_datafeeds = {}
+            # Merge all market_prices from batch into single feed
+            merged_market_prices = {}
             total_symbols = 0
             
             for data in batch:
-                datafeeds = data.get('datafeeds', {})
-                merged_datafeeds.update(datafeeds)
-                total_symbols += len(datafeeds)
+                market_prices = data.get('market_prices', {})
+                
+                # Merge partial price updates - later updates override earlier ones
+                for symbol, price_data in market_prices.items():
+                    if symbol not in merged_market_prices:
+                        merged_market_prices[symbol] = {}
+                    
+                    # Merge buy/sell prices (partial updates)
+                    if 'buy' in price_data:
+                        merged_market_prices[symbol]['buy'] = price_data['buy']
+                    if 'sell' in price_data:
+                        merged_market_prices[symbol]['sell'] = price_data['sell']
+                
+                total_symbols += len(market_prices)
             
-            if merged_datafeeds:
-                # Process merged feed
-                merged_data = {'datafeeds': merged_datafeeds}
+            if merged_market_prices:
+                # Process merged feed with new structure
+                merged_data = {'market_prices': merged_market_prices}
                 success = await self.market_service.process_market_feed(merged_data)
                 
                 if success:
-                    logger.debug(f"Batch processed {len(merged_datafeeds)} unique symbols from {len(batch)} messages")
+                    logger.info(f"[BATCH] ✅ Successfully processed {len(merged_market_prices)} unique symbols from {len(batch)} messages")
                 else:
-                    logger.warning(f"Failed to process batch of {len(batch)} messages")
+                    logger.error(f"[BATCH] ❌ Failed to process batch of {len(batch)} messages with {len(merged_market_prices)} symbols")
+            else:
+                logger.warning(f"[BATCH] No market_prices found in batch of {len(batch)} messages")
             
         except Exception as e:
-            logger.error(f"Error processing message batch: {e}")
+            logger.error(f"[BATCH] Error processing message batch: {e}")
     
     async def stop(self):
         """Stop the market listener gracefully"""
@@ -192,3 +225,15 @@ async def start_market_listener():
 async def stop_market_listener():
     """Stop the market listener"""
     await market_listener.stop()
+
+if __name__ == "__main__":
+    """Run market listener when executed directly"""
+    print("Starting Market Data Listener...")
+    try:
+        asyncio.run(start_market_listener())
+    except KeyboardInterrupt:
+        print("\nMarket listener stopped by user")
+    except Exception as e:
+        print(f"Market listener error: {e}")
+        import traceback
+        traceback.print_exc()

@@ -18,129 +18,203 @@ class MarketDataService:
     async def process_market_feed(self, feed_data: Dict[str, Any]) -> bool:
         """
         Process bulk market feed data and store in Redis with pipeline sharding
+        Handles partial price updates (buy or sell only)
         
         Args:
-            feed_data: Dictionary containing 'datafeeds' with symbol price data
+            feed_data: Dictionary containing 'market_prices' with symbol price data
             
         Returns:
             bool: True if processing successful, False otherwise
         """
         try:
-            datafeeds = feed_data.get('datafeeds', {})
-            logger.info(f"Received datafeeds: {datafeeds}")
-            if not datafeeds:
-                logger.warning("No datafeeds found in market feed")
+            market_prices = feed_data.get('market_prices', {})
+            logger.debug(f"Processing {len(market_prices)} symbols")
+            if not market_prices:
+                logger.warning("No market_prices found in market feed")
                 return False
             
             current_timestamp = int(time.time() * 1000)  # epoch milliseconds
             
-            # Batch validate and prepare data first
-            valid_prices = []
-            for symbol, price_data in datafeeds.items():
-                processed_data = self._validate_and_parse_price(symbol, price_data, current_timestamp)
+            # Batch validate and prepare data with partial update support
+            valid_updates = []
+            for symbol, price_data in market_prices.items():
+                processed_data = await self._validate_and_parse_partial_price(symbol, price_data, current_timestamp)
                 if processed_data:
-                    valid_prices.append(processed_data)
+                    valid_updates.append(processed_data)
             
-            if not valid_prices:
-                logger.warning("No valid prices to process")
+            if not valid_updates:
+                logger.warning("No valid price updates to process")
                 return False
             
-            # Shard into multiple pipelines for high-volume bursts
-            await self._process_prices_sharded(valid_prices)
+            # Process partial updates with Redis merge logic
+            await self._process_partial_updates_sharded(valid_updates)
             
-            logger.info(f"Processed {len(valid_prices)} symbols in market feed")
+            logger.debug(f"Processed {len(market_prices)} symbol updates")
             return True
             
         except Exception as e:
             logger.error(f"Failed to process market feed: {e}")
             return False
     
-    async def _process_prices_sharded(self, valid_prices: list, shard_size: int = 500):
+    async def _process_partial_updates_sharded(self, valid_updates: list, shard_size: int = 500):
         """
-        Process prices using multiple Redis pipelines for better performance
+        Process partial price updates using multiple Redis pipelines for better performance
         
         Args:
-            valid_prices: List of validated price tuples
+            valid_updates: List of validated partial price update tuples
             shard_size: Number of symbols per pipeline shard
         """
         # Split into shards
-        shards = [valid_prices[i:i + shard_size] for i in range(0, len(valid_prices), shard_size)]
+        shards = [valid_updates[i:i + shard_size] for i in range(0, len(valid_updates), shard_size)]
         
         # Process shards concurrently
         tasks = []
         for shard in shards:
-            task = self._process_price_shard(shard)
+            task = self._process_partial_update_shard(shard)
             tasks.append(task)
         
         # Wait for all shards to complete
         await asyncio.gather(*tasks)
     
-    async def _process_price_shard(self, price_shard: list):
+    async def _process_partial_update_shard(self, update_shard: list):
         """
-        Process a single shard of prices with one pipeline
+        Process a single shard of partial price updates with Redis merge logic
         
         Args:
-            price_shard: List of price tuples for this shard
+            update_shard: List of partial price update tuples for this shard
         """
-        try:
-            async with self.redis.pipeline() as pipe:
-                for symbol, bid, ask, timestamp in price_shard:
-                    # Use hash-tagging for better cluster distribution
-                    key = f"market:{{{symbol[:3]}}}:{symbol}"
-                    pipe.hset(key, mapping={
-                        "bid": bid,
-                        "ask": ask,
-                        "ts": timestamp
-                    })
-                
-                await pipe.execute()
-                
-        except Exception as e:
-            logger.error(f"Failed to process price shard: {e}")
+        max_retries = 3
+        retry_delay = 0.1  # 100ms
+        
+        for attempt in range(max_retries):
+            try:
+                async with self.redis.pipeline() as pipe:
+                    for symbol, update_fields, timestamp in update_shard:
+                        # Use hash-tagging for better cluster distribution
+                        key = f"market:{{{symbol[:3]}}}:{symbol}"
+                        
+                        # Always update timestamp
+                        update_fields['ts'] = timestamp
+                        
+                        # Use HSET to update only the provided fields (bid/ask/ts)
+                        # This preserves existing bid or ask if only one is updated
+                        pipe.hset(key, mapping=update_fields)
+                    
+                    await pipe.execute()
+                    return  # Success, exit retry loop
+                    
+            except (ConnectionError, TimeoutError, OSError) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Redis connection error on attempt {attempt + 1}/{max_retries}: {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Failed to process partial update shard after {max_retries} attempts: {e}")
+                    # Continue processing other shards even if this one fails
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error processing partial update shard: {e}")
+                break  # Don't retry for unexpected errors
     
-    def _validate_and_parse_price(self, symbol: str, price_data: Dict[str, str], timestamp: int) -> Optional[tuple]:
+    async def _validate_and_parse_partial_price(self, symbol: str, price_data: Dict[str, str], timestamp: int) -> Optional[tuple]:
         """
-        Validate and parse individual symbol price data (sync for batch processing)
+        Validate and parse individual symbol partial price data
+        Handles cases where only 'buy' or 'sell' is provided
         
         Args:
             symbol: Trading symbol (e.g., 'EURUSD')
-            price_data: Dict with 'buy' and 'sell' price strings
+            price_data: Dict with optional 'buy' and/or 'sell' price strings
             timestamp: Current timestamp in milliseconds
             
         Returns:
-            tuple: (symbol, bid, ask, timestamp) if valid, None otherwise
+            tuple: (symbol, update_fields_dict, timestamp) if valid, None otherwise
         """
         try:
-            # Extract and validate price data
+            # Extract price data (partial updates allowed)
             buy_str = price_data.get('buy')
             sell_str = price_data.get('sell')
             
-            if not buy_str or not sell_str:
-                logger.debug(f"Missing price data for {symbol}: buy={buy_str}, sell={sell_str}")
+            if not buy_str and not sell_str:
+                logger.info(f"No price data provided for {symbol}")
                 return None
             
-            # Parse prices to floats
-            # buy = market's ask price (what user pays when buying)
-            # sell = market's bid price (what user gets when selling)
-            ask_price = float(buy_str)  # buy -> ask
-            bid_price = float(sell_str)  # sell -> bid
+            update_fields = {}
             
-            # Validate prices
-            if ask_price <= 0 or bid_price <= 0:
-                logger.debug(f"Invalid prices for {symbol}: ask={ask_price}, bid={bid_price}")
-                return None
+            # Parse buy price if provided
+            if buy_str:
+                try:
+                    bid_price = float(buy_str)  # buy -> bid (what market pays when user sells)
+                    if bid_price <= 0:
+                        logger.info(f"Invalid buy price for {symbol}: {bid_price}")
+                        return None
+                    update_fields['bid'] = bid_price
+                except (ValueError, TypeError) as e:
+                    logger.info(f"Failed to parse buy price for {symbol}: {e}")
+                    return None
             
-            if bid_price > ask_price:
-                logger.debug(f"Bid > Ask for {symbol}: bid={bid_price}, ask={ask_price}")
-                return None
+            # Parse sell price if provided
+            if sell_str:
+                try:
+                    ask_price = float(sell_str)  # sell -> ask (what market asks when user buys)
+                    if ask_price <= 0:
+                        logger.info(f"Invalid sell price for {symbol}: {ask_price}")
+                        return None
+                    update_fields['ask'] = ask_price
+                except (ValueError, TypeError) as e:
+                    logger.info(f"Failed to parse sell price for {symbol}: {e}")
+                    return None
             
-            return (symbol, bid_price, ask_price, timestamp)
+            # If both prices are provided, validate bid <= ask
+            if 'bid' in update_fields and 'ask' in update_fields:
+                if update_fields['bid'] > update_fields['ask']:
+                    logger.info(f"Bid > Ask for {symbol}: bid={update_fields['bid']}, ask={update_fields['ask']}")
+                    return None
             
-        except (ValueError, TypeError) as e:
-            logger.debug(f"Failed to parse prices for {symbol}: {e}")
-            return None
+            # If only one price is provided, we need to check against existing price in Redis
+            elif len(update_fields) == 1:
+                existing_price = await self._get_existing_price_for_validation(symbol)
+                if existing_price:
+                    if 'bid' in update_fields and 'ask' in existing_price:
+                        if update_fields['bid'] > existing_price['ask']:
+                            logger.info(f"New bid > existing ask for {symbol}: bid={update_fields['bid']}, existing_ask={existing_price['ask']}")
+                            return None
+                    elif 'ask' in update_fields and 'bid' in existing_price:
+                        if existing_price['bid'] > update_fields['ask']:
+                            logger.info(f"Existing bid > new ask for {symbol}: existing_bid={existing_price['bid']}, ask={update_fields['ask']}")
+                            return None
+            
+            return (symbol, update_fields, timestamp)
+            
         except Exception as e:
-            logger.error(f"Unexpected error processing {symbol}: {e}")
+            logger.error(f"Unexpected error processing partial price for {symbol}: {e}")
+            return None
+    
+    async def _get_existing_price_for_validation(self, symbol: str) -> Optional[Dict[str, float]]:
+        """
+        Get existing price from Redis for validation purposes
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Dict with existing bid/ask prices or None
+        """
+        try:
+            key = f"market:{{{symbol[:3]}}}:{symbol}"
+            price_data = await self.redis.hmget(key, ["bid", "ask"])
+            
+            if price_data and any(price_data):
+                result = {}
+                if price_data[0]:  # bid exists
+                    result['bid'] = float(price_data[0])
+                if price_data[1]:  # ask exists
+                    result['ask'] = float(price_data[1])
+                return result
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not get existing price for {symbol}: {e}")
             return None
     
     async def get_symbol_price(self, symbol: str) -> Optional[Dict[str, float]]:
