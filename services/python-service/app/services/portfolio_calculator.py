@@ -10,11 +10,15 @@ This service implements the first step of the Portfolio Calculator:
 
 import asyncio
 import logging
-from typing import Set, Dict
+from typing import Set, Dict, Tuple, List, Optional
 from threading import Lock
 import time
+import os
 
 from ..config.redis_config import redis_cluster, redis_pubsub_client
+
+# Env-driven strict mode
+STRICT_MODE = os.getenv("PORTFOLIO_STRICT_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
 
 
 class PortfolioCalculatorListener:
@@ -41,9 +45,17 @@ class PortfolioCalculatorListener:
             'last_update_time': None,
             'start_time': time.time(),
             'users_processed': 0,
-            'calculation_errors': 0
+            'calculation_errors': 0,
+            # Telemetry counters
+            'calc.fatal_errors': 0,
+            'calc.degraded': 0,
+            'calc.orders_skipped': 0,
+            'calc.users_processed': 0,
         }
         
+        # Strict mode toggle
+        self.strict_mode = STRICT_MODE
+
         # In-memory FX cache with short TTL to reduce Redis calls for conversion pairs
         self._fx_cache = {
             'ttl': 1.0,  # seconds
@@ -116,18 +128,70 @@ class PortfolioCalculatorListener:
                 if not user_key.startswith(f"{user_type}:"):
                     self.logger.warning(f"Invalid user_key format: {user_key}")
                     continue
+
                 user_id = user_key.split(":", 1)[1]
+                user_ctx = f"{user_type}:{user_id}"
+
+                # Fetch orders first; if none, still count as processed
                 orders = await self._fetch_user_orders(user_type, user_id)
-                if not orders:
+                symbols = list({o.get('symbol') for o in orders if o.get('symbol')}) if orders else []
+
+                # Fetch user config (strict: no silent defaults for balance)
+                user_cfg = await self._fetch_user_config(user_type, user_id)
+
+                # Missing or unparsable balance → fatal
+                if user_cfg.get('balance') is None:
+                    self.logger.error(f"Portfolio calc fatal: missing_balance for user={user_ctx}")
+                    await self._update_user_portfolio_status(user_type, user_id, calc_status="error", error_codes="missing_balance")
+                    self._stats['calc.fatal_errors'] += 1
+                    self._stats['calc.users_processed'] += 1
+                    self._stats['users_processed'] += 1
                     continue
-                symbols = list({order['symbol'] for order in orders if 'symbol' in order})
-                prices = await self._fetch_market_prices(symbols)
-                # Fetch user config (balance, leverage, group)
-                balance, leverage, group = await self._fetch_user_balance_and_leverage(user_type, user_id)
-                # Fetch group data for all symbols (user group with fallback to Standard)
-                group_data = await self._fetch_group_data_batch(symbols, group)
-                portfolio = await self._calculate_portfolio_metrics(orders, prices, group_data, balance, leverage)
+
+                # Fetch prices & group data only if there are orders
+                prices = await self._fetch_market_prices(symbols) if symbols else {}
+                group_data = await self._fetch_group_data_batch(symbols, user_cfg.get('group', 'Standard')) if symbols else {}
+
+                # Validate inputs
+                fatal_errors, order_skips, warnings = await self._validate_user_inputs(user_cfg, orders or [], prices, group_data)
+                for w in warnings:
+                    self.logger.warning(f"validation_warning user={user_ctx} msg={w}")
+
+                if fatal_errors:
+                    err_codes = ",".join(sorted(set(fatal_errors)))
+                    self.logger.error(f"Portfolio calc fatal for user={user_ctx} errors={err_codes}")
+                    await self._update_user_portfolio_status(user_type, user_id, calc_status="error", error_codes=err_codes)
+                    self._stats['calc.fatal_errors'] += 1
+                    self._stats['calc.users_processed'] += 1
+                    self._stats['users_processed'] += 1
+                    continue
+
+                # Calculate metrics on valid orders only; capture meta for degraded status
+                portfolio, meta = await self._calculate_portfolio_metrics(
+                    orders or [], prices, group_data, user_cfg['balance'], (user_cfg.get('leverage') or 0.0), order_skips, user_ctx
+                )
+
+                # Determine calc_status and degraded_fields
+                calc_status = "ok"
+                degraded_fields: List[str] = []
+                if meta.get('orders_skipped', 0) > 0 or any(flag in meta.get('degraded_flags', set()) for flag in ("missing_conversion",)):
+                    calc_status = "degraded"
+                    degraded_fields.append("orders_skipped")
+                    flags = meta.get('degraded_flags', set())
+                    for field in ("missing_group_data", "missing_prices", "missing_conversion"):
+                        if field in flags:
+                            degraded_fields.append(field)
+                    self._stats['calc.degraded'] += 1
+                # Update portfolio snapshot with status + metrics
+                portfolio.update({
+                    'calc_status': calc_status,
+                    'degraded_fields': ",".join(degraded_fields) if degraded_fields else "",
+                })
                 await self._update_user_portfolio(user_type, user_id, portfolio)
+
+                # Telemetry increments
+                self._stats['calc.orders_skipped'] += int(meta.get('orders_skipped', 0))
+                self._stats['calc.users_processed'] += 1
                 self._stats['users_processed'] += 1
             except Exception as e:
                 self.logger.error(f"Portfolio calculation error for {user_key}: {e}")
@@ -152,12 +216,19 @@ class PortfolioCalculatorListener:
                 return []
             # Pipeline hgetall for all orders
             orders = await asyncio.gather(*(redis_cluster.hgetall(k) for k in order_keys))
-            # Add symbol field from key if missing
+            # Attach order_id and key; symbol is expected in fields; if missing, it will be validated later
+            enriched = []
             for i, k in enumerate(order_keys):
-                if 'symbol' not in orders[i]:
-                    # Try to extract symbol from order fields or key
-                    pass  # Extend as needed
-            return orders
+                try:
+                    key_str = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
+                except Exception:
+                    key_str = str(k)
+                order_id = key_str.rsplit(":", 1)[-1]
+                od = orders[i] or {}
+                od['order_id'] = od.get('order_id') or order_id
+                od['order_key'] = key_str
+                enriched.append(od)
+            return enriched
         except Exception as e:
             self.logger.error(f"Error fetching orders for {user_type}:{user_id}: {e}")
             return []
@@ -179,11 +250,109 @@ class PortfolioCalculatorListener:
             self.logger.error(f"Error fetching market prices for symbols {symbols}: {e}")
             return prices
 
+    async def _fetch_user_config(self, user_type: str, user_id: str) -> Dict:
+        """
+        Fetch user's config without silent defaults.
+        Key: user:{user_type}:{user_id}:config (Hash)
+        Returns dict with parsed values: {'balance': Optional[float], 'leverage': Optional[float], 'group': str}
+        - balance: None if missing/unparsable
+        - leverage: float (>0) if parsable and positive, else 0.0
+        - group: defaults to 'Standard' if missing
+        """
+        key = f"user:{user_type}:{user_id}:config"
+        try:
+            data = await redis_cluster.hgetall(key)
+        except Exception as e:
+            self.logger.error(f"Error fetching user config for {user_type}:{user_id}: {e}")
+            data = {}
+
+        balance: Optional[float]
+        leverage: float = 0.0
+        group = (data.get('group') or 'Standard') if data else 'Standard'
+
+        # Parse balance
+        if data and ('wallet_balance' in data):
+            try:
+                balance = float(data.get('wallet_balance'))
+            except (TypeError, ValueError):
+                balance = None
+        else:
+            balance = None
+
+        # Parse leverage
+        if data and ('leverage' in data):
+            try:
+                lev = float(data.get('leverage'))
+                if lev > 0:
+                    leverage = lev
+            except (TypeError, ValueError):
+                leverage = 0.0
+
+        return {'balance': balance, 'leverage': leverage, 'group': group}
+
+    async def _validate_user_inputs(self, user_cfg: Dict, orders: List[Dict], prices: Dict, group_data: Dict) -> Tuple[List[str], Dict[str, str], List[str]]:
+        """
+        Validate inputs strictly. Returns (fatal_errors, order_skips, warnings)
+
+        Fatal if:
+        - Missing wallet_balance
+        - For any order: margin<=0 AND leverage<=0 AND missing contract_size (from both groups).
+
+        order_skips reasons may include:
+        - missing_symbol, missing_prices, missing_group_data, missing_profit_currency,
+          missing_margin_and_leverage_or_contract_size
+        """
+        fatal_errors: List[str] = []
+        order_skips: Dict[str, str] = {}
+        warnings: List[str] = []
+
+        # Fatal: missing balance
+        if user_cfg.get('balance') is None:
+            fatal_errors.append('missing_balance')
+
+        leverage = float(user_cfg.get('leverage') or 0.0)
+
+        for od in orders:
+            order_id = od.get('order_id') or 'unknown'
+            symbol = od.get('symbol')
+
+            # Missing symbol
+            if not symbol:
+                order_skips[order_id] = 'missing_symbol'
+                continue
+
+            # Missing price data
+            if symbol not in prices:
+                order_skips[order_id] = 'missing_prices'
+                continue
+
+            # Group data checks
+            g = group_data.get(symbol)
+            contract_size = None if not g else self._safe_float(g.get('contract_size'))
+            profit = None if not g else (g.get('profit') or None)
+            if (g is None) or (contract_size is None):
+                # Potentially fatal if also no leverage and margin missing/<=0
+                try:
+                    margin_val = float(od.get('margin') or 0)
+                except (TypeError, ValueError):
+                    margin_val = 0.0
+                if self.strict_mode and margin_val <= 0 and leverage <= 0 and contract_size is None:
+                    fatal_errors.append('missing_contract_size_no_leverage_and_margin')
+                else:
+                    order_skips[order_id] = 'missing_group_data'
+                continue
+
+            # Profit currency presence checked during calculation step as well
+            if profit is None:
+                order_skips[order_id] = 'missing_profit_currency'
+
+        return fatal_errors, order_skips, warnings
+
     async def _fetch_user_balance_and_leverage(self, user_type: str, user_id: str):
         """
         Fetch user's wallet balance, leverage, and group from Redis:
         Key: user:{user_type}:{user_id}:config (Hash)
-        Fallbacks: balance=0.0, leverage=100.0, group="Standard"
+        Note: Legacy method. Prefer _fetch_user_config for strict mode. Kept for backward compatibility.
         """
         try:
             key = f"user:{user_type}:{user_id}:config"
@@ -213,7 +382,7 @@ class PortfolioCalculatorListener:
         """
         Fetch contract_size and profit currency for each symbol from groups:{group}:{symbol},
         with fallback to groups:{Standard}:{symbol} if missing.
-        Returns dict: {symbol: {'contract_size': float, 'profit': str}}
+        Returns dict: {symbol: {'contract_size': Optional[float], 'profit': Optional[str]}}
         """
         group_data = {}
         try:
@@ -234,99 +403,138 @@ class PortfolioCalculatorListener:
                 data = grp_results[i] if grp_results[i] else std_results_map.get(i, None)
                 if data:
                     try:
-                        contract_size = float(data.get('contract_size', 1))
+                        contract_size = float(data.get('contract_size')) if (data.get('contract_size') is not None) else None
                     except (TypeError, ValueError):
-                        contract_size = 1.0
-                    profit = data.get('profit', 'USD') or 'USD'
+                        contract_size = None
+                    profit = data.get('profit') or None
                 else:
-                    contract_size = 1.0
-                    profit = 'USD'
+                    contract_size = None
+                    profit = None
                 group_data[symbol] = {'contract_size': contract_size, 'profit': profit}
             return group_data
         except Exception as e:
             self.logger.error(f"Error fetching group data for symbols {symbols}: {e}")
             return group_data
 
-    async def _calculate_portfolio_metrics(self, orders: list, prices: dict, group_data: dict, balance: float, leverage: float) -> dict:
+    async def _calculate_portfolio_metrics(
+        self,
+        orders: List[Dict],
+        prices: Dict,
+        group_data: Dict,
+        balance: float,
+        leverage: float,
+        skip_orders: Dict[str, str],
+        user_ctx: str = "",
+    ) -> Tuple[Dict, Dict]:
         """
-        Calculate PnL, equity, used margin, free margin, margin level, etc.
-        - Swap and commission are handled per order
-        - Contract size and profit currency are fetched from user's group (fallback to Standard)
-        - PnL is always converted to USD
+        Calculate PnL, equity, used margin, free margin, margin level, etc., over valid orders only.
+        - Keeps commission and swap defaults at 0.
+        - Skips orders present in skip_orders or failing runtime checks (conversion, margin calc).
+        Returns (portfolio_dict, meta) where meta contains {'orders_skipped': int, 'degraded_flags': set}
         """
         total_pl_usd = 0.0
         used_margin = 0.0
+        skipped = 0
+        degraded_flags: Set[str] = set()
+
         for order in orders:
             try:
+                order_id = order.get('order_id') or 'unknown'
                 symbol = order.get('symbol')
-                if not symbol or symbol not in prices or symbol not in group_data:
+
+                # Respect pre-validated skips
+                if order_id in skip_orders:
+                    reason = skip_orders[order_id]
+                    skipped += 1
+                    degraded_flags.add('orders_skipped')
+                    if reason in ('missing_group_data',):
+                        degraded_flags.add('missing_group_data')
+                    if reason in ('missing_prices',):
+                        degraded_flags.add('missing_prices')
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason={reason}")
                     continue
+
+                # Validate availability at runtime
+                if (not symbol) or (symbol not in prices) or (symbol not in group_data):
+                    skipped += 1
+                    degraded_flags.update({'orders_skipped', 'missing_group_data' if (symbol not in group_data) else 'missing_prices'})
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason={'missing_group_data' if (symbol not in group_data) else 'missing_prices'}")
+                    continue
+
+                g = group_data.get(symbol) or {}
+                contract_size = self._safe_float(g.get('contract_size'))
+                profit_currency = g.get('profit') or None
+
+                if (contract_size is None) or (profit_currency is None):
+                    skipped += 1
+                    degraded_flags.add('orders_skipped')
+                    degraded_flags.add('missing_group_data' if contract_size is None else 'missing_profit_currency')
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason={'missing_group_data' if contract_size is None else 'missing_profit_currency'}")
+                    continue
+
                 order_type = (order.get('order_type') or '').upper()
                 # Safe float parsing from Redis string values
-                try:
-                    entry_price = float(order.get('order_price', 0) or 0)
-                except (TypeError, ValueError):
-                    entry_price = 0.0
-                try:
-                    quantity = float(order.get('order_quantity', 0) or 0)
-                except (TypeError, ValueError):
-                    quantity = 0.0
-                try:
-                    margin = float(order.get('margin', 0) or 0)
-                except (TypeError, ValueError):
-                    margin = 0.0
-                try:
-                    swap = float(order.get('swap', 0) or 0)
-                except (TypeError, ValueError):
-                    swap = 0.0
-                try:
-                    commission = float(order.get('commission', 0) or 0)
-                except (TypeError, ValueError):
-                    commission = 0.0
-                try:
-                    contract_size = float(group_data[symbol].get('contract_size', 1) or 1)
-                except (TypeError, ValueError):
-                    contract_size = 1.0
-                profit_currency = group_data[symbol].get('profit', 'USD')
+                entry_price = self._safe_float(order.get('order_price')) or 0.0
+                quantity = self._safe_float(order.get('order_quantity')) or 0.0
+                margin_val = self._safe_float(order.get('margin')) or 0.0
+                swap = self._safe_float(order.get('swap')) or 0.0
+                commission = self._safe_float(order.get('commission')) or 0.0
+
                 # Use latest market prices
-                market_bid = prices[symbol].get('bid', 0)
-                market_ask = prices[symbol].get('ask', 0)
+                market_bid = self._safe_float(prices[symbol].get('bid')) or 0.0
+                market_ask = self._safe_float(prices[symbol].get('ask')) or 0.0
+
                 if order_type == 'BUY':
                     pnl = (market_bid - entry_price) * quantity * contract_size
                 elif order_type == 'SELL':
                     pnl = (entry_price - market_ask) * quantity * contract_size
                 else:
-                    pnl = 0
+                    pnl = 0.0
+
                 pnl += swap - commission
-                pnl_usd = await self.convert_to_usd(pnl, profit_currency, symbol, prices)
+
+                # Strict conversion: skip if no conversion pair
+                pnl_usd = await self.convert_to_usd(pnl, profit_currency, symbol, prices, strict=self.strict_mode)
+                if pnl_usd is None:
+                    skipped += 1
+                    degraded_flags.update({'orders_skipped', 'missing_conversion'})
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=missing_conversion")
+                    continue
                 total_pl_usd += pnl_usd
-                # Dynamic margin calculation if missing or non-positive
-                if margin and margin > 0:
-                    used_margin += margin
-                else:
-                    if leverage and leverage > 0:
-                        dyn_margin = (contract_size * quantity) / leverage
-                    else:
-                        dyn_margin = (contract_size * quantity) / 100.0  # default leverage fallback
+
+                # Used margin rules
+                if margin_val and margin_val > 0:
+                    used_margin += margin_val
+                elif (leverage and leverage > 0) and (contract_size is not None):
+                    dyn_margin = (contract_size * quantity) / leverage
                     used_margin += dyn_margin
+                else:
+                    skipped += 1
+                    degraded_flags.add('orders_skipped')
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=missing_margin_and_leverage_or_contract_size")
+                    continue
+
             except Exception as e:
                 self.logger.error(f"Error calculating order PnL: {order}: {e}")
                 continue
-        equity = balance + total_pl_usd
+
+        equity = (balance or 0.0) + total_pl_usd
         free_margin = equity - used_margin
-        margin_level = (equity / used_margin * 100) if used_margin > 0 else 0
-        return {
+        margin_level = (equity / used_margin * 100) if used_margin > 0 else 0.0
+        portfolio = {
             'equity': round(equity, 2),
-            'balance': round(balance, 2),
+            'balance': round(balance or 0.0, 2),
             'free_margin': round(free_margin, 2),
             'used_margin': round(used_margin, 2),
             'margin_level': round(margin_level, 2),
             'open_pnl': round(total_pl_usd, 2),
             'total_pl': round(total_pl_usd, 2),
-            'ts': int(time.time() * 1000),
+            'ts': self._now_ms(),
         }
+        meta = {'orders_skipped': skipped, 'degraded_flags': degraded_flags}
+        return portfolio, meta
 
-    async def convert_to_usd(self, amount: float, from_currency: str, symbol: str, prices: dict = None) -> float:
+    async def convert_to_usd(self, amount: float, from_currency: str, symbol: str, prices: dict = None, strict: Optional[bool] = None) -> Optional[float]:
         """
         Convert amount from from_currency to USD using current market rates.
         - If from_currency is USD, return amount.
@@ -334,6 +542,8 @@ class PortfolioCalculatorListener:
         - 'prices' may be passed in for efficiency.
         """
         try:
+            if strict is None:
+                strict = self.strict_mode
             if from_currency.upper() == 'USD':
                 return amount
             # Determine available conversion symbol and orientation
@@ -402,6 +612,8 @@ class PortfolioCalculatorListener:
                         }
 
             if conv_price == 0:
+                if strict:
+                    return None
                 self.logger.warning(f"Conversion rate for {conversion_symbol} is 0, returning amount unchanged.")
                 return amount
             # If USD is base, invert
@@ -411,7 +623,36 @@ class PortfolioCalculatorListener:
                 return amount * conv_price
         except Exception as e:
             self.logger.error(f"Error converting {amount} {from_currency} to USD: {e}")
-            return amount
+            return None if strict else amount
+
+    def _safe_float(self, v) -> Optional[float]:
+        try:
+            if v is None:
+                return None
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _now_ms(self) -> int:
+        return int(time.time() * 1000)
+
+    async def _update_user_portfolio_status(self, user_type: str, user_id: str, calc_status: str, error_codes: Optional[str] = None, degraded_fields: Optional[str] = None):
+        """
+        Update only status fields for user's portfolio snapshot, preserving existing metrics.
+        """
+        redis_key = f"user_portfolio:{user_type}:{user_id}"
+        mapping = {
+            'calc_status': calc_status,
+            'ts': self._now_ms(),
+        }
+        if error_codes is not None:
+            mapping['error_codes'] = error_codes
+        if degraded_fields is not None:
+            mapping['degraded_fields'] = degraded_fields
+        try:
+            await redis_cluster.hset(redis_key, mapping=mapping)
+        except Exception as e:
+            self.logger.error(f"Error updating status for {redis_key}: {e}")
 
     async def _update_user_portfolio(self, user_type: str, user_id: str, portfolio: dict):
         """
