@@ -16,6 +16,9 @@ import time
 import os
 
 from ..config.redis_config import redis_cluster, redis_pubsub_client
+from app.services.portfolio.margin_calculator import compute_single_order_margin
+from app.services.portfolio.symbol_margin_aggregator import compute_symbol_margin
+from app.services.portfolio.conversion_utils import convert_to_usd as portfolio_convert_to_usd
 
 # Env-driven strict mode
 STRICT_MODE = os.getenv("PORTFOLIO_STRICT_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -382,7 +385,7 @@ class PortfolioCalculatorListener:
         """
         Fetch contract_size and profit currency for each symbol from groups:{group}:{symbol},
         with fallback to groups:{Standard}:{symbol} if missing.
-        Returns dict: {symbol: {'contract_size': Optional[float], 'profit': Optional[str]}}
+        Returns dict: {symbol: {'contract_size': Optional[float], 'profit': Optional[str], 'type': int, 'crypto_margin_factor': Optional[float]}}
         """
         group_data = {}
         try:
@@ -407,10 +410,25 @@ class PortfolioCalculatorListener:
                     except (TypeError, ValueError):
                         contract_size = None
                     profit = data.get('profit') or None
+                    try:
+                        itype = int(data.get('type')) if (data.get('type') is not None) else 1
+                    except (TypeError, ValueError):
+                        itype = 1
+                    try:
+                        cmf = float(data.get('crypto_margin_factor')) if (data.get('crypto_margin_factor') is not None) else None
+                    except (TypeError, ValueError):
+                        cmf = None
                 else:
                     contract_size = None
                     profit = None
-                group_data[symbol] = {'contract_size': contract_size, 'profit': profit}
+                    itype = 1
+                    cmf = None
+                group_data[symbol] = {
+                    'contract_size': contract_size,
+                    'profit': profit,
+                    'type': itype,
+                    'crypto_margin_factor': cmf,
+                }
             return group_data
         except Exception as e:
             self.logger.error(f"Error fetching group data for symbols {symbols}: {e}")
@@ -436,6 +454,8 @@ class PortfolioCalculatorListener:
         used_margin = 0.0
         skipped = 0
         degraded_flags: Set[str] = set()
+        # Accumulate per-order margins to compute hedged symbol margin later
+        orders_by_symbol: Dict[str, List[Dict]] = {}
 
         for order in orders:
             try:
@@ -502,21 +522,48 @@ class PortfolioCalculatorListener:
                     continue
                 total_pl_usd += pnl_usd
 
-                # Used margin rules
-                if margin_val and margin_val > 0:
-                    used_margin += margin_val
-                elif (leverage and leverage > 0) and (contract_size is not None):
-                    dyn_margin = (contract_size * quantity) / leverage
-                    used_margin += dyn_margin
-                else:
+                # Compute per-order margin in USD using helper (ask price used)
+                try:
+                    instrument_type = int((g.get('type') or 1))
+                except (TypeError, ValueError):
+                    instrument_type = 1
+                try:
+                    crypto_margin_factor = float(g.get('crypto_margin_factor')) if (g.get('crypto_margin_factor') is not None) else None
+                except (TypeError, ValueError):
+                    crypto_margin_factor = None
+
+                margin_usd = await compute_single_order_margin(
+                    contract_size=contract_size or 0.0,
+                    order_quantity=quantity,
+                    execution_price=market_ask,
+                    profit_currency=(profit_currency.upper() if profit_currency else None),
+                    symbol=symbol,
+                    leverage=leverage,
+                    instrument_type=instrument_type,
+                    prices_cache=prices,
+                    crypto_margin_factor=crypto_margin_factor,
+                    strict=self.strict_mode,
+                )
+
+                if margin_usd is None:
                     skipped += 1
-                    degraded_flags.add('orders_skipped')
-                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=missing_margin_and_leverage_or_contract_size")
+                    degraded_flags.update({'orders_skipped', 'missing_conversion'})
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=margin_conversion_failed")
                     continue
+
+                orders_by_symbol.setdefault(symbol, []).append({
+                    'order_type': order_type,
+                    'order_quantity': quantity,
+                    'order_margin_usd': float(margin_usd),
+                })
 
             except Exception as e:
                 self.logger.error(f"Error calculating order PnL: {order}: {e}")
                 continue
+
+        # Aggregate hedged margin per symbol
+        for sym, od_list in orders_by_symbol.items():
+            used_margin += compute_symbol_margin(od_list)
 
         equity = (balance or 0.0) + total_pl_usd
         free_margin = equity - used_margin
@@ -536,93 +583,15 @@ class PortfolioCalculatorListener:
 
     async def convert_to_usd(self, amount: float, from_currency: str, symbol: str, prices: dict = None, strict: Optional[bool] = None) -> Optional[float]:
         """
-        Convert amount from from_currency to USD using current market rates.
-        - If from_currency is USD, return amount.
-        - Otherwise, fetch the appropriate market:{symbol} for conversion.
-        - 'prices' may be passed in for efficiency.
+        Convert amount from from_currency to USD using portfolio helper layer (ask price).
+        Delegates to app.services.portfolio.conversion_utils.convert_to_usd.
         """
         try:
             if strict is None:
                 strict = self.strict_mode
-            if from_currency.upper() == 'USD':
-                return amount
-            # Determine available conversion symbol and orientation
-            conversion_symbol = None
-            invert = False
-            prices = prices or {}
-
-            # 1) Check passed-in prices
-            if f"{from_currency}USD" in prices:
-                conversion_symbol = f"{from_currency}USD"
-                invert = False
-                conv_price = float(prices[conversion_symbol].get('bid', 0) or 0)
-            elif f"USD{from_currency}" in prices:
-                conversion_symbol = f"USD{from_currency}"
-                invert = True
-                conv_price = float(prices[conversion_symbol].get('bid', 0) or 0)
-            else:
-                conv_price = 0.0
-
-            # 2) Check cache if not found or zero
-            if (not conversion_symbol) or (conv_price == 0):
-                now = time.time()
-                # Prefer direct from_currencyUSD
-                cached = self._fx_cache['rates'].get(f"{from_currency}USD")
-                if cached and (now - cached['ts'] <= self._fx_cache['ttl']):
-                    conversion_symbol = f"{from_currency}USD"
-                    invert = False
-                    conv_price = cached.get('bid', 0) or 0
-                else:
-                    cached_inv = self._fx_cache['rates'].get(f"USD{from_currency}")
-                    if cached_inv and (now - cached_inv['ts'] <= self._fx_cache['ttl']):
-                        conversion_symbol = f"USD{from_currency}"
-                        invert = True
-                        conv_price = cached_inv.get('bid', 0) or 0
-
-            # 3) Fetch from Redis if still missing or zero
-            if (not conversion_symbol) or (conv_price == 0):
-                # Try direct pair first
-                conv_price_data = await redis_cluster.hgetall(f"market:{from_currency}USD")
-                if conv_price_data:
-                    conversion_symbol = f"{from_currency}USD"
-                    invert = False
-                    try:
-                        conv_price = float(conv_price_data.get('bid', 0) or 0)
-                    except (TypeError, ValueError):
-                        conv_price = 0.0
-                    # Update cache
-                    self._fx_cache['rates'][conversion_symbol] = {
-                        'ts': time.time(),
-                        'bid': conv_price,
-                        'ask': float(conv_price_data.get('ask', 0) or 0) if conv_price_data else 0,
-                    }
-                else:
-                    conv_price_data2 = await redis_cluster.hgetall(f"market:USD{from_currency}")
-                    if conv_price_data2:
-                        conversion_symbol = f"USD{from_currency}"
-                        invert = True
-                        try:
-                            conv_price = float(conv_price_data2.get('bid', 0) or 0)
-                        except (TypeError, ValueError):
-                            conv_price = 0.0
-                        self._fx_cache['rates'][conversion_symbol] = {
-                            'ts': time.time(),
-                            'bid': conv_price,
-                            'ask': float(conv_price_data2.get('ask', 0) or 0) if conv_price_data2 else 0,
-                        }
-
-            if conv_price == 0:
-                if strict:
-                    return None
-                self.logger.warning(f"Conversion rate for {conversion_symbol} is 0, returning amount unchanged.")
-                return amount
-            # If USD is base, invert
-            if invert:
-                return amount / conv_price
-            else:
-                return amount * conv_price
+            return await portfolio_convert_to_usd(amount, from_currency, prices_cache=prices or {}, strict=strict)
         except Exception as e:
-            self.logger.error(f"Error converting {amount} {from_currency} to USD: {e}")
+            self.logger.error(f"Error converting {amount} {from_currency} to USD via helper: {e}")
             return None if strict else amount
 
     def _safe_float(self, v) -> Optional[float]:
