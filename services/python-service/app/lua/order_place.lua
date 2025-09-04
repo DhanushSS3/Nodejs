@@ -2,11 +2,7 @@
 -- Inputs (KEYS):
 -- 1) user_config_key
 -- 2) order_key
--- 3) symbol_holders_key
--- 4) portfolio_key
--- 5) group_key_user_group (optional)
--- 6) group_key_standard (optional)
--- 7) event_stream_key (optional)
+-- 3) portfolio_key
 --
 -- Inputs (ARGV):
 -- 1) user_type
@@ -21,8 +17,9 @@
 -- In a Redis Cluster, EVAL requires that all KEYS[] target the same hash slot. Ensure
 -- the caller supplies KEYS that share a common hash tag (e.g., {user_type:user_id}).
 -- This script will not construct keys internally and relies entirely on KEYS[] to
--- avoid CROSSSLOT errors. If group keys or stream keys are provided, they must also
--- use the same hash tag to be accessible within this script.
+-- avoid CROSSSLOT errors. Only user-scoped keys are accepted here to guarantee they
+-- reside in the same slot. Non-user-scoped updates (e.g., symbol_holders) must be
+-- performed by the caller outside this script after a successful atomic placement.
 
 local cjson = cjson
 
@@ -36,8 +33,8 @@ local recomputed_user_used_margin_usd = ARGV[7]
 
 local resp = { ok = false, reason = nil }
 
--- Validate KEYS
-if #KEYS < 4 then
+-- Validate KEYS (expect exactly the three user-scoped keys)
+if #KEYS < 3 then
   resp.reason = 'insufficient_keys'
   return cjson.encode(resp)
 end
@@ -45,11 +42,7 @@ end
 -- Keys (provided by caller; must be same slot in cluster)
 local user_config_key = KEYS[1]
 local order_key = KEYS[2]
-local symbol_holders_key = KEYS[3]
-local portfolio_key = KEYS[4]
-local group_key_user = KEYS[5]
-local group_key_std = KEYS[6]
-local stream_key = KEYS[7]
+local portfolio_key = KEYS[3]
 
 -- Optional: validate that all KEYS share the same hash tag if any tag is used
 local function _extract_tag(k)
@@ -61,7 +54,7 @@ local function _extract_tag(k)
   return nil
 end
 
-local key_list = { user_config_key, order_key, symbol_holders_key, portfolio_key, group_key_user, group_key_std, stream_key }
+local key_list = { user_config_key, order_key, portfolio_key }
 local expected_tag = nil
 local any_tag = false
 
@@ -112,19 +105,7 @@ if (not lev) or (tonumber(lev) or 0) <= 0 then
   return cjson.encode(resp)
 end
 
--- Optional: verify groups data exists if provided as KEYS[5]/KEYS[6]
-if group_key_user or group_key_std then
-  local gkey = group_key_user
-  if (not gkey) or (tostring(gkey) == '') or (redis.call('EXISTS', gkey) == 0) then
-    gkey = group_key_std
-  end
-  if gkey and tostring(gkey) ~= '' then
-    if redis.call('EXISTS', gkey) == 0 then
-      resp.reason = 'missing_group_data'
-      return cjson.encode(resp)
-    end
-  end
-end
+-- Group keys are not handled within this script to avoid cross-slot access in cluster
 
 -- Decode order fields JSON
 local ok, order_fields = pcall(cjson.decode, order_fields_json or '{}')
@@ -145,26 +126,14 @@ for k, v in pairs(order_fields) do
 end
 redis.call('HSET', unpack(args))
 
--- Add to symbol holders set
-redis.call('SADD', symbol_holders_key, user_type .. ':' .. user_id)
+-- Note: symbol_holders update must be performed by the caller after success
 
 -- Update user portfolio used margin if provided
 if recomputed_user_used_margin_usd and tostring(recomputed_user_used_margin_usd) ~= '' then
   redis.call('HSET', portfolio_key, 'used_margin', tostring(recomputed_user_used_margin_usd))
 end
 
-if stream_key and tostring(stream_key) ~= '' then
-  redis.call('XADD', stream_key, '*',
-    'event', 'order_placed',
-    'status', 'placed',
-    'user_type', user_type,
-    'user_id', user_id,
-    'order_id', order_id,
-    'symbol', symbol,
-    'single_order_margin_usd', tostring(single_order_margin_usd or ''),
-    'recomputed_used_margin_usd', tostring(recomputed_user_used_margin_usd or '')
-  )
-end
+-- Event streaming is not handled here to avoid cross-slot access; perform externally if needed
 
 resp.ok = true
 return cjson.encode(resp)

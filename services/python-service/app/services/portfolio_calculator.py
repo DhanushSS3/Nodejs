@@ -202,10 +202,10 @@ class PortfolioCalculatorListener:
 
     async def _fetch_user_orders(self, user_type: str, user_id: str) -> list:
         """
-        Fetch all open order hashes for a user from Redis: user_holdings:{user_type}:{user_id}:{order_id}
+        Fetch all open order hashes for a user from Redis: user_holdings:{{user_type:user_id}}:{order_id}
         Returns a list of order dicts.
         """
-        pattern = f"user_holdings:{user_type}:{user_id}:*"
+        pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
         try:
             # Scan for all order keys for this user
             cursor = b'0'
@@ -256,13 +256,13 @@ class PortfolioCalculatorListener:
     async def _fetch_user_config(self, user_type: str, user_id: str) -> Dict:
         """
         Fetch user's config without silent defaults.
-        Key: user:{user_type}:{user_id}:config (Hash)
+        Key: user:{{user_type:user_id}}:config (Hash)
         Returns dict with parsed values: {'balance': Optional[float], 'leverage': Optional[float], 'group': str}
         - balance: None if missing/unparsable
         - leverage: float (>0) if parsable and positive, else 0.0
         - group: defaults to 'Standard' if missing
         """
-        key = f"user:{user_type}:{user_id}:config"
+        key = f"user:{{{user_type}:{user_id}}}:config"
         try:
             data = await redis_cluster.hgetall(key)
         except Exception as e:
@@ -354,11 +354,11 @@ class PortfolioCalculatorListener:
     async def _fetch_user_balance_and_leverage(self, user_type: str, user_id: str):
         """
         Fetch user's wallet balance, leverage, and group from Redis:
-        Key: user:{user_type}:{user_id}:config (Hash)
+        Key: user:{{user_type:user_id}}:config (Hash)
         Note: Legacy method. Prefer _fetch_user_config for strict mode. Kept for backward compatibility.
         """
         try:
-            key = f"user:{user_type}:{user_id}:config"
+            key = f"user:{{{user_type}:{user_id}}}:config"
             data = await redis_cluster.hgetall(key)
             if not data:
                 return 0.0, 100.0, "Standard"
@@ -609,7 +609,7 @@ class PortfolioCalculatorListener:
         """
         Update only status fields for user's portfolio snapshot, preserving existing metrics.
         """
-        redis_key = f"user_portfolio:{user_type}:{user_id}"
+        redis_key = f"user_portfolio:{{{user_type}:{user_id}}}"
         mapping = {
             'calc_status': calc_status,
             'ts': self._now_ms(),
@@ -625,9 +625,9 @@ class PortfolioCalculatorListener:
 
     async def _update_user_portfolio(self, user_type: str, user_id: str, portfolio: dict):
         """
-        Write portfolio metrics to Redis hash user_portfolio:{user_type}:{user_id}
+        Write portfolio metrics to Redis hash user_portfolio:{{user_type:user_id}}
         """
-        redis_key = f"user_portfolio:{user_type}:{user_id}"
+        redis_key = f"user_portfolio:{{{user_type}:{user_id}}}"
         try:
             await redis_cluster.hset(redis_key, mapping=portfolio)
             self.logger.debug(f"Updated portfolio for {redis_key}: {portfolio}")

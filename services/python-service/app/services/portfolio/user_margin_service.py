@@ -163,7 +163,7 @@ async def compute_user_total_margin(
 # Internal helpers
 
 async def _fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]]:
-    pattern = f"user_holdings:{user_type}:{user_id}:*"
+    pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
     try:
         cursor = b'0'
         keys: List[str] = []
@@ -219,7 +219,7 @@ async def _gather_all(tasks: List) -> List:
 
 
 async def _fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
-    key = f"user:{user_type}:{user_id}:config"
+    key = f"user:{{{user_type}:{user_id}}}:config"
     try:
         data = await redis_cluster.hgetall(key)
     except Exception as e:

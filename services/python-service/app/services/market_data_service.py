@@ -94,8 +94,8 @@ class MarketDataService:
             try:
                 async with self.redis.pipeline() as pipe:
                     for symbol, update_fields, timestamp in update_shard:
-                        # Use hash-tagging for better cluster distribution
-                        key = f"market:{{{symbol[:3]}}}:{symbol}"
+                        # Use simple format to match all readers
+                        key = f"market:{symbol}"
                         
                         # Always update timestamp
                         update_fields['ts'] = timestamp
@@ -204,7 +204,7 @@ class MarketDataService:
             Dict with existing bid/ask prices or None
         """
         try:
-            key = f"market:{{{symbol[:3]}}}:{symbol}"
+            key = f"market:{symbol}"
             price_data = await self.redis.hmget(key, ["bid", "ask"])
             
             if price_data and any(price_data):
@@ -232,8 +232,8 @@ class MarketDataService:
             Dict with bid, ask, ts or None if stale/missing
         """
         try:
-            # Fetch from structured hash with hash-tagging for O(1) access
-            key = f"market:{{{symbol[:3]}}}:{symbol}"
+            # Fetch from structured hash
+            key = f"market:{symbol}"
             price_data = await self.redis.hmget(key, ["bid", "ask", "ts"])
             
             if not all(price_data):
@@ -271,9 +271,9 @@ class MarketDataService:
         """
         try:
             async with self.redis.pipeline() as pipe:
-                # Batch fetch all symbols with hash-tagging
+                # Batch fetch all symbols
                 for symbol in symbols:
-                    key = f"market:{{{symbol[:3]}}}:{symbol}"
+                    key = f"market:{symbol}"
                     pipe.hmget(key, ["bid", "ask", "ts"])
                 
                 results = await pipe.execute()
@@ -314,12 +314,8 @@ class MarketDataService:
             symbols = []
             async for key in self.redis.scan_iter(match="market:*", count=1000):
                 if key.startswith("market:"):
-                    # Extract symbol from hash-tagged key: market:{EUR}:EURUSD -> EURUSD
-                    if "}:" in key:
-                        symbol = key.split("}:", 1)[1]
-                    else:
-                        # Fallback for non-hash-tagged keys
-                        symbol = key[7:]  # Remove "market:" prefix
+                    # Extract symbol from key: market:EURUSD -> EURUSD
+                    symbol = key[7:]  # Remove "market:" prefix
                     
                     if symbol and symbol != "prices":  # Skip market:prices if it exists
                         symbols.append(symbol)
@@ -327,10 +323,10 @@ class MarketDataService:
             if not symbols:
                 return {"timestamp": int(time.time() * 1000), "total_symbols": 0, "prices": {}}
             
-            # Batch fetch all symbol prices with hash-tagging
+            # Batch fetch all symbol prices
             async with self.redis.pipeline() as pipe:
                 for symbol in symbols:
-                    key = f"market:{{{symbol[:3]}}}:{symbol}"
+                    key = f"market:{symbol}"
                     pipe.hmget(key, ["bid", "ask", "ts"])
                 
                 results = await pipe.execute()

@@ -48,8 +48,8 @@ async def run_tests():
     # Build mock
     r = MockRedis()
 
-    # User config
-    r._h["user:live:1001:config"] = {"group": "Standard", "leverage": "100"}
+    # User config (hash-tagged)
+    r._h["user:{live:1001}:config"] = {"group": "Standard", "leverage": "100"}
 
     # Group data (Standard)
     r._h["groups:{Standard}:EURUSD"] = {
@@ -58,17 +58,17 @@ async def run_tests():
         "type": "1",
     }
 
-    # Orders for user
+    # Orders for user (hash-tagged)
     r._scan_keys = [
-        "user_holdings:live:1001:o1",
-        "user_holdings:live:1001:o2",
+        "user_holdings:{live:1001}:o1",
+        "user_holdings:{live:1001}:o2",
     ]
-    r._h["user_holdings:live:1001:o1"] = {
+    r._h["user_holdings:{live:1001}:o1"] = {
         "symbol": "EURUSD",
         "order_quantity": "1",
         "order_type": "BUY",
     }
-    r._h["user_holdings:live:1001:o2"] = {
+    r._h["user_holdings:{live:1001}:o2"] = {
         "symbol": "EURUSD",
         "order_quantity": "0.5",
         "order_type": "SELL",

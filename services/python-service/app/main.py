@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import logging
 import asyncio
 from .api.market_api import router as market_router
+from .api.orders_api import router as orders_router
 from .market_listener import start_market_listener
 from .services.portfolio_calculator import start_portfolio_listener
 
@@ -52,6 +53,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(market_router, prefix="/api")
+app.include_router(orders_router, prefix="/api")
 
 @app.get("/")
 async def root():
