@@ -20,9 +20,10 @@ const DemoUserOrder = sequelize.define('DemoUserOrder', {
       key: 'id'
     }
   },
-  order_company_name: { 
-    type: DataTypes.STRING(255), 
-    allowNull: false 
+  symbol: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'order_company_name'
   },
   order_type: { 
     type: DataTypes.STRING(20), 
@@ -133,7 +134,7 @@ const DemoUserOrder = sequelize.define('DemoUserOrder', {
     { fields: ['order_user_id'] },
     { fields: ['order_status'] },
     { fields: ['order_type'] },
-    { fields: ['order_company_name'] },
+    { fields: ['symbol'] },
     { fields: ['created_at'] },
     { fields: ['cancel_id'] },
     { fields: ['close_id'] },

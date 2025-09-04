@@ -20,11 +20,11 @@ class OrderValidator {
         .isInt({ min: 1 })
         .withMessage('User ID must be a positive integer'),
       
-      body('order_company_name')
+      body('symbol')
         .notEmpty()
-        .withMessage('Company name is required')
+        .withMessage('Symbol is required')
         .isLength({ max: 255 })
-        .withMessage('Company name must not exceed 255 characters'),
+        .withMessage('Symbol must not exceed 255 characters'),
       
       body('order_type')
         .notEmpty()
