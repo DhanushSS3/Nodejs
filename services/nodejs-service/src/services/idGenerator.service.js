@@ -1,14 +1,32 @@
 /**
  * ID Generation Service
  * Generates unique, time-based IDs with prefixes for different entities
- * Format: <PREFIX><DIGITS> (e.g., ORD1234567890, TXN9876543210)
+ * Default Format: <PREFIX><DIGITS> (e.g., ORD1234567890, TXN9876543210)
+ * Order IDs (generateOrderId): ord_YYYYMMDD_seq (e.g., ord_20250905_008)
  */
+
+// Helpers for order ID formatting
+function pad(num, size) {
+  let s = String(num);
+  while (s.length < size) s = '0' + s;
+  return s;
+}
+
+function yyyymmdd(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
 
 class IdGeneratorService {
   constructor() {
     this.lastTimestamp = 0;
     this.sequence = 0;
     this.maxSequence = 999; // 3-digit sequence for collision prevention
+    // Per-day sequence for human-readable order_id format ord_YYYYMMDD_seq
+    this.currentDateStr = yyyymmdd();
+    this.dailySeq = 0;
   }
 
   /**
@@ -66,14 +84,21 @@ class IdGeneratorService {
   }
 
   /**
-   * Generate Order ID
-   * @param {number} digitLength - Length of numeric portion (default: 10)
-   * @returns {string} Order ID (e.g., 'ORD1234567890')
+   * Generate Order ID in format ord_YYYYMMDD_seq
+   * Uses an in-memory per-process daily counter. For horizontally scaled
+   * deployments, prefer a Redis-backed counter; callers may still await this
+   * function even though it's synchronous.
+   * @returns {string} Order ID (e.g., 'ord_20250905_008')
    */
-
-  // Order IDs: ORD1234567890 (10 digits)
   generateOrderId() {
-    return this.generateId('ORD', 10);
+    const today = yyyymmdd();
+    if (this.currentDateStr !== today) {
+      this.currentDateStr = today;
+      this.dailySeq = 0;
+    }
+    this.dailySeq += 1;
+    const seqStr = pad(this.dailySeq, 3);
+    return `ord_${today}_${seqStr}`;
   }
 
   // Transaction IDs: TXN1234567890 (10 digits)

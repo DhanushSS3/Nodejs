@@ -11,6 +11,7 @@ const cryptoPaymentRoutes = require('./routes/crypto.payment.routes');
 const groupsRoutes = require('./routes/groups.routes');
 const groupsSuperadminRoutes = require('./routes/superadmin.groups.routes');
 const path = require('path');
+const ordersRoutes = require('./routes/orders.routes');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');
 const { errorHandler, notFoundHandler, timeoutHandler } = require('./middlewares/error.middleware');
@@ -75,6 +76,7 @@ app.use('/api/crypto-payments', cryptoPaymentRoutes);
 app.use('/api/groups', groupsRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api/superadmin/groups', groupsSuperadminRoutes);
+app.use('/api/orders', ordersRoutes);
 
 // 404 handler
 app.use(notFoundHandler);
