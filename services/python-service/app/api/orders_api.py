@@ -34,6 +34,9 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
             # For idempotency in-progress, 409 could be used
             if reason in ("idempotency_in_progress",):
                 raise HTTPException(status_code=409, detail=result)
+            # Duplicate order_id attempts
+            if reason == "place_order_failed:order_exists":
+                raise HTTPException(status_code=409, detail=result)
             # Otherwise server error
             raise HTTPException(status_code=500, detail=result)
 

@@ -202,7 +202,7 @@ class PortfolioCalculatorListener:
 
     async def _fetch_user_orders(self, user_type: str, user_id: str) -> list:
         """
-        Fetch all open order hashes for a user from Redis: user_holdings:{{user_type:user_id}}:{order_id}
+        Fetch all open order hashes for a user from Redis: user_holdings:{{{user_type:user_id}}}:{order_id}
         Returns a list of order dicts.
         """
         pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
@@ -212,18 +212,27 @@ class PortfolioCalculatorListener:
             order_keys = []
             while cursor:
                 cursor, keys = await redis_cluster.scan(cursor=cursor, match=pattern, count=50)
-                order_keys.extend(keys)
+                # Ensure keys are appended as strings
+                for k in keys:
+                    try:
+                        if isinstance(k, (bytes, bytearray)):
+                            order_keys.append(k.decode())
+                        else:
+                            order_keys.append(str(k))
+                    except Exception:
+                        # Fallback to string repr to avoid type errors downstream
+                        order_keys.append(str(k))
                 if cursor == b'0' or cursor == 0:
                     break
             if not order_keys:
                 return []
-            # Pipeline hgetall for all orders
+            # Pipeline hgetall for all orders using sanitized string keys
             orders = await asyncio.gather(*(redis_cluster.hgetall(k) for k in order_keys))
             # Attach order_id and key; symbol is expected in fields; if missing, it will be validated later
             enriched = []
             for i, k in enumerate(order_keys):
                 try:
-                    key_str = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
+                    key_str = k  # already sanitized to str above
                 except Exception:
                     key_str = str(k)
                 order_id = key_str.rsplit(":", 1)[-1]

@@ -64,33 +64,55 @@ async def save_idempotency_result(key: str, result: Dict[str, Any], ttl_sec: int
 
 
 async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
-    key = f"user:{{{user_type}:{user_id}}}:config"
+    tagged_key = f"user:{{{user_type}:{user_id}}}:config"
+    legacy_key = f"user:{user_type}:{user_id}:config"
+    data: Dict[str, Any] = {}
+    # Attempt tagged key first
     try:
-        data = await redis_cluster.hgetall(key)
-        # Fallback to legacy non-hash-tagged key if needed for backward compatibility
-        if not data:
-            legacy_key = f"user:{user_type}:{user_id}:config"
-            try:
-                data = await redis_cluster.hgetall(legacy_key)
-            except Exception:
-                data = {}
-        # Normalize types
-        def _f(v):
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return None
-        cfg = {
-            "wallet_balance": _f(data.get("wallet_balance")) if data else None,
-            "leverage": _f(data.get("leverage")) if data else None,
-            "group": (data.get("group") or "Standard") if data else "Standard",
-            "status": int(data.get("status")) if data and data.get("status") is not None else 1,
-            "sending_orders": data.get("sending_orders") if data else None,
-        }
-        return cfg
+        data = await redis_cluster.hgetall(tagged_key)
     except Exception as e:
-        logger.error("fetch_user_config error for %s:%s: %s", user_type, user_id, e)
-        return {"wallet_balance": None, "leverage": None, "group": "Standard", "status": 0, "sending_orders": None}
+        logger.warning("fetch_user_config tagged hgetall failed for %s:%s: %s", user_type, user_id, e)
+        data = {}
+    # Fallback to legacy key if empty
+    if not data:
+        try:
+            data = await redis_cluster.hgetall(legacy_key)
+        except Exception as e:
+            logger.error("fetch_user_config legacy hgetall failed for %s:%s: %s", user_type, user_id, e)
+            data = {}
+
+    # Normalize types safely
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    # Status parsing: prefer explicit status; fallback to is_active; default to 1
+    status_val = 1
+    if data:
+        raw_status = data.get("status")
+        if raw_status is not None:
+            try:
+                status_val = int(raw_status)
+            except (TypeError, ValueError):
+                status_val = 1
+        else:
+            raw_active = data.get("is_active")
+            if raw_active is not None:
+                try:
+                    status_val = int(raw_active)
+                except (TypeError, ValueError):
+                    status_val = 1
+
+    cfg = {
+        "wallet_balance": _f(data.get("wallet_balance")) if data else None,
+        "leverage": _f(data.get("leverage")) if data else None,
+        "group": (data.get("group") or "Standard") if data else "Standard",
+        "status": status_val,
+        "sending_orders": data.get("sending_orders") if data else None,
+    }
+    return cfg
 
 
 async def fetch_user_portfolio(user_type: str, user_id: str) -> Dict[str, Any]:
@@ -121,23 +143,30 @@ async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]
     pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
     try:
         cursor = b"0"
-        keys: List[str] = []
+        raw_keys: List[Any] = []
         while cursor:
             cursor, batch = await redis_cluster.scan(cursor=cursor, match=pattern, count=100)
-            keys.extend(batch)
+            raw_keys.extend(batch)
             if cursor == b"0" or cursor == 0:
                 break
-        if not keys:
+        if not raw_keys:
             return []
+        # Sanitize keys to strings to avoid passing non-string types to Redis
+        keys: List[str] = []
+        for k in raw_keys:
+            try:
+                if isinstance(k, (bytes, bytearray)):
+                    keys.append(k.decode())
+                else:
+                    keys.append(str(k))
+            except Exception:
+                keys.append(str(k))
         # Fetch orders concurrently
         from asyncio import gather
         results = await gather(*[redis_cluster.hgetall(k) for k in keys])
         orders: List[Dict[str, Any]] = []
         for i, k in enumerate(keys):
-            try:
-                key_str = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
-            except Exception:
-                key_str = str(k)
+            key_str = k  # already sanitized to str above
             order_id = key_str.rsplit(":", 1)[-1]
             od = results[i] or {}
             od["order_id"] = od.get("order_id") or order_id
