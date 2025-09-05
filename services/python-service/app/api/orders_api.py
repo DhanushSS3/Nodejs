@@ -20,7 +20,8 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
     Supports local (demo/Rock) and provider (barclays) flows.
     """
     try:
-        result = await _executor.execute_instant_order(payload.model_dump())
+        # Dump in JSON mode so Enum fields (order_type, user_type) are converted to their string values
+        result = await _executor.execute_instant_order(payload.model_dump(mode="json"))
         if not result.get("ok"):
             # Map common reasons to HTTP codes if needed
             reason = result.get("reason", "execution_failed")

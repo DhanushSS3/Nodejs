@@ -77,7 +77,10 @@ class OrderExecutor:
             return {"ok": False, "reason": "missing_fields", "fields": missing}
 
         symbol = str(payload["symbol"]).upper()
-        order_type = str(payload["order_type"]).upper()
+        # Accept either Enum or raw string for order_type/user_type
+        def _val(x):
+            return getattr(x, "value", x)
+        order_type = str(_val(payload["order_type"])).upper()
         if order_type not in ("BUY", "SELL"):
             return {"ok": False, "reason": "invalid_order_type"}
         try:
@@ -89,7 +92,11 @@ class OrderExecutor:
             return {"ok": False, "reason": "invalid_order_quantity"}
 
         user_id = str(payload["user_id"])  # keep as string for Redis keys
-        user_type = str(payload["user_type"]).lower()  # 'live' or 'demo'
+        user_type = str(_val(payload["user_type"])).lower()  # 'live' or 'demo'
+        # Normalize back into payload for downstream consumers
+        payload["symbol"] = symbol
+        payload["order_type"] = order_type
+        payload["user_type"] = user_type
         order_id = str(payload.get("order_id") or f"PY{int(time.time()*1000)}")
         idempotency_key = payload.get("idempotency_key")
         frontend_status = payload.get("status")  # passthrough
