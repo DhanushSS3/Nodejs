@@ -70,15 +70,17 @@ const ordersController = require('../controllers/orders.controller');
  *                   type: boolean
  *                 order_id:
  *                   type: string
- *                 status:
+ *                 order_status:
  *                   type: string
- *                   description: Internal order_status after placement (PLACED or QUEUED_PROVIDER)
+ *                   description: Order lifecycle status (OPEN when executed locally, QUEUED when waiting for provider)
  *                 execution_mode:
  *                   type: string
  *                   example: "local"
  *                 margin:
  *                   type: number
  *                 exec_price:
+ *                   type: number
+ *                 contract_value:
  *                   type: number
  *       400:
  *         description: Invalid payload

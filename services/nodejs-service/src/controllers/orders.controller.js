@@ -3,6 +3,7 @@ const logger = require('../services/logger.service');
 const idGenerator = require('../services/idGenerator.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
+const { updateUserUsedMargin } = require('../services/user.margin.service');
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -69,21 +70,41 @@ async function placeInstantOrder(req, res) {
 
     // Generate order_id in ord_YYYYMMDD_seq format using IdGeneratorService
     const order_id = await idGenerator.generateOrderId();
+    const hasIdempotency = !!req.body.idempotency_key;
 
-    // Persist initial order (PENDING_VALIDATION)
+    // Persist initial order (PENDING) unless request is idempotent
     const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
-    const initialOrder = await OrderModel.create({
-      order_id,
-      order_user_id: parseInt(parsed.user_id),
-      symbol: parsed.symbol,
-      order_type: parsed.order_type,
-      order_status: 'PENDING_VALIDATION',
-      order_price: parsed.order_price,
-      order_quantity: parsed.order_quantity,
-      margin: 0,
-      status: normalizeStr(req.body.status || 'OPEN'),
-      placed_by: 'user'
-    });
+    let initialOrder;
+    if (!hasIdempotency) {
+      try {
+        initialOrder = await OrderModel.create({
+          order_id,
+          order_user_id: parseInt(parsed.user_id),
+          symbol: parsed.symbol,
+          order_type: parsed.order_type,
+          order_status: 'PENDING',
+          order_price: parsed.order_price,
+          order_quantity: parsed.order_quantity,
+          margin: 0,
+          status: normalizeStr(req.body.status || 'OPEN'),
+          placed_by: 'user'
+        });
+      } catch (dbErr) {
+        logger.error('Order DB create failed', { error: dbErr.message, fields: {
+          order_id,
+          order_user_id: parsed.user_id,
+          symbol: parsed.symbol,
+          order_type: parsed.order_type,
+          order_status: 'PENDING',
+          order_price: parsed.order_price,
+          order_quantity: parsed.order_quantity,
+          margin: 0,
+          status: normalizeStr(req.body.status || 'OPEN'),
+          placed_by: 'user'
+        }});
+        return res.status(500).json({ success: false, message: 'DB error', db_error: dbErr.message, operationId });
+      }
+    }
 
     // Build payload to Python
     const pyPayload = {
@@ -144,6 +165,8 @@ async function placeInstantOrder(req, res) {
     const flow = result.flow; // 'local' or 'provider'
     const exec_price = result.exec_price;
     const margin_usd = result.margin_usd;
+    const contract_value = result.contract_value;
+    const used_margin_usd = result.used_margin_usd;
 
     // Post-success DB update
     const updateFields = {};
@@ -153,28 +176,98 @@ async function placeInstantOrder(req, res) {
     if (typeof margin_usd === 'number') {
       updateFields.margin = margin_usd;
     }
+    if (typeof contract_value === 'number') {
+      updateFields.contract_value = contract_value;
+    }
+    // Map to requested statuses
     if (flow === 'local') {
-      updateFields.order_status = 'PLACED';
+      // Executed instantly -> OPEN
+      updateFields.order_status = 'OPEN';
     } else if (flow === 'provider') {
-      updateFields.order_status = 'QUEUED_PROVIDER';
+      // Waiting for provider confirmation -> QUEUED
+      updateFields.order_status = 'QUEUED';
     } else {
-      updateFields.order_status = 'PLACED'; // default
+      updateFields.order_status = 'OPEN'; // sane default
     }
 
-    try {
-      await initialOrder.update(updateFields);
-    } catch (uErr) {
-      logger.error('Failed to update order after success', { error: uErr.message, order_id });
+    // Upsert by final order_id to avoid duplicate rows on idempotent replays
+    const finalOrderId = normalizeStr(result.order_id || order_id);
+    if (initialOrder) {
+      try {
+        // If IDs diverge (shouldn't for non-idempotent), fall back to updating by final ID
+        if (normalizeStr(initialOrder.order_id) !== finalOrderId) {
+          const [row, created] = await OrderModel.findOrCreate({
+            where: { order_id: finalOrderId },
+            defaults: {
+              order_id: finalOrderId,
+              order_user_id: parseInt(parsed.user_id),
+              symbol: parsed.symbol,
+              order_type: parsed.order_type,
+              order_status: 'PENDING',
+              order_price: parsed.order_price,
+              order_quantity: parsed.order_quantity,
+              margin: 0,
+              status: normalizeStr(req.body.status || 'OPEN'),
+              placed_by: 'user'
+            }
+          });
+          await row.update(updateFields);
+        } else {
+          await initialOrder.update(updateFields);
+        }
+      } catch (uErr) {
+        logger.error('Failed to update order after success', { error: uErr.message, order_id: finalOrderId });
+      }
+    } else {
+      try {
+        const [row, created] = await OrderModel.findOrCreate({
+          where: { order_id: finalOrderId },
+          defaults: {
+            order_id: finalOrderId,
+            order_user_id: parseInt(parsed.user_id),
+            symbol: parsed.symbol,
+            order_type: parsed.order_type,
+            order_status: 'PENDING',
+            order_price: parsed.order_price,
+            order_quantity: parsed.order_quantity,
+            margin: 0,
+            status: normalizeStr(req.body.status || 'OPEN'),
+            placed_by: 'user'
+          }
+        });
+        await row.update(updateFields);
+      } catch (uErr) {
+        logger.error('Failed to upsert order after success', { error: uErr.message, order_id: finalOrderId });
+      }
+    }
+
+    // Persist user's overall used margin in SQL with row-level locking (best-effort)
+    if (typeof used_margin_usd === 'number') {
+      try {
+        await updateUserUsedMargin({
+          userType: parsed.user_type,
+          userId: parseInt(parsed.user_id),
+          usedMargin: used_margin_usd,
+        });
+      } catch (mErr) {
+        logger.error('Failed to update user used margin', {
+          error: mErr.message,
+          userId: parsed.user_id,
+          userType: parsed.user_type,
+        });
+        // Do not fail the request; SQL margin is an eventual-consistency mirror of Redis
+      }
     }
 
     // Build frontend response
     return res.status(201).json({
       success: true,
-      order_id,
-      status: updateFields.order_status,
+      order_id: finalOrderId,
+      order_status: updateFields.order_status,
       execution_mode: flow,
       margin: margin_usd,
-      exec_price: exec_price
+      exec_price: exec_price,
+      contract_value: typeof contract_value === 'number' ? contract_value : undefined,
     });
   } catch (error) {
     logger.transactionFailure('instant_place', error, { operationId });

@@ -234,18 +234,26 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 10) Prepare order fields for Redis
+        # 10) Compute notional contract value (instrument-dependent; generic formula)
+        try:
+            contract_value = float(contract_size) * float(order_qty)
+        except Exception:
+            contract_value = None
+
+        # 11) Prepare order fields for Redis
         now_ms = int(time.time() * 1000)
         execution_status = "EXECUTED" if flow == "local" else "QUEUED"
+        displayed_status = "OPEN" if flow == "local" else "QUEUED"
         order_fields: Dict[str, Any] = {
             "order_id": order_id,
             "symbol": symbol,
             "order_type": order_type,
-            "order_status": "OPEN",
+            "order_status": displayed_status,
             "status": frontend_status or "OPEN",
             "order_price": exec_price,
             "order_quantity": order_qty,
             "margin": float(margin_usd),
+            "contract_value": float(contract_value) if contract_value is not None else None,
             "execution": flow,
             "execution_status": execution_status,
             "created_at": now_ms,
@@ -258,7 +266,7 @@ class OrderExecutor:
                 "group": price_info.get("group"),
             })
 
-        # 11) Provider async send payload (API layer will dispatch in background)
+        # 12) Provider async send payload (API layer will dispatch in background)
         provider_send_payload = None
         if flow == "provider":
             provider_send_payload = {
@@ -273,7 +281,7 @@ class OrderExecutor:
                 "ts": now_ms,
             }
 
-        # 12) Place order in Redis (atomic Lua or fallback), update used_margin
+        # 13) Place order in Redis (atomic Lua or fallback), update used_margin
         ok_place, reason = await place_order_atomic_or_fallback(
             user_type=user_type,
             user_id=user_id,
@@ -289,15 +297,16 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 13) Success response
+        # 14) Success response
         resp = {
             "ok": True,
             "order_id": order_id,
-            "order_status": execution_status,
+            "order_status": displayed_status,
             "flow": flow,
             "exec_price": exec_price,
             "margin_usd": float(margin_usd),
             "used_margin_usd": float(total_used_margin),
+            "contract_value": float(contract_value) if contract_value is not None else None,
         }
         if provider_send_payload:
             # Return payload to API layer for background dispatch
