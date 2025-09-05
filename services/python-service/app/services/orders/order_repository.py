@@ -67,6 +67,13 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     key = f"user:{{{user_type}:{user_id}}}:config"
     try:
         data = await redis_cluster.hgetall(key)
+        # Fallback to legacy non-hash-tagged key if needed for backward compatibility
+        if not data:
+            legacy_key = f"user:{user_type}:{user_id}:config"
+            try:
+                data = await redis_cluster.hgetall(legacy_key)
+            except Exception:
+                data = {}
         # Normalize types
         def _f(v):
             try:
@@ -196,6 +203,38 @@ async def place_order_atomic_or_fallback(
                 logger.warning("symbol_holders SADD failed post-atomic: %s", e)
             return True, ""
         reason = (data or {}).get("reason", "script_failed")
+        # Fallback: if user config tagged key missing, try to backfill from legacy key and retry once
+        if reason == "user_not_found":
+            try:
+                legacy_key = f"user:{user_type}:{user_id}:config"
+                legacy = await redis_cluster.hgetall(legacy_key)
+                if legacy:
+                    # Write legacy mapping into tagged key so Lua can find it in the same slot
+                    try:
+                        await redis_cluster.hset(user_config_key, mapping=legacy)
+                        # Retry Lua once
+                        raw2 = await redis_cluster.eval(lua_src, len(keys), *keys, *args)
+                        if isinstance(raw2, (bytes, bytearray)):
+                            raw2 = raw2.decode()
+                        try:
+                            data2 = json.loads(raw2) if isinstance(raw2, str) else raw2
+                        except Exception:
+                            data2 = {"ok": False, "reason": "invalid_script_response", "raw": raw2}
+                        if data2 and data2.get("ok"):
+                            try:
+                                symbol_holders_key = f"symbol_holders:{symbol}:{user_type}"
+                                await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                            except Exception as e:
+                                logger.warning("symbol_holders SADD failed post-atomic (retry): %s", e)
+                            return True, ""
+                        # else fall through with updated reason
+                        reason = (data2 or {}).get("reason", reason)
+                    except Exception as be:
+                        logger.warning("Backfill to tagged user_config failed: %s", be)
+                else:
+                    logger.info("Legacy user config not found for %s:%s while backfilling tagged key", user_type, user_id)
+            except Exception as e:
+                logger.warning("Error during backfill from legacy user config: %s", e)
         # If reason is inconsistent hash tags, fall back
         if reason in ("inconsistent_hash_tags", "missing_hash_tag"):
             logger.warning("Lua script hash tag issue; falling back to non-atomic path: %s", reason)

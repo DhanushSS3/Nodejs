@@ -210,7 +210,8 @@ async function signup(req, res) {
           copy_trading_wallet: parseFloat(user.copy_trading_wallet) || 0,
           copytrader_id: user.copytrader_id,
           copytrading_status: user.copytrading_status,
-          copytrading_alloted_time: user.copytrading_alloted_time ? user.copytrading_alloted_time.toISOString() : null
+          copytrading_alloted_time: user.copytrading_alloted_time ? user.copytrading_alloted_time.toISOString() : null,
+          sending_orders: user.sending_orders || 'rock'
         };
         await redisUserCache.updateUser('live', user.id, userData);
         logger.debug(`Added new live user ${user.id} to Redis cache`);

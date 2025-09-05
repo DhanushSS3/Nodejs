@@ -23,6 +23,12 @@ class InstantOrderRequest(BaseModel):
     idempotency_key: Optional[str] = Field(None, description="Client-provided idempotency key to avoid duplicates")
     order_id: Optional[str] = Field(None, description="Optional client-generated order id")
     status: Optional[str] = Field(None, description="Optional frontend status passthrough")
+    order_status: Optional[str] = Field(
+        None,
+        description=(
+            "Optional client-provided order status; server will set 'OPEN' for local execution and 'queued' for provider"
+        ),
+    )
 
     @field_validator("symbol")
     def symbol_upper(cls, v: str) -> str:

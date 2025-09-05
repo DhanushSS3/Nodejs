@@ -222,6 +222,13 @@ async def _fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     key = f"user:{{{user_type}:{user_id}}}:config"
     try:
         data = await redis_cluster.hgetall(key)
+        if not data:
+            # Backward compatible read from legacy non-hash-tagged key
+            legacy_key = f"user:{user_type}:{user_id}:config"
+            try:
+                data = await redis_cluster.hgetall(legacy_key)
+            except Exception:
+                data = {}
     except Exception as e:
         logger.error(f"_fetch_user_config error for {user_type}:{user_id}: {e}")
         data = {}

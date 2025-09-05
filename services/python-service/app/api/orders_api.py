@@ -28,8 +28,8 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
             # For validation errors, return 400
             if reason in ("missing_fields", "invalid_order_type", "invalid_numeric_fields", "invalid_order_quantity", "invalid_order_status"):
                 raise HTTPException(status_code=400, detail=result)
-            # For margin/user issues, also 400
-            if reason in ("user_not_verified", "invalid_leverage", "missing_group_data", "insufficient_margin"):
+            # For margin/user issues and unsupported flow, return 400
+            if reason in ("user_not_verified", "invalid_leverage", "missing_group_data", "insufficient_margin", "unsupported_flow"):
                 raise HTTPException(status_code=400, detail=result)
             # For idempotency in-progress, 409 could be used
             if reason in ("idempotency_in_progress",):

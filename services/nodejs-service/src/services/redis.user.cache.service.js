@@ -60,6 +60,13 @@ class RedisUserCacheService {
   }
 
   /**
+   * Generate hash-tagged Redis key for user to ensure same cluster slot
+   */
+  getTaggedUserKey(userType, userId) {
+    return `user:{${userType}:${userId}}:config`;
+  }
+
+  /**
    * Extract cacheable fields from live user
    */
   extractLiveUserFields(user) {
@@ -82,6 +89,7 @@ class RedisUserCacheService {
       copytrader_id: user.copytrader_id,
       copytrading_status: user.copytrading_status,
       copytrading_alloted_time: user.copytrading_alloted_time ? user.copytrading_alloted_time.toISOString() : null,
+      sending_orders: user.sending_orders || 'rock',
       last_updated: new Date().toISOString()
     };
   }
@@ -101,6 +109,7 @@ class RedisUserCacheService {
       status: user.status,
       is_active: user.is_active,
       country_id: user.country_id,
+      sending_orders: 'rock',
       last_updated: new Date().toISOString()
     };
   }
@@ -133,14 +142,16 @@ class RedisUserCacheService {
           'id', 'wallet_balance', 'leverage', 'margin', 'account_number',
           'group', 'status', 'is_active', 'country_id', 'mam_id', 'mam_status',
           'pam_id', 'pam_status', 'copy_trading_wallet', 'copytrader_id',
-          'copytrading_status', 'copytrading_alloted_time'
+          'copytrading_status', 'copytrading_alloted_time', 'sending_orders'
         ]
       });
 
       for (const user of liveUsers) {
         const key = this.getUserKey('live', user.id);
+        const taggedKey = this.getTaggedUserKey('live', user.id);
         const userData = this.extractLiveUserFields(user);
         await this.redis.hset(key, userData);
+        await this.redis.hset(taggedKey, userData);
       }
 
       // Cache demo users
@@ -153,8 +164,10 @@ class RedisUserCacheService {
 
       for (const user of demoUsers) {
         const key = this.getUserKey('demo', user.id);
+        const taggedKey = this.getTaggedUserKey('demo', user.id);
         const userData = this.extractDemoUserFields(user);
         await this.redis.hset(key, userData);
+        await this.redis.hset(taggedKey, userData);
       }
 
       logger.info(`Cache populated: ${liveUsers.length} live users, ${demoUsers.length} demo users`);
@@ -170,7 +183,11 @@ class RedisUserCacheService {
   async getUser(userType, userId) {
     try {
       const key = this.getUserKey(userType, userId);
-      const userData = await this.redis.hgetall(key);
+      let userData = await this.redis.hgetall(key);
+      if (!userData || Object.keys(userData).length === 0) {
+        const taggedKey = this.getTaggedUserKey(userType, userId);
+        userData = await this.redis.hgetall(taggedKey);
+      }
       
       if (Object.keys(userData).length === 0) {
         return null;
@@ -206,6 +223,7 @@ class RedisUserCacheService {
   async updateUser(userType, userId, updatedFields) {
     try {
       const key = this.getUserKey(userType, userId);
+      const taggedKey = this.getTaggedUserKey(userType, userId);
       
       // Add timestamp
       const fieldsWithTimestamp = {
@@ -214,6 +232,7 @@ class RedisUserCacheService {
       };
 
       await this.redis.hset(key, fieldsWithTimestamp);
+      await this.redis.hset(taggedKey, fieldsWithTimestamp);
       logger.info(`Updated cache for user ${userType}:${userId}`);
     } catch (error) {
       logger.error(`Error updating user ${userType}:${userId} in cache:`, error);
@@ -227,7 +246,9 @@ class RedisUserCacheService {
   async removeUser(userType, userId) {
     try {
       const key = this.getUserKey(userType, userId);
+      const taggedKey = this.getTaggedUserKey(userType, userId);
       await this.redis.del(key);
+      await this.redis.del(taggedKey);
       logger.info(`Removed user ${userType}:${userId} from cache`);
     } catch (error) {
       logger.error(`Error removing user ${userType}:${userId} from cache:`, error);
@@ -361,7 +382,7 @@ class RedisUserCacheService {
             'id', 'wallet_balance', 'leverage', 'margin', 'account_number',
             'group', 'status', 'is_active', 'country_id', 'mam_id', 'mam_status',
             'pam_id', 'pam_status', 'copy_trading_wallet', 'copytrader_id',
-            'copytrading_status', 'copytrading_alloted_time'
+            'copytrading_status', 'copytrading_alloted_time', 'sending_orders'
           ]
         });
         if (user) {
