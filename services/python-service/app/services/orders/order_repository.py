@@ -140,33 +140,72 @@ async def fetch_group_data(symbol: str, group: str) -> Dict[str, Any]:
 
 
 async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]]:
-    pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
+    """Fetch all open orders for a user.
+    Prefer the index set user_orders_index:{user_type:user_id} to avoid cluster-wide SCAN.
+    Fallback to SCAN with robust flattening when index is unavailable.
+    """
     try:
-        cursor = b"0"
-        raw_keys: List[Any] = []
-        while cursor:
-            cursor, batch = await redis_cluster.scan(cursor=cursor, match=pattern, count=100)
-            raw_keys.extend(batch)
-            if cursor == b"0" or cursor == 0:
-                break
-        if not raw_keys:
-            return []
-        # Sanitize keys to strings to avoid passing non-string types to Redis
+        hash_tag = f"{user_type}:{user_id}"
+        index_key = f"user_orders_index:{{{hash_tag}}}"
+        order_ids = await redis_cluster.smembers(index_key)
         keys: List[str] = []
-        for k in raw_keys:
-            try:
-                if isinstance(k, (bytes, bytearray)):
-                    keys.append(k.decode())
+        if order_ids:
+            keys = [f"user_holdings:{{{hash_tag}}}:{oid}" for oid in order_ids]
+        else:
+            # Fallback to SCAN (flatten any cluster-returned dict of lists)
+            pattern = f"user_holdings:{{{hash_tag}}}:*"
+            cursor = b"0"
+            raw_keys: List[Any] = []
+            while cursor:
+                batch_result = await redis_cluster.scan(cursor=cursor, match=pattern, count=100)
+                # batch_result may be (cursor, list) or dict mapping node->(cursor, list)
+                if isinstance(batch_result, tuple) and len(batch_result) == 2:
+                    cursor, batch = batch_result
+                    if isinstance(batch, dict):
+                        for _, v in batch.items():
+                            # v may be (cur, list) or list
+                            if isinstance(v, tuple) and len(v) == 2:
+                                _, lst = v
+                                raw_keys.extend(lst or [])
+                            elif isinstance(v, (list, set, tuple)):
+                                raw_keys.extend(list(v))
+                    elif isinstance(batch, (list, set, tuple)):
+                        raw_keys.extend(list(batch))
+                    else:
+                        # unknown structure; ignore
+                        pass
+                elif isinstance(batch_result, dict):
+                    # Map of node -> (cursor, keys)
+                    cursor = b"0"  # stop after one pass
+                    for _, v in batch_result.items():
+                        if isinstance(v, tuple) and len(v) == 2:
+                            _, lst = v
+                            raw_keys.extend(lst or [])
                 else:
+                    # Unknown structure; stop to avoid infinite loop
+                    cursor = b"0"
+                if cursor == b"0" or cursor == 0:
+                    break
+            if not raw_keys:
+                return []
+            # Sanitize keys to strings
+            for k in raw_keys:
+                try:
+                    if isinstance(k, (bytes, bytearray)):
+                        keys.append(k.decode())
+                    else:
+                        keys.append(str(k))
+                except Exception:
                     keys.append(str(k))
-            except Exception:
-                keys.append(str(k))
+
+        if not keys:
+            return []
         # Fetch orders concurrently
         from asyncio import gather
         results = await gather(*[redis_cluster.hgetall(k) for k in keys])
         orders: List[Dict[str, Any]] = []
         for i, k in enumerate(keys):
-            key_str = k  # already sanitized to str above
+            key_str = k
             order_id = key_str.rsplit(":", 1)[-1]
             od = results[i] or {}
             od["order_id"] = od.get("order_id") or order_id
@@ -228,6 +267,9 @@ async def place_order_atomic_or_fallback(
             try:
                 symbol_holders_key = f"symbol_holders:{symbol}:{user_type}"
                 await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                # Index the order id for efficient listing without SCAN
+                index_key = f"user_orders_index:{{{hash_tag}}}"
+                await redis_cluster.sadd(index_key, order_id)
             except Exception as e:
                 logger.warning("symbol_holders SADD failed post-atomic: %s", e)
             return True, ""
@@ -253,6 +295,8 @@ async def place_order_atomic_or_fallback(
                             try:
                                 symbol_holders_key = f"symbol_holders:{symbol}:{user_type}"
                                 await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                                index_key = f"user_orders_index:{{{hash_tag}}}"
+                                await redis_cluster.sadd(index_key, order_id)
                             except Exception as e:
                                 logger.warning("symbol_holders SADD failed post-atomic (retry): %s", e)
                             return True, ""
@@ -321,6 +365,9 @@ async def _place_order_non_atomic(
         await redis_cluster.hset(order_key, mapping=mapping)
         # Add to symbol holders
         await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+        # Index the order id
+        index_key = f"user_orders_index:{{{hash_tag}}}"
+        await redis_cluster.sadd(index_key, order_id)
         # Update used margin if provided
         if recomputed_user_used_margin_usd is not None:
             await redis_cluster.hset(portfolio_key, mapping={"used_margin": str(float(recomputed_user_used_margin_usd))})

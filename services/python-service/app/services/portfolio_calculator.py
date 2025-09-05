@@ -205,25 +205,59 @@ class PortfolioCalculatorListener:
         Fetch all open order hashes for a user from Redis: user_holdings:{{{user_type:user_id}}}:{order_id}
         Returns a list of order dicts.
         """
-        pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
+        hash_tag = f"{user_type}:{user_id}"
+        pattern = f"user_holdings:{{{hash_tag}}}:*"
         try:
-            # Scan for all order keys for this user
-            cursor = b'0'
+            # Prefer the indexed set if available to avoid cluster-wide SCAN
+            index_key = f"user_orders_index:{{{hash_tag}}}"
+            indexed_ids = await redis_cluster.smembers(index_key)
             order_keys = []
-            while cursor:
-                cursor, keys = await redis_cluster.scan(cursor=cursor, match=pattern, count=50)
-                # Ensure keys are appended as strings
-                for k in keys:
+            if indexed_ids:
+                order_keys = [f"user_holdings:{{{hash_tag}}}:{oid}" for oid in indexed_ids]
+            else:
+                # Fallback to SCAN; handle possible cluster-structured responses
+                cursor = 0
+                raw_keys = []
+                while True:
+                    try:
+                        batch_result = await redis_cluster.scan(cursor=cursor, match=pattern, count=50)
+                    except Exception as e:
+                        self.logger.error(f"SCAN error for pattern {pattern}: {e}")
+                        break
+                    # batch_result may be (cursor, list) or dict mapping node->(cursor, list)
+                    if isinstance(batch_result, tuple) and len(batch_result) == 2:
+                        cursor, batch = batch_result
+                        if isinstance(batch, dict):
+                            for _, v in batch.items():
+                                if isinstance(v, tuple) and len(v) == 2:
+                                    _, lst = v
+                                    raw_keys.extend(lst or [])
+                                elif isinstance(v, (list, set, tuple)):
+                                    raw_keys.extend(list(v))
+                        elif isinstance(batch, (list, set, tuple)):
+                            raw_keys.extend(list(batch))
+                    elif isinstance(batch_result, dict):
+                        # Map of node -> (cursor, keys)
+                        for _, v in batch_result.items():
+                            if isinstance(v, tuple) and len(v) == 2:
+                                _, lst = v
+                                raw_keys.extend(lst or [])
+                        cursor = 0
+                    else:
+                        # Unknown structure; stop
+                        cursor = 0
+                    if cursor == 0:
+                        break
+                # Sanitize keys to strings
+                for k in raw_keys:
                     try:
                         if isinstance(k, (bytes, bytearray)):
                             order_keys.append(k.decode())
                         else:
                             order_keys.append(str(k))
                     except Exception:
-                        # Fallback to string repr to avoid type errors downstream
                         order_keys.append(str(k))
-                if cursor == b'0' or cursor == 0:
-                    break
+
             if not order_keys:
                 return []
             # Pipeline hgetall for all orders using sanitized string keys
