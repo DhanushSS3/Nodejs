@@ -128,4 +128,34 @@ router.post('/ensure/holding', ctrl.ensureHolding);
  */
 router.post('/ensure/symbol-holder', ctrl.ensureSymbolHolder);
 
+/**
+ * @swagger
+ * /api/superadmin/orders/portfolio:
+ *   get:
+ *     summary: Fetch a user's portfolio snapshot from Redis
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: user_type
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: User account type
+ *       - in: query
+ *         name: user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: User ID to fetch the portfolio for
+ *     responses:
+ *       200:
+ *         description: Portfolio snapshot fetched successfully
+ *       404:
+ *         description: Portfolio not found in Redis for the given user
+ */
+router.get('/portfolio', ctrl.getUserPortfolio);
+
 module.exports = router;

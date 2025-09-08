@@ -1,5 +1,6 @@
 const OrdersIndexRebuildService = require('../services/orders.index.rebuild.service');
 const OrdersBackfillService = require('../services/orders.backfill.service');
+const { redisCluster } = require('../../config/redis');
 
 function ok(res, data, message = 'OK') {
   return res.status(200).json({ success: true, message, data });
@@ -86,9 +87,45 @@ async function ensureSymbolHolder(req, res) {
   }
 }
 
+// GET /api/superadmin/orders/portfolio
+// query: { user_type: 'live'|'demo', user_id: string|number }
+async function getUserPortfolio(req, res) {
+  try {
+    // Accept from query (GET) or body (if someone posts)
+    const user_type = String((req.query.user_type ?? req.body?.user_type) || '').toLowerCase();
+    const user_id = String((req.query.user_id ?? req.body?.user_id) || '').trim();
+
+    if (!['live', 'demo'].includes(user_type) || !user_id) {
+      return bad(res, 'user_type (live|demo) and user_id are required');
+    }
+
+    const key = `user_portfolio:{${user_type}:${user_id}}`;
+    const data = await redisCluster.hgetall(key);
+
+    if (!data || Object.keys(data).length === 0) {
+      return bad(res, 'Portfolio snapshot not found in Redis for this user', 404);
+    }
+
+    // Normalize numeric fields where possible
+    const numericFields = ['equity', 'balance', 'free_margin', 'used_margin', 'margin_level', 'open_pnl', 'total_pl', 'ts'];
+    const portfolio = { ...data };
+    for (const f of numericFields) {
+      if (portfolio[f] !== undefined) {
+        const n = Number(portfolio[f]);
+        if (!Number.isNaN(n)) portfolio[f] = n;
+      }
+    }
+
+    return ok(res, { user_type, user_id, redis_key: key, portfolio }, 'User portfolio snapshot fetched from Redis');
+  } catch (err) {
+    return bad(res, `Failed to fetch user portfolio: ${err.message}`, 500);
+  }
+}
+
 module.exports = {
   rebuildUser,
   rebuildSymbol,
   ensureHolding,
   ensureSymbolHolder,
+  getUserPortfolio,
 };
