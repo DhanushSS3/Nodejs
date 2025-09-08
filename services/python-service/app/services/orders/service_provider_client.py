@@ -9,6 +9,7 @@ import msgpack
 
 logger = logging.getLogger(__name__)
 
+from app.services.orders.provider_connection import get_provider_connection_manager, _PROVIDER_RX_LOG
 
 class ProviderSendError(Exception):
     pass
@@ -43,7 +44,7 @@ async def _read_optional_message(reader: asyncio.StreamReader, timeout: float) -
         return None
 
 
-async def _send_over_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, payload: Dict[str, Any]) -> None:
+async def _send_over_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, payload: Dict[str, Any], transport: str) -> None:
     # Ensure required fields
     if "type" not in payload:
         payload["type"] = "order"
@@ -55,12 +56,16 @@ async def _send_over_stream(reader: asyncio.StreamReader, writer: asyncio.Stream
 
     # Try to peek an immediate ack without blocking too long (optional)
     try:
-        _ = await _read_optional_message(reader, ACK_READ_TIMEOUT_SEC)
-        if _:
-            logger.debug("provider immediate ack: %s", _)
-    except Exception:
-        # Non-fatal
-        pass
+        ack = await _read_optional_message(reader, ACK_READ_TIMEOUT_SEC)
+        if ack is not None:
+            logger.debug("provider immediate ack: %s", ack)
+            try:
+                _PROVIDER_RX_LOG.info(f"transport={transport} dir=in ack={ack!r}")
+            except Exception:
+                pass
+    except Exception as e:
+        # Non-fatal; just log
+        logger.debug("optional ack read failed: %s", e)
 
 
 async def _try_send_uds(payload: Dict[str, Any]) -> Tuple[bool, str]:
@@ -74,7 +79,7 @@ async def _try_send_uds(payload: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "uds"
 
     try:
-        await _send_over_stream(reader, writer, payload)
+        await _send_over_stream(reader, writer, payload, transport="UDS")
         return True, "uds"
     except Exception as e:
         logger.error("UDS send failed: %s", e)
@@ -110,17 +115,26 @@ async def _try_send_tcp(payload: Dict[str, Any]) -> Tuple[bool, str]:
 
 async def send_provider_order(payload: Dict[str, Any]) -> Tuple[bool, str]:
     """
-    Try to send order via UDS, fallback to TCP.
-    Returns (ok, sent_via) where sent_via is one of 'uds', 'tcp', 'none', or 'error'.
+    Preferred: enqueue on persistent provider connection manager (single long-lived socket
+    for both send and receive). Fallback: direct UDS/TCP short connection.
+    Returns (ok, sent_via) where sent_via is one of 'persistent', 'uds', 'tcp', 'none', or 'error'.
     """
+    # First try persistent manager
     try:
-        ok, via = await _try_send_uds(payload)
-        if ok:
-            return True, via
-        ok2, via2 = await _try_send_tcp(payload)
-        if ok2:
-            return True, via2
-        return False, "none"
+        mgr = get_provider_connection_manager()
+        await mgr.send(payload)
+        return True, "persistent"
     except Exception as e:
-        logger.error("send_provider_order error: %s", e)
-        return False, "error"
+        logger.error("provider manager enqueue failed, falling back: %s", e)
+        # Fallback path: direct short-lived connection
+        try:
+            ok, via = await _try_send_uds(payload)
+            if ok:
+                return True, via
+            ok2, via2 = await _try_send_tcp(payload)
+            if ok2:
+                return True, via2
+            return False, "none"
+        except Exception as e2:
+            logger.error("send_provider_order fallback error: %s", e2)
+            return False, "error"

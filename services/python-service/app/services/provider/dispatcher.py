@@ -20,6 +20,7 @@ OPEN_QUEUE = os.getenv("ORDER_WORKER_OPEN_QUEUE", "order_worker_open_queue")
 CLOSE_QUEUE = os.getenv("ORDER_WORKER_CLOSE_QUEUE", "order_worker_close_queue")
 SL_QUEUE = os.getenv("ORDER_WORKER_STOPLOSS_QUEUE", "order_worker_stoploss_queue")
 TP_QUEUE = os.getenv("ORDER_WORKER_TAKEPROFIT_QUEUE", "order_worker_takeprofit_queue")
+REJECT_QUEUE = os.getenv("ORDER_WORKER_REJECT_QUEUE", "order_worker_reject_queue")
 
 
 def _select_worker_queue(status: Optional[str]) -> Optional[str]:
@@ -78,6 +79,7 @@ class Dispatcher:
         await self._channel.declare_queue(CLOSE_QUEUE, durable=True)
         await self._channel.declare_queue(SL_QUEUE, durable=True)
         await self._channel.declare_queue(TP_QUEUE, durable=True)
+        await self._channel.declare_queue(REJECT_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
         logger.info("Dispatcher connected. Listening on %s", CONFIRMATION_QUEUE)
 
@@ -101,10 +103,9 @@ class Dispatcher:
                     return
 
                 canonical_order_id = await redis_cluster.get(f"global_order_lookup:{lifecycle_id}")
+                # Fallback: treat lifecycle_id as canonical order_id (self-mapping case)
                 if not canonical_order_id:
-                    logger.warning("No canonical mapping for lifecycle_id=%s; DLQ", lifecycle_id)
-                    await self._publish(DLQ, {"reason": "missing_canonical", "lifecycle_id": lifecycle_id, "report": report})
-                    return
+                    canonical_order_id = lifecycle_id
 
                 order_data = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
                 if not order_data:
@@ -113,14 +114,19 @@ class Dispatcher:
                     return
 
                 payload = await _compose_payload(report, order_data, canonical_order_id)
-                # Route based on canonical status stored in order_data, not from report
-                canonical_status = order_data.get("status")
-                target_queue = _select_worker_queue(canonical_status)
-                if not target_queue:
-                    logger.info("Status %s not routed yet; DLQ", canonical_status)
-                    await self._publish(DLQ, {"reason": "unrouted_status", "order_id": canonical_order_id, "report": report})
+                # Route based on provider OrdStatus (39)
+                raw = report.get("raw") or {}
+                ord_status = str(report.get("ord_status") or raw.get("39") or "").strip()
+                if ord_status == "2":
+                    target_queue = OPEN_QUEUE
+                elif ord_status == "8":
+                    target_queue = REJECT_QUEUE
+                else:
+                    logger.info("OrdStatus %s not handled; DLQ", ord_status)
+                    await self._publish(DLQ, {"reason": "unhandled_ord_status", "ord_status": ord_status, "order_id": canonical_order_id, "report": report})
                     return
 
+                logger.info("Routing ER ord_status=%s order_id=%s -> %s", ord_status, canonical_order_id, target_queue)
                 await self._publish(target_queue, payload)
             except Exception as e:
                 logger.exception("Dispatcher handle error: %s", e)

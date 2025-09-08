@@ -63,7 +63,7 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     report: Dict[str, Any] = payload.get("execution_report") or {}
     ord_status = report.get("ord_status")
     exec_id = report.get("exec_id") or (report.get("raw") or {}).get("17")
-    avspx = report.get("avspx") or (report.get("raw") or {}).get("6")
+    avspx = report.get("avgpx") or (report.get("raw") or {}).get("6")
     cumqty = report.get("cumqty") or (report.get("raw") or {}).get("14")
     ts = report.get("ts")
 
@@ -125,19 +125,45 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     except Exception:
         final_qty = None
 
-    # Fetch group data to enrich crypto factor if available
+    # Fetch group data to enrich crypto factor and spread/half_spread if available
     group = str(payload.get("group") or "Standard")
     g = await fetch_group_data(symbol, group)
+    # Compute half_spread from group data: (spread * spread_pip) / 2
+    half_spread = None
+    try:
+        spread = float(g.get("spread")) if g.get("spread") is not None else None
+        spread_pip = float(g.get("spread_pip")) if g.get("spread_pip") is not None else None
+        if spread is not None and spread_pip is not None:
+            half_spread = (spread * spread_pip) / 2.0
+    except (TypeError, ValueError):
+        half_spread = None
+
     try:
         crypto_factor = float(g.get("crypto_margin_factor")) if g.get("crypto_margin_factor") is not None else None
     except (TypeError, ValueError):
         crypto_factor = None
 
-    # Convert contract_size to float safely
+    # Convert contract_size to float safely (fallback to group.contract_size if payload missing)
     try:
-        cs_val = float(contract_size) if contract_size is not None else None
+        cs_source = contract_size if contract_size is not None else (g.get("contract_size") if isinstance(g, dict) else None)
+        cs_val = float(cs_source) if cs_source is not None else None
     except (TypeError, ValueError):
         cs_val = None
+
+    # Apply side-based half_spread adjustment to executed price similar to local execution
+    side = str(payload.get("order_type") or payload.get("side") or "").upper()
+    if final_price is not None and half_spread is not None:
+        if side == "BUY" or side == "B":
+            adjusted_price = final_price + half_spread
+        elif side == "SELL" or side == "S":
+            adjusted_price = final_price - half_spread
+        else:
+            adjusted_price = final_price
+        logger.debug(
+            "[OPEN:price_adjust] symbol=%s side=%s base_exec_price=%s half_spread=%s final_exec_price=%s",
+            symbol, side, final_price, half_spread, adjusted_price,
+        )
+        final_price = adjusted_price
 
     single_margin = None
     if cs_val is not None and final_qty and final_price and leverage > 0:
@@ -158,6 +184,35 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     user_type = str(payload.get("user_type"))
     user_id = str(payload.get("user_id"))
     orders = await fetch_user_orders(user_type, user_id)
+    # Overlay this order with executed price/qty so totals reflect provider fill
+    try:
+        current_id = str(payload.get("order_id"))
+        updated = False
+        for od in orders:
+            if str(od.get("order_id")) == current_id:
+                if final_price is not None:
+                    od["order_price"] = float(final_price)
+                if final_qty is not None:
+                    od["order_quantity"] = float(final_qty)
+                if symbol:
+                    od["symbol"] = symbol
+                if side:
+                    od["order_type"] = side
+                updated = True
+                break
+        if not updated:
+            # If not present, append a minimal record
+            orders.append({
+                "order_id": current_id,
+                "symbol": symbol,
+                "order_type": side,
+                "order_quantity": final_qty,
+                "order_price": final_price,
+            })
+        logger.debug("[OPEN:overlay] orders_count=%s updated=%s", len(orders), updated)
+    except Exception:
+        logger.exception("[OPEN:overlay] failed to overlay executed order into orders list")
+
     total_used, meta = await compute_user_total_margin(
         user_type=user_type,
         user_id=user_id,
@@ -170,6 +225,9 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
         "total_used_margin_usd": float(total_used) if total_used is not None else None,
         "final_exec_price": final_price,
         "final_order_qty": final_qty,
+        "half_spread": half_spread,
+        "side": side,
+        "contract_size": cs_val,
     }
 
 
@@ -206,6 +264,27 @@ class OpenWorker:
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
         try:
             payload = orjson.loads(message.body)
+            # Basic debug context
+            er = (payload.get("execution_report") or {})
+            ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip()
+            order_id_dbg = str(payload.get("order_id"))
+            side_dbg = str(payload.get("order_type") or payload.get("side") or "").upper()
+            logger.info(
+                "[OPEN:received] order_id=%s ord_status=%s side=%s avgpx=%s cumqty=%s",
+                order_id_dbg,
+                ord_status,
+                side_dbg,
+                er.get("avgpx") or (er.get("raw") or {}).get("6"),
+                er.get("cumqty") or (er.get("raw") or {}).get("14"),
+            )
+
+            # Only process filled (2). For others (e.g., 8=rejected), ack and return.
+            if ord_status != "2":
+                logger.warning(
+                    "[OPEN:skip] order_id=%s ord_status=%s not handled (only 2=Filled).", order_id_dbg, ord_status
+                )
+                await self._ack(message)
+                return
             # Acquire per-user lock to avoid race on used_margin recompute
             lock_key = f"lock:user_margin:{payload.get('user_type')}:{payload.get('user_id')}"
             token = f"{os.getpid()}-{id(message)}"
@@ -218,8 +297,10 @@ class OpenWorker:
             try:
                 # Step 1: update provider OPEN markers
                 ctx = await _update_redis_for_open(payload)
+                logger.debug("[OPEN:update_redis_done] ctx=%s", ctx)
                 # Step 2: recompute margins
                 margins = await _recompute_margins(ctx, payload)
+                logger.debug("[OPEN:recompute_done] margins=%s", margins)
 
                 # Step 3: persist recalculated fields (best-effort)
                 upd_map = {}
@@ -229,6 +310,42 @@ class OpenWorker:
                     upd_map["order_price"] = str(float(margins["final_exec_price"]))
                 if margins.get("final_order_qty") is not None:
                     upd_map["order_quantity"] = str(float(margins["final_order_qty"]))
+                if margins.get("half_spread") is not None:
+                    upd_map["half_spread"] = str(float(margins["half_spread"]))
+
+                # Cross-check cumqty vs stored order_quantity and contract_value
+                try:
+                    stored_qty_raw = await redis_cluster.hget(ctx["order_key"], "order_quantity")
+                    stored_qty = float(stored_qty_raw) if stored_qty_raw is not None else None
+                except Exception:
+                    stored_qty = None
+                final_qty = margins.get("final_order_qty")
+                if stored_qty is not None and final_qty is not None and abs(float(stored_qty) - float(final_qty)) > 1e-9:
+                    logger.warning(
+                        "[OPEN:mismatch] order_id=%s stored_qty=%s provider_cumqty=%s -> updating",
+                        ctx.get("order_id"), stored_qty, final_qty,
+                    )
+                    upd_map["order_quantity"] = str(float(final_qty))
+
+                # Contract value check
+                try:
+                    stored_cv_raw = await redis_cluster.hget(ctx["order_key"], "contract_value")
+                    stored_cv = float(stored_cv_raw) if stored_cv_raw is not None else None
+                except Exception:
+                    stored_cv = None
+                cs_val = margins.get("contract_size")
+                expected_cv = None
+                try:
+                    if cs_val is not None and final_qty is not None:
+                        expected_cv = float(cs_val) * float(final_qty)
+                except Exception:
+                    expected_cv = None
+                if expected_cv is not None and (stored_cv is None or abs(float(stored_cv) - expected_cv) > 1e-9):
+                    logger.warning(
+                        "[OPEN:mismatch] order_id=%s stored_contract_value=%s expected=%s -> updating",
+                        ctx.get("order_id"), stored_cv, expected_cv,
+                    )
+                    upd_map["contract_value"] = str(float(expected_cv))
 
                 pipe = redis_cluster.pipeline()
                 if upd_map:
@@ -239,6 +356,14 @@ class OpenWorker:
                     portfolio_key = f"user_portfolio:{{{payload.get('user_type')}:{payload.get('user_id')}}}"
                     pipe.hset(portfolio_key, mapping={"used_margin": str(float(margins["total_used_margin_usd"]))})
                 await pipe.execute()
+                logger.info(
+                    "[OPEN:updated] order_id=%s price=%s qty=%s margin=%s used_margin=%s",
+                    ctx.get("order_id"),
+                    upd_map.get("order_price"),
+                    upd_map.get("order_quantity"),
+                    upd_map.get("margin"),
+                    (str(float(margins["total_used_margin_usd"])) if margins.get("total_used_margin_usd") is not None else None),
+                )
 
                 # Step 4: publish DB update intent for Node consumer (decoupled persistence)
                 try:
@@ -253,7 +378,7 @@ class OpenWorker:
                         "used_margin_usd": margins.get("total_used_margin_usd"),
                         "provider": {
                             "exec_id": (payload.get("execution_report") or {}).get("exec_id"),
-                            "avspx": (payload.get("execution_report") or {}).get("avspx"),
+                            "avgpx": (payload.get("execution_report") or {}).get("avgpx") or (payload.get("execution_report") or {}).get("raw", {}).get("6"),
                             "cumqty": (payload.get("execution_report") or {}).get("cumqty"),
                         },
                     }

@@ -7,6 +7,7 @@ from .api.market_api import router as market_router
 from .api.orders_api import router as orders_router
 from .market_listener import start_market_listener
 from .services.portfolio_calculator import start_portfolio_listener
+from .services.orders.provider_connection import get_provider_connection_manager
 
 # Configure logging
 logging.basicConfig(
@@ -28,11 +29,25 @@ async def lifespan(app: FastAPI):
     # Start portfolio calculator listener as background task
     asyncio.create_task(start_portfolio_listener())
     logger.info("Portfolio calculator listener started")
+
+    # Start provider persistent connection manager for send+receive
+    provider_manager = get_provider_connection_manager()
+    provider_task = asyncio.create_task(provider_manager.run())
+    logger.info("Provider connection manager started")
     
     yield
     
     # Shutdown
     logger.info("Shutting down Python Market Service...")
+    try:
+        await provider_manager.stop()
+        provider_task.cancel()
+        try:
+            await provider_task
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 # Create FastAPI app
 app = FastAPI(
