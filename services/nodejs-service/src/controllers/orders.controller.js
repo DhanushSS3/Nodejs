@@ -72,7 +72,7 @@ async function placeInstantOrder(req, res) {
     const order_id = await idGenerator.generateOrderId();
     const hasIdempotency = !!req.body.idempotency_key;
 
-    // Persist initial order (PENDING) unless request is idempotent
+    // Persist initial order (QUEUED) unless request is idempotent
     const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
     let initialOrder;
     if (!hasIdempotency) {
@@ -82,7 +82,7 @@ async function placeInstantOrder(req, res) {
           order_user_id: parseInt(parsed.user_id),
           symbol: parsed.symbol,
           order_type: parsed.order_type,
-          order_status: 'PENDING',
+          order_status: 'QUEUED',
           order_price: parsed.order_price,
           order_quantity: parsed.order_quantity,
           margin: 0,
@@ -95,7 +95,7 @@ async function placeInstantOrder(req, res) {
           order_user_id: parsed.user_id,
           symbol: parsed.symbol,
           order_type: parsed.order_type,
-          order_status: 'PENDING',
+          order_status: 'QUEUED',
           order_price: parsed.order_price,
           order_quantity: parsed.order_quantity,
           margin: 0,
@@ -136,10 +136,31 @@ async function placeInstantOrder(req, res) {
 
       // Update DB as REJECTED with reason
       try {
-        await initialOrder.update({
+        const rejectStatus = {
           order_status: 'REJECTED',
           status: normalizeStr(detail?.detail?.reason || detail?.reason || 'execution_failed')
-        });
+        };
+        if (initialOrder) {
+          await initialOrder.update(rejectStatus);
+        } else {
+          // Upsert a row for idempotent path where we skipped pre-insert
+          const [row, created] = await OrderModel.findOrCreate({
+            where: { order_id },
+            defaults: {
+              order_id,
+              order_user_id: parseInt(parsed.user_id),
+              symbol: parsed.symbol,
+              order_type: parsed.order_type,
+              order_status: 'QUEUED',
+              order_price: parsed.order_price,
+              order_quantity: parsed.order_quantity,
+              margin: 0,
+              status: normalizeStr(req.body.status || 'OPEN'),
+              placed_by: 'user'
+            }
+          });
+          await row.update(rejectStatus);
+        }
       } catch (uErr) {
         logger.error('Failed to update order after Python error', { error: uErr.message, order_id });
       }
@@ -203,7 +224,7 @@ async function placeInstantOrder(req, res) {
               order_user_id: parseInt(parsed.user_id),
               symbol: parsed.symbol,
               order_type: parsed.order_type,
-              order_status: 'PENDING',
+              order_status: 'QUEUED',
               order_price: parsed.order_price,
               order_quantity: parsed.order_quantity,
               margin: 0,
@@ -227,7 +248,7 @@ async function placeInstantOrder(req, res) {
             order_user_id: parseInt(parsed.user_id),
             symbol: parsed.symbol,
             order_type: parsed.order_type,
-            order_status: 'PENDING',
+            order_status: 'QUEUED',
             order_price: parsed.order_price,
             order_quantity: parsed.order_quantity,
             margin: 0,

@@ -17,6 +17,7 @@ const swaggerSpecs = require('./config/swagger');
 const { errorHandler, notFoundHandler, timeoutHandler } = require('./middlewares/error.middleware');
 const logger = require('./services/logger.service');
 const cors = require('cors');
+const superadminOrdersRoutes = require('./routes/superadmin.orders.routes');
 
 const app = express();
 
@@ -77,6 +78,7 @@ app.use('/api/groups', groupsRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api/superadmin/groups', groupsSuperadminRoutes);
 app.use('/api/orders', ordersRoutes);
+app.use('/api/superadmin/orders', superadminOrdersRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

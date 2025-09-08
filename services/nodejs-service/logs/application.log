@@ -12294,3 +12294,55 @@
 {"level":"info","message":"Authentication successful for user 5 on POST /instant/place","timestamp":"2025-09-05T13:10:03.469Z"}
 {"level":"info","message":"Authentication successful for user 5 on POST /instant/place","timestamp":"2025-09-05T13:10:21.529Z"}
 {"level":"info","message":"Authentication successful for user 5 on POST /instant/place","timestamp":"2025-09-05T13:12:35.621Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-05T13:39:15.525Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-05T13:39:15.532Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-05T13:39:15.957Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-05T13:39:16.455Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-05T13:39:17.003Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-05T13:39:17.437Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-05T13:39:17.738Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-05T13:39:18.219Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-05T13:39:18.625Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-05T13:39:19.086Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-05T13:39:19.465Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-05T13:39:19.866Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-05T13:39:20.247Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-05T13:39:20.732Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-05T13:39:21.249Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-05T13:39:21.840Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-05T13:39:22.295Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-05T13:39:22.758Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-05T13:39:22.912Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 7386ms","timestamp":"2025-09-05T13:39:22.913Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-05T13:39:22.925Z"}
+{"level":"info","message":"Authentication successful for user 5 on POST /instant/place","timestamp":"2025-09-05T13:40:39.251Z"}
+{"level":"info","message":"Authentication successful for user 5 on POST /instant/place","timestamp":"2025-09-05T13:40:55.192Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-05T13:42:05.111Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-05T13:42:05.115Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-05T13:42:05.636Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-05T13:42:06.095Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-05T13:42:06.778Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-05T13:42:07.466Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-05T13:42:08.018Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-05T13:42:08.637Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-08T04:24:48.922Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-08T04:24:48.933Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-08T04:24:49.224Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-08T04:24:49.535Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-08T04:24:49.891Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-08T04:24:50.432Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-08T04:24:50.699Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-08T04:24:50.954Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-08T04:24:51.216Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-08T04:24:51.651Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-08T04:24:52.034Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-08T04:24:52.460Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-08T04:24:52.754Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-08T04:24:53.067Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-08T04:24:53.443Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-08T04:24:53.756Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-08T04:24:54.066Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-08T04:24:54.320Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-08T04:24:54.400Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 5477ms","timestamp":"2025-09-08T04:24:54.400Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-08T04:24:54.405Z"}
