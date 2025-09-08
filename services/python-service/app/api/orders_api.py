@@ -4,6 +4,7 @@ import logging
 
 from ..services.orders.order_execution_service import OrderExecutor
 from ..services.orders.service_provider_client import send_provider_order
+from ..services.orders.order_registry import add_lifecycle_id
 from .schemas.orders import InstantOrderRequest, InstantOrderResponse
 
 logger = logging.getLogger(__name__)
@@ -57,4 +58,51 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
         raise
     except Exception as e:
         logger.error(f"instant_execute_order error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/registry/lifecycle-id")
+async def register_lifecycle_id(payload: Dict[str, Any]):
+    """
+    Register a lifecycle-generated ID and map it to the canonical order_id.
+    Body:
+      - order_id: str (canonical order id)
+      - new_id: str (generated id)
+      - id_type: one of [close_id, modify_id, cancel_id, takeprofit_id, stoploss_id, takeprofit_cancel_id, stoploss_cancel_id]
+    """
+    try:
+        order_id = str(payload.get("order_id") or "").strip()
+        new_id = str(payload.get("new_id") or "").strip()
+        id_type = str(payload.get("id_type") or "").strip()
+
+        allowed = {
+            "close_id",
+            "modify_id",
+            "cancel_id",
+            "takeprofit_id",
+            "stoploss_id",
+            "takeprofit_cancel_id",
+            "stoploss_cancel_id",
+        }
+        if not order_id or not new_id or id_type not in allowed:
+            raise HTTPException(status_code=400, detail={
+                "ok": False,
+                "reason": "invalid_fields",
+                "allowed_id_types": sorted(list(allowed)),
+            })
+
+        await add_lifecycle_id(order_id, new_id, id_type)
+        return {
+            "success": True,
+            "message": "Lifecycle ID registered",
+            "data": {
+                "order_id": order_id,
+                "new_id": new_id,
+                "id_type": id_type,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"register_lifecycle_id error: {e}")
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})

@@ -15,6 +15,10 @@ from app.services.orders.order_repository import (
     set_idempotency_placeholder,
     save_idempotency_result,
 )
+from app.services.orders.order_registry import (
+    create_canonical_order,
+    add_lifecycle_id,
+)
 """
 Order execution orchestration service.
 
@@ -277,6 +281,7 @@ class OrderExecutor:
                 "order_type": order_type,
                 "order_quantity": order_qty,
                 "order_price": exec_price,
+                "contract_value": float(contract_value) if contract_value is not None else None,
                 "idempotency_key": idempotency_key,
                 "ts": now_ms,
             }
@@ -297,7 +302,79 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 14) Success response
+        # 14) For provider flow, create/update canonical order hash and global lookups
+        if flow == "provider":
+            try:
+                # Build canonical order record with required fields
+                canonical: Dict[str, Any] = {
+                    # Order IDs
+                    "order_id": order_id,
+                    # User info
+                    "user_id": user_id,
+                    "user_type": user_type,
+                    "group": group,
+                    "leverage": leverage,
+                    # Instrument / group data (best-effort from fetched group hash)
+                    "type": instrument_type,
+                    "spread": g.get("spread") if isinstance(g, dict) else None,
+                    "spread_pip": g.get("spread_pip") if isinstance(g, dict) else None,
+                    "contract_size": contract_size if contract_size is not None else None,
+                    "profit": profit_currency,
+                    # Order metadata
+                    "execution": flow,
+                    "execution_status": execution_status,
+                    "created_at": now_ms,
+                    # Engine-level state vs UI-level state
+                    "order_status": displayed_status,
+                    "status": (frontend_status or "OPEN"),
+                    # Additional pricing/margin fields useful for WS/UI
+                    "symbol": symbol,
+                    "order_type": order_type,
+                    "order_price": exec_price,
+                    "order_quantity": order_qty,
+                    "margin": float(margin_usd),
+                    "contract_value": float(contract_value) if contract_value is not None else None,
+                }
+
+                # Merge any pricing metadata we already computed
+                if pricing_meta.get("pricing"):
+                    price_info = pricing_meta["pricing"]
+                    canonical.update({
+                        "raw_price": price_info.get("raw_price"),
+                        "half_spread": price_info.get("half_spread"),
+                    })
+
+                # Include any lifecycle IDs provided in payload (if any already exist)
+                lifecycle_fields = [
+                    "close_id",
+                    "modify_id",
+                    "cancel_id",
+                    "takeprofit_id",
+                    "stoploss_id",
+                    "takeprofit_cancel_id",
+                    "stoploss_cancel_id",
+                ]
+                provided_extra_ids: Dict[str, str] = {}
+                for f in lifecycle_fields:
+                    if payload.get(f):
+                        val = str(payload.get(f))
+                        canonical[f] = val
+                        provided_extra_ids[f] = val
+
+                # Persist canonical record and self-lookup for order_id
+                await create_canonical_order(canonical)
+
+                # Create global lookups for any extra IDs already generated
+                for field_name, the_id in provided_extra_ids.items():
+                    try:
+                        await add_lifecycle_id(order_id, the_id, field_name)
+                    except Exception as id_err:
+                        logger.warning("add_lifecycle_id failed for %s=%s on %s: %s", field_name, the_id, order_id, id_err)
+            except Exception as reg_err:
+                # Non-fatal; continue flow, but log for observability
+                logger.error("canonical order registry update failed for %s: %s", order_id, reg_err)
+
+        # 15) Success response
         resp = {
             "ok": True,
             "order_id": order_id,

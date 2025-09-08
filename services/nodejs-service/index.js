@@ -5,6 +5,7 @@ const app = require('./src/app');
 const sequelize = require('./src/config/db');
 const { redisCluster, redisReadyPromise } = require('./config/redis');
 const startupCacheService = require('./src/services/startup.cache.service');
+const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
 
 const PORT = process.env.PORT || 3000;
 
@@ -37,6 +38,15 @@ const PORT = process.env.PORT || 3000;
     } catch (cacheErr) {
       console.error("❌ Cache initialization failed:", cacheErr);
       // Continue startup even if cache fails - it can be initialized later
+    }
+
+    // 3b. Start RabbitMQ consumer for order DB updates (from Python workers)
+    try {
+      console.log("Starting Orders DB consumer...");
+      startOrdersDbConsumer();
+      console.log("✅ Orders DB consumer started");
+    } catch (mqErr) {
+      console.error("❌ Failed to start Orders DB consumer:", mqErr);
     }
 
     app.use((err, req, res, next) => {

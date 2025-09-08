@@ -1,6 +1,11 @@
+import os
 import asyncio
 import logging
-from typing import Dict, Any, Tuple
+import struct
+import time
+from typing import Dict, Any, Tuple, Optional
+
+import msgpack
 
 logger = logging.getLogger(__name__)
 
@@ -9,24 +14,104 @@ class ProviderSendError(Exception):
     pass
 
 
+# Configuration (env overrides)
+UDS_PATH = os.getenv("EXEC_UDS_PATH", "/run/fx_exec/exec.sock")
+TCP_HOST = os.getenv("EXEC_TCP_HOST", "127.0.0.1")
+TCP_PORT = int(os.getenv("EXEC_TCP_PORT", "9001"))
+CONNECT_TIMEOUT_SEC = float(os.getenv("EXEC_CONNECT_TIMEOUT", "2.0"))
+# Optional small window to read an immediate ACK without blocking long
+ACK_READ_TIMEOUT_SEC = float(os.getenv("EXEC_ACK_READ_TIMEOUT", "0.3"))
+
+LEN_HDR = 4
+
+
+def _pack_message(obj: Dict[str, Any]) -> bytes:
+    payload = msgpack.packb(obj, use_bin_type=True)
+    return struct.pack("!I", len(payload)) + payload
+
+
+async def _read_optional_message(reader: asyncio.StreamReader, timeout: float) -> Optional[Dict[str, Any]]:
+    try:
+        hdr = await asyncio.wait_for(reader.readexactly(LEN_HDR), timeout=timeout)
+        (length,) = struct.unpack("!I", hdr)
+        data = await asyncio.wait_for(reader.readexactly(length), timeout=timeout)
+        return msgpack.unpackb(data, raw=False)
+    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+        return None
+    except Exception as e:
+        logger.warning("optional ack read failed: %s", e)
+        return None
+
+
+async def _send_over_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, payload: Dict[str, Any]) -> None:
+    # Ensure required fields
+    if "type" not in payload:
+        payload["type"] = "order"
+    if "ts" not in payload:
+        payload["ts"] = int(time.time() * 1000)
+
+    writer.write(_pack_message(payload))
+    await writer.drain()
+
+    # Try to peek an immediate ack without blocking too long (optional)
+    try:
+        _ = await _read_optional_message(reader, ACK_READ_TIMEOUT_SEC)
+        if _:
+            logger.debug("provider immediate ack: %s", _)
+    except Exception:
+        # Non-fatal
+        pass
+
+
 async def _try_send_uds(payload: Dict[str, Any]) -> Tuple[bool, str]:
-    # Placeholder: Simulate UDS send and ACK
-    await asyncio.sleep(0.01)
-    # Simulate success for now
-    return True, "uds"
+    if os.name != "posix":
+        # UDS not supported on Windows
+        return False, "uds"
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(UDS_PATH), timeout=CONNECT_TIMEOUT_SEC)
+    except Exception as e:
+        logger.warning("UDS connect failed (%s): %s", UDS_PATH, e)
+        return False, "uds"
+
+    try:
+        await _send_over_stream(reader, writer, payload)
+        return True, "uds"
+    except Exception as e:
+        logger.error("UDS send failed: %s", e)
+        return False, "uds"
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def _try_send_tcp(payload: Dict[str, Any]) -> Tuple[bool, str]:
-    # Placeholder: Simulate TCP send and ACK
-    await asyncio.sleep(0.01)
-    # Simulate success for now
-    return True, "tcp"
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(TCP_HOST, TCP_PORT), timeout=CONNECT_TIMEOUT_SEC)
+    except Exception as e:
+        logger.error("TCP connect failed (%s:%s): %s", TCP_HOST, TCP_PORT, e)
+        return False, "tcp"
+
+    try:
+        await _send_over_stream(reader, writer, payload)
+        return True, "tcp"
+    except Exception as e:
+        logger.error("TCP send failed: %s", e)
+        return False, "tcp"
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def send_provider_order(payload: Dict[str, Any]) -> Tuple[bool, str]:
     """
     Try to send order via UDS, fallback to TCP.
-    Returns (ok, sent_via)
+    Returns (ok, sent_via) where sent_via is one of 'uds', 'tcp', 'none', or 'error'.
     """
     try:
         ok, via = await _try_send_uds(payload)
