@@ -19,6 +19,9 @@ function yyyymmdd(date = new Date()) {
   return `${y}${m}${d}`;
 }
 
+// Use Redis-backed atomic order ID generator to avoid race conditions in multi-worker setups
+const orderIdService = require('./order.id.service');
+
 class IdGeneratorService {
   constructor() {
     this.lastTimestamp = 0;
@@ -84,26 +87,18 @@ class IdGeneratorService {
   }
 
   /**
-   * Generate Order ID in format ord_YYYYMMDD_seq
-   * Uses an in-memory per-process daily counter. For horizontally scaled
-   * deployments, prefer a Redis-backed counter; callers may still await this
-   * function even though it's synchronous.
-   * @returns {string} Order ID (e.g., 'ord_20250905_008')
+   * Generate Order ID in format ord_YYYYMMDD_seq (Redis-backed, atomic)
+   * Uses Redis INCR on a date-keyed counter to guarantee uniqueness across
+   * multiple Node processes and servers.
+   * @returns {Promise<string>} Order ID (e.g., 'ord_20250905_008')
    */
-  generateOrderId() {
-    const today = yyyymmdd();
-    if (this.currentDateStr !== today) {
-      this.currentDateStr = today;
-      this.dailySeq = 0;
-    }
-    this.dailySeq += 1;
-    const seqStr = pad(this.dailySeq, 3);
-    return `ord_${today}_${seqStr}`;
+  async generateOrderId() {
+    return orderIdService.generateOrderId();
   }
 
   // Transaction IDs: TXN1234567890 (10 digits)
-  generateTransactionId() {
-    return this.generateId('TXN', 10);
+  async generateTransactionId() {
+    return orderIdService.generateTransactionId();
   }
 
   // Money Request IDs: REQ1234567890 (10 digits)
@@ -112,13 +107,13 @@ class IdGeneratorService {
   }
 
   // Stop Loss IDs: SL123456789 (9 digits)
-  generateStopLossId() {
-    return this.generateId('SL', 9);
+  async generateStopLossId() {
+    return orderIdService.generateStopLossId();
   }
 
   // Take Profit IDs: TP123456789 (9 digits)
-  generateTakeProfitId() {
-    return this.generateId('TP', 9);
+  async generateTakeProfitId() {
+    return orderIdService.generateTakeProfitId();
   }
 
   // Position IDs: POS12345678 (8 digits)
@@ -146,8 +141,8 @@ class IdGeneratorService {
    * @param {number} digitLength - Length of numeric portion (default: 10)
    * @returns {string} Stop Loss Cancel ID (e.g., 'SLC1234567890')
    */
-  generateStopLossCancelId(digitLength = 10) {
-    return this.generateId('SLC', digitLength);
+  async generateStopLossCancelId(digitLength = 10) { // digitLength ignored in Redis-backed
+    return orderIdService.generateStopLossCancelId();
   }
 
   /**
@@ -155,8 +150,8 @@ class IdGeneratorService {
    * @param {number} digitLength - Length of numeric portion (default: 10)
    * @returns {string} Take Profit Cancel ID (e.g., 'TPC1234567890')
    */
-  generateTakeProfitCancelId(digitLength = 10) {
-    return this.generateId('TPC', digitLength);
+  async generateTakeProfitCancelId(digitLength = 10) { // digitLength ignored in Redis-backed
+    return orderIdService.generateTakeProfitCancelId();
   }
 
   /**
@@ -164,8 +159,8 @@ class IdGeneratorService {
    * @param {number} digitLength - Length of numeric portion (default: 10)
    * @returns {string} Cancel Order ID (e.g., 'CXL1234567890')
    */
-  generateCancelOrderId(digitLength = 10) {
-    return this.generateId('CXL', digitLength);
+  async generateCancelOrderId(digitLength = 10) { // digitLength ignored in Redis-backed
+    return orderIdService.generateCancelOrderId();
   }
 
   /**
@@ -173,8 +168,16 @@ class IdGeneratorService {
    * @param {number} digitLength - Length of numeric portion (default: 10)
    * @returns {string} Close Order ID (e.g., 'CLS1234567890')
    */
-  generateCloseOrderId(digitLength = 10) {
-    return this.generateId('CLS', digitLength);
+  async generateCloseOrderId(digitLength = 10) { // digitLength ignored in Redis-backed
+    return orderIdService.generateCloseOrderId();
+  }
+
+  /**
+   * Generate Modify Order ID
+   * @returns {Promise<string>} Modify ID (e.g., 'MODYYYYMMDD000001')
+   */
+  async generateModifyId() {
+    return orderIdService.generateModifyId();
   }
 
   /**

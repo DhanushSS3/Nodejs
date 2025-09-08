@@ -72,8 +72,8 @@ class WalletService {
           throw new Error('Insufficient balance for this transaction');
         }
 
-        // Generate unique transaction ID
-        const transactionId = idGenerator.generateTransactionId();
+        // Generate unique transaction ID (Redis-backed, atomic)
+        const transactionId = await idGenerator.generateTransactionId();
 
         // Create transaction record
         const transaction = await UserTransaction.create({
