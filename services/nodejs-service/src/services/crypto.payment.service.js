@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const logger = require('./logger.service');
 const redisUserCache = require('./redis.user.cache.service');
+const idGenerator = require('./idGenerator.service');
 
 class CryptoPaymentService {
   constructor() {
@@ -342,8 +343,8 @@ class CryptoPaymentService {
         wallet_balance: newBalance
       }, { transaction });
 
-      // Generate unique transaction ID
-      const transactionId = await this.generateTransactionId();
+      // Generate unique transaction ID (Redis-backed, atomic)
+      const transactionId = await idGenerator.generateTransactionId();
       
       // Create transaction record
       await UserTransaction.create({
@@ -413,15 +414,7 @@ class CryptoPaymentService {
     }
   }
 
-  /**
-   * Generate unique transaction ID
-   * @returns {string} Transaction ID in format TXN + timestamp + random
-   */
-  async generateTransactionId() {
-    const timestamp = Date.now().toString();
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `TXN${timestamp}${random}`;
-  }
+  // Transaction ID generation is delegated to idGenerator (Redis-backed)
 }
 
 module.exports = new CryptoPaymentService();

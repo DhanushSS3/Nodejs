@@ -2,16 +2,15 @@ const { LiveUser, DemoUser, UserTransaction } = require('../models');
 const sequelize = require('../config/db');
 const { redisCluster } = require('../../config/redis');
 const logger = require('../utils/logger');
+const idGenerator = require('./idGenerator.service');
 
 class SuperadminTransactionService {
   /**
-   * Generate unique transaction ID
-   * @returns {string} Transaction ID with TXN prefix
+   * Generate unique transaction ID (Redis-backed, atomic)
+   * @returns {Promise<string>} Transaction ID
    */
-  generateTransactionId() {
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `TXN${timestamp}${random}`;
+  async generateTransactionId() {
+    return idGenerator.generateTransactionId();
   }
 
   /**
@@ -106,9 +105,12 @@ class SuperadminTransactionService {
         wallet_balance: balanceAfter 
       }, { transaction });
 
+      // Generate transaction id (Redis-backed)
+      const transactionId = await this.generateTransactionId();
+
       // Create transaction record
       const transactionRecord = await UserTransaction.create({
-        transaction_id: this.generateTransactionId(),
+        transaction_id: transactionId,
         user_id: userId,
         user_type: userType,
         type: 'deposit',
@@ -207,9 +209,12 @@ class SuperadminTransactionService {
         wallet_balance: balanceAfter 
       }, { transaction });
 
+      // Generate transaction id (Redis-backed)
+      const transactionId = await this.generateTransactionId();
+
       // Create transaction record
       const transactionRecord = await UserTransaction.create({
-        transaction_id: this.generateTransactionId(),
+        transaction_id: transactionId,
         user_id: userId,
         user_type: userType,
         type: 'withdraw',
