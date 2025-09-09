@@ -8,6 +8,7 @@ const startupCacheService = require('./src/services/startup.cache.service');
 const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
 
 const PORT = process.env.PORT || 3000;
+const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
 
 (async () => {
   try {
@@ -55,9 +56,17 @@ const PORT = process.env.PORT || 3000;
     });
     
     // 4. Start server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
+
+    // 5. Start WebSocket server for portfolio updates
+    try {
+      startPortfolioWSServer(server);
+      console.log('✅ WebSocket server (/ws/portfolio) started');
+    } catch (wsErr) {
+      console.error('❌ Failed to start WebSocket server', wsErr);
+    }
 
   } catch (err) {
     console.error("❌ Startup failed:", err);
