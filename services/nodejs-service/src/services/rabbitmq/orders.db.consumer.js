@@ -5,6 +5,8 @@ const DemoUserOrder = require('../../models/demoUserOrder.model');
 const { updateUserUsedMargin } = require('../user.margin.service');
 // Redis cluster (used to fetch canonical order data if SQL row missing)
 const { redisCluster } = require('../../../config/redis');
+// Event bus for portfolio updates
+const portfolioEvents = require('../events/portfolio.events');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -97,6 +99,16 @@ async function applyDbUpdate(msg) {
         order_status: row.order_status,
       };
       logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
+      // Emit event for this user's portfolio stream
+      try {
+        portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          type: 'order_update',
+          order_id: String(order_id),
+          update: updateFields,
+        });
+      } catch (e) {
+        logger.warn('Failed to emit portfolio event after order update', { error: e.message });
+      }
     }
   }
 
@@ -107,6 +119,15 @@ async function applyDbUpdate(msg) {
     } catch (e) {
       logger.error('Failed to persist used margin in SQL', { error: e.message, user_id, user_type });
       // Do not fail the message solely due to mirror write; treat as non-fatal
+    }
+    // Emit separate event for margin change
+    try {
+      portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+        type: 'user_margin_update',
+        used_margin_usd,
+      });
+    } catch (e) {
+      logger.warn('Failed to emit portfolio event after user margin update', { error: e.message });
     }
   }
 }

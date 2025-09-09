@@ -7,6 +7,7 @@ const DemoUser = require('../../models/demoUser.model');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
 const logger = require('../logger.service');
+const portfolioEvents = require('../events/portfolio.events');
 
 // In-memory connection tracking: limit to 2 connections per user
 const userConnCounts = new Map(); // key: user_type:user_id -> count
@@ -183,32 +184,14 @@ function startPortfolioWSServer(server) {
       try { ws.ping(); } catch (_) {}
     }, 30000);
 
-    // Initial snapshot from DB
-    try {
-      const [summary, dbOrders] = await Promise.all([
-        fetchAccountSummary(userType, userId),
-        fetchOrdersFromDB(userType, userId),
-      ]);
-      const payload = buildPayload({
-        balance: summary.balance,
-        margin: summary.margin,
-        openOrders: dbOrders.open,
-        pendingOrders: dbOrders.pending,
-      });
-      ws.send(JSON.stringify(payload));
-    } catch (e) {
-      logger.error('WS initial snapshot failed', { error: e.message, userId, userType });
-    }
-
-    // Periodic incremental updates from Redis (open orders) and DB refresh for pending (lightweight)
-    const loop = setInterval(async () => {
-      if (!alive) { clearInterval(loop); return; }
+    // Helper: send a snapshot
+    const sendSnapshot = async (reason, evt) => {
       try {
         const [summary, openOrders] = await Promise.all([
           fetchAccountSummary(userType, userId),
           fetchOpenOrdersFromRedis(userType, userId),
         ]);
-        // Optional: refresh pending orders from DB every 10s
+        // Refresh pending orders from DB at most every 10s
         const now = Date.now();
         if (!ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           const dbOrders = await fetchOrdersFromDB(userType, userId);
@@ -223,9 +206,30 @@ function startPortfolioWSServer(server) {
         });
         ws.send(JSON.stringify(payload));
       } catch (e) {
-        logger.error('WS periodic update failed', { error: e.message, userId, userType });
+        logger.error('WS sendSnapshot failed', { error: e.message, userId, userType, reason, evt });
       }
-    }, 1000);
+    };
+
+    // Initial snapshot
+    await sendSnapshot('initial');
+
+    // Event-driven updates: subscribe to user events
+    const unsubscribe = portfolioEvents.onUserUpdate(userType, userId, async (evt) => {
+      if (!alive) return;
+      await sendSnapshot('event', evt);
+    });
+
+    // Periodic safety resync every 30s
+    const resync = setInterval(async () => {
+      if (!alive) { clearInterval(resync); return; }
+      await sendSnapshot('resync');
+    }, 30000);
+
+    // Cleanup on close
+    ws.on('close', () => {
+      try { unsubscribe && unsubscribe(); } catch (_) {}
+      try { clearInterval(resync); } catch (_) {}
+    });
   });
 
   logger.info('WebSocket /ws/portfolio started');
