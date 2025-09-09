@@ -256,7 +256,9 @@ class OrderExecutor:
             "status": frontend_status or "OPEN",
             "order_price": exec_price,
             "order_quantity": order_qty,
-            "margin": float(margin_usd),
+            # For provider flow we reserve margin; for local immediate execution we set final margin
+            **({"margin": float(margin_usd)} if flow == "local" else {}),
+            **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
             "contract_value": float(contract_value) if contract_value is not None else None,
             "execution": flow,
             "execution_status": execution_status,
@@ -332,7 +334,9 @@ class OrderExecutor:
                     "order_type": order_type,
                     "order_price": exec_price,
                     "order_quantity": order_qty,
-                    "margin": float(margin_usd),
+                    # For provider flow, do not store final margin yet; reserve it
+                    **({"margin": float(margin_usd)} if flow == "local" else {}),
+                    **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
                     "contract_value": float(contract_value) if contract_value is not None else None,
                 }
 

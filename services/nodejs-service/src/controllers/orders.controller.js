@@ -194,7 +194,9 @@ async function placeInstantOrder(req, res) {
     if (typeof exec_price === 'number') {
       updateFields.order_price = exec_price;
     }
-    if (typeof margin_usd === 'number') {
+    // Persist margin only for local (immediate) execution.
+    // For provider flow, margin is reserved/managed in Redis and finalized on provider confirmation.
+    if (flow === 'local' && typeof margin_usd === 'number') {
       updateFields.margin = margin_usd;
     }
     if (typeof contract_value === 'number') {
@@ -262,8 +264,9 @@ async function placeInstantOrder(req, res) {
       }
     }
 
-    // Persist user's overall used margin in SQL with row-level locking (best-effort)
-    if (typeof used_margin_usd === 'number') {
+    // Persist user's overall used margin only for local execution here.
+    // For provider flow, the async worker (on provider confirmation) will persist to SQL instead.
+    if (flow === 'local' && typeof used_margin_usd === 'number') {
       try {
         await updateUserUsedMargin({
           userType: parsed.user_type,

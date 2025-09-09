@@ -82,6 +82,8 @@ async def _update_redis_for_reject(payload: Dict[str, Any]) -> Dict[str, Any]:
         "provider_cumqty": cumqty if cumqty is not None else "",
         "provider_reason": reason if reason is not None else "",
         "provider_ts": str(ts) if ts is not None else "",
+        "reserved_margin": "",
+        "margin": "",
     }
 
     pipe = redis_cluster.pipeline()

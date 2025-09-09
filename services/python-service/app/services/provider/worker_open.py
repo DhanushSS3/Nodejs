@@ -373,6 +373,8 @@ class OpenWorker:
                 upd_map = {}
                 if margins.get("single_margin_usd") is not None:
                     upd_map["margin"] = str(float(margins["single_margin_usd"]))
+                    # Clear reserved_margin upon execution confirmation
+                    upd_map["reserved_margin"] = ""
                 if margins.get("final_exec_price") is not None:
                     upd_map["order_price"] = str(float(margins["final_exec_price"]))
                 if margins.get("final_order_qty") is not None:
@@ -467,6 +469,7 @@ class OpenWorker:
                         "user_type": str(payload.get("user_type")),
                         "order_status": "OPEN",
                         "order_price": margins.get("final_exec_price") or payload.get("order_price"),
+                        # Persist per-order executed margin in SQL via DB consumer
                         "margin": margins.get("single_margin_usd"),
                         "used_margin_usd": margins.get("total_used_margin_usd"),
                         "provider": {
@@ -475,6 +478,21 @@ class OpenWorker:
                             "cumqty": (payload.get("execution_report") or {}).get("cumqty"),
                         },
                     }
+                    # Additional debug log to orders_calculated.log to correlate DB publish
+                    try:
+                        dbg = {
+                            "type": "ORDER_DB_UPDATE_PUBLISH",
+                            "order_id": db_msg.get("order_id"),
+                            "user_type": db_msg.get("user_type"),
+                            "user_id": db_msg.get("user_id"),
+                            "order_status": db_msg.get("order_status"),
+                            "order_price": db_msg.get("order_price"),
+                            "margin": db_msg.get("margin"),
+                            "used_margin_usd": db_msg.get("used_margin_usd"),
+                        }
+                        _ORDERS_CALC_LOG.info(orjson.dumps(dbg).decode())
+                    except Exception:
+                        pass
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
                 except Exception:

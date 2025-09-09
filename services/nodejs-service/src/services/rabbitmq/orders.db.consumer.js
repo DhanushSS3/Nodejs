@@ -3,6 +3,8 @@ const logger = require('../logger.service');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
 const { updateUserUsedMargin } = require('../user.margin.service');
+// Redis cluster (used to fetch canonical order data if SQL row missing)
+const { redisCluster } = require('../../../config/redis');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -18,29 +20,84 @@ async function applyDbUpdate(msg) {
   }
 
   const OrderModel = getOrderModel(String(user_type));
-
-  // Upsert and update
-  const [row] = await OrderModel.findOrCreate({
-    where: { order_id: String(order_id) },
-    defaults: {
-      order_id: String(order_id),
-      order_user_id: parseInt(String(user_id), 10),
-      order_status: String(order_status || 'OPEN'),
-      order_price: order_price != null ? String(order_price) : '0',
-      order_quantity: '0',
-      margin: margin != null ? String(margin) : '0',
-      status: undefined,
-      placed_by: 'user'
-    }
+  logger.info('DB consumer received message', {
+    type,
+    order_id: String(order_id),
+    user_id: String(user_id),
+    user_type: String(user_type),
+    order_status,
+    order_price,
+    margin,
+    used_margin_usd,
   });
 
-  const updateFields = {};
-  if (order_status) updateFields.order_status = String(order_status);
-  if (order_price != null) updateFields.order_price = String(order_price);
-  if (margin != null) updateFields.margin = String(margin);
+  // Attempt to find existing row first
+  let row = await OrderModel.findOne({ where: { order_id: String(order_id) } });
+  if (!row) {
+    // If missing, fetch minimal required fields from Redis canonical order_data:{order_id}
+    try {
+      const key = `order_data:${String(order_id)}`;
+      const canonical = await redisCluster.hgetall(key);
+      if (!canonical || Object.keys(canonical).length === 0) {
+        logger.warn('Canonical order not found in Redis for DB backfill', { order_id });
+      } else {
+        const symbol = canonical.symbol || canonical.order_company_name; // normalized by services
+        const order_type = canonical.order_type;
+        const order_quantity = canonical.order_quantity ?? '0';
+        const price = order_price != null ? String(order_price) : (canonical.order_price ?? '0');
+        const status = String(order_status || canonical.order_status || 'OPEN');
+        // Round to 8 decimals to match DECIMAL(18,8)
+        const marginStr = margin != null && Number.isFinite(Number(margin))
+          ? Number(margin).toFixed(8)
+          : (canonical.margin ?? null);
 
-  if (Object.keys(updateFields).length > 0) {
-    await row.update(updateFields);
+        if (!symbol || !order_type) {
+          logger.warn('Missing required fields in canonical order for SQL create', { order_id, symbol, order_type });
+        } else {
+          row = await OrderModel.create({
+            order_id: String(order_id),
+            order_user_id: parseInt(String(user_id), 10),
+            symbol: String(symbol).toUpperCase(),
+            order_type: String(order_type).toUpperCase(),
+            order_status: status,
+            order_price: String(price),
+            order_quantity: String(order_quantity),
+            margin: marginStr != null ? String(marginStr) : null,
+            placed_by: 'user'
+          });
+          logger.info('Created SQL order row from Redis canonical for DB update', { order_id });
+        }
+      }
+    } catch (e) {
+      logger.error('Failed to backfill SQL order from Redis canonical', { order_id, error: e.message });
+    }
+  }
+
+  // If still no row, nothing else we can do; avoid throwing to prevent poison messages
+  if (!row) {
+    logger.warn('Skipping DB order update; SQL row not found and could not be created', { order_id });
+  } else {
+    const updateFields = {};
+    if (order_status) updateFields.order_status = String(order_status);
+    if (order_price != null) updateFields.order_price = String(order_price);
+    if (margin != null && Number.isFinite(Number(margin))) {
+      updateFields.margin = Number(margin).toFixed(8);
+    }
+
+    if (Object.keys(updateFields).length > 0) {
+      const before = {
+        margin: row.margin != null ? row.margin.toString() : null,
+        order_price: row.order_price != null ? row.order_price.toString() : null,
+        order_status: row.order_status,
+      };
+      await row.update(updateFields);
+      const after = {
+        margin: row.margin != null ? row.margin.toString() : null,
+        order_price: row.order_price != null ? row.order_price.toString() : null,
+        order_status: row.order_status,
+      };
+      logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
+    }
   }
 
   // Update user's used margin in SQL, if provided
