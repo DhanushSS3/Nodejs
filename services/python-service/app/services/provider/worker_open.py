@@ -1,6 +1,8 @@
 import os
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import orjson
@@ -47,6 +49,30 @@ async def release_lock(lock_key: str, token: str) -> None:
     except Exception as e:
         logger.error("release_lock error: %s", e)
 
+# ------------- Dedicated calculated orders file logger -------------
+def _get_orders_calc_logger() -> logging.Logger:
+    lg = logging.getLogger("orders.calculated")
+    # Avoid duplicate handlers
+    for h in lg.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
+            return lg
+    try:
+        base_dir = Path(__file__).resolve().parents[3]
+    except Exception:
+        base_dir = Path('.')
+    log_dir = base_dir / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / 'orders_calculated.log'
+    fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+    fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    fh._orders_calc = True
+    lg.addHandler(fh)
+    lg.setLevel(logging.INFO)
+    return lg
+
+
+_ORDERS_CALC_LOG = _get_orders_calc_logger()
+
 
 async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -73,6 +99,7 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     # User holdings
     hash_tag = f"{user_type}:{user_id}"
     order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+    index_key = f"user_orders_index:{{{hash_tag}}}"
 
     mapping_common = {
         "order_status": "OPEN",
@@ -88,6 +115,16 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     pipe = redis_cluster.pipeline()
     pipe.hset(order_data_key, mapping=mapping_common)
     pipe.hset(order_key, mapping=mapping_common)
+    # Ensure order is in the active index (idempotent safety)
+    pipe.sadd(index_key, order_id)
+    # Ensure symbol_holders has this user for this symbol (idempotent safety)
+    try:
+        symbol = str(payload.get("symbol") or "").upper()
+        if symbol:
+            sym_set = f"symbol_holders:{symbol}:{user_type}"
+            pipe.sadd(sym_set, hash_tag)
+    except Exception:
+        pass
     await pipe.execute()
 
     return {
@@ -119,22 +156,52 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     except Exception:
         final_price = None
 
-    qty = order_ctx.get("cumqty_hint") or payload.get("order_quantity")
+    # Resolve final executed quantity
+    # Priority:
+    #   1) payload.order_quantity (should be sourced from canonical order_data by dispatcher)
+    #   2) canonical order_data:{order_id}.order_quantity (fallback fetch)
+    #   3) provider cumqty hint (last resort)
+    final_qty = None
+    qty_source = None
     try:
-        final_qty = float(qty) if qty is not None else None
+        if payload.get("order_quantity") is not None:
+            final_qty = float(payload.get("order_quantity"))
+            qty_source = "payload"
+        else:
+            # Fallback: fetch from canonical
+            try:
+                order_id_lookup = str(payload.get("order_id"))
+                raw_qty = await redis_cluster.hget(f"order_data:{order_id_lookup}", "order_quantity")
+                if raw_qty is not None:
+                    final_qty = float(raw_qty)
+                    qty_source = "canonical"
+            except Exception:
+                final_qty = None
+        if final_qty is None and order_ctx.get("cumqty_hint") is not None:
+            final_qty = float(order_ctx.get("cumqty_hint"))
+            qty_source = "cumqty"
     except Exception:
         final_qty = None
+        qty_source = None
 
-    # Fetch group data to enrich crypto factor and spread/half_spread if available
+    # Prefer spread info from payload/report; fallback to Redis group data
     group = str(payload.get("group") or "Standard")
-    g = await fetch_group_data(symbol, group)
-    # Compute half_spread from group data: (spread * spread_pip) / 2
+    er = payload.get("execution_report") or {}
+    spread_val = payload.get("spread") or er.get("spread")
+    spread_pip_val = payload.get("spread_pip") or er.get("spread_pip")
+    g = {}
+    if spread_val is None or spread_pip_val is None or payload.get("contract_size") is None:
+        # Fetch only if we are missing required fields
+        g = await fetch_group_data(symbol, group)
+        spread_val = spread_val if spread_val is not None else g.get("spread")
+        spread_pip_val = spread_pip_val if spread_pip_val is not None else g.get("spread_pip")
+    # Compute half_spread = (spread * spread_pip) / 2
     half_spread = None
     try:
-        spread = float(g.get("spread")) if g.get("spread") is not None else None
-        spread_pip = float(g.get("spread_pip")) if g.get("spread_pip") is not None else None
-        if spread is not None and spread_pip is not None:
-            half_spread = (spread * spread_pip) / 2.0
+        sv = float(spread_val) if spread_val is not None else None
+        spv = float(spread_pip_val) if spread_pip_val is not None else None
+        if sv is not None and spv is not None:
+            half_spread = (sv * spv) / 2.0
     except (TypeError, ValueError):
         half_spread = None
 
@@ -278,10 +345,10 @@ class OpenWorker:
                 er.get("cumqty") or (er.get("raw") or {}).get("14"),
             )
 
-            # Only process filled (2). For others (e.g., 8=rejected), ack and return.
-            if ord_status != "2":
+            # Only process filled: accept new format 'EXECUTED' and legacy '2'.
+            if str(ord_status).upper() not in ("2", "EXECUTED"):
                 logger.warning(
-                    "[OPEN:skip] order_id=%s ord_status=%s not handled (only 2=Filled).", order_id_dbg, ord_status
+                    "[OPEN:skip] order_id=%s ord_status=%s not handled (only EXECUTED/2).", order_id_dbg, ord_status
                 )
                 await self._ack(message)
                 return
@@ -364,6 +431,32 @@ class OpenWorker:
                     upd_map.get("margin"),
                     (str(float(margins["total_used_margin_usd"])) if margins.get("total_used_margin_usd") is not None else None),
                 )
+
+                # Log calculated order data to dedicated file
+                try:
+                    calc = {
+                        "type": "ORDER_OPEN_CALC",
+                        "order_id": str(payload.get("order_id")),
+                        "user_type": str(payload.get("user_type")),
+                        "user_id": str(payload.get("user_id")),
+                        "symbol": str(payload.get("symbol") or "").upper(),
+                        "side": str(margins.get("side") or payload.get("order_type") or "").upper(),
+                        "final_exec_price": margins.get("final_exec_price"),
+                        "final_order_qty": margins.get("final_order_qty"),
+                        "single_margin_usd": margins.get("single_margin_usd"),
+                        "total_used_margin_usd": margins.get("total_used_margin_usd"),
+                        "half_spread": margins.get("half_spread"),
+                        "contract_size": margins.get("contract_size"),
+                        "provider": {
+                            "ord_status": (payload.get("execution_report") or {}).get("ord_status"),
+                            "exec_id": (payload.get("execution_report") or {}).get("exec_id"),
+                            "avgpx": (payload.get("execution_report") or {}).get("avgpx"),
+                            "cumqty": (payload.get("execution_report") or {}).get("cumqty"),
+                        },
+                    }
+                    _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
+                except Exception:
+                    pass
 
                 # Step 4: publish DB update intent for Node consumer (decoupled persistence)
                 try:

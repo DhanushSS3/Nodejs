@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import msgpack
 import orjson
 import aio_pika
+from app.config.redis_config import redis_cluster
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,14 @@ def _unpack(data: bytes) -> Dict[str, Any]:
 
 
 def _normalize_fields(msg: Dict[str, Any]) -> Dict[str, Any]:
-    fields = msg.get("fields") if isinstance(msg, dict) else None
-    base = fields if isinstance(fields, dict) and fields else (msg or {})
+    """Return a shallow copy of the message with stringified keys.
+
+    This is a generic helper that no longer performs any FIX tag mapping.
+    The provider will send execution reports with named fields at the top level
+    (e.g., order_id, ord_status, avgpx, cumqty, side, reason), possibly along
+    with other auxiliary fields. We just normalize keys to strings for safety.
+    """
+    base = msg if isinstance(msg, dict) else {}
     norm: Dict[str, Any] = {}
     for k, v in base.items():
         ks = str(k) if not isinstance(k, str) else k
@@ -46,15 +53,34 @@ def _normalize_fields(msg: Dict[str, Any]) -> Dict[str, Any]:
     return norm
 
 
-def _build_report(msg: Dict[str, Any]) -> Dict[str, Any]:
+def _build_report(msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build an execution report from named fields provided by the provider.
+
+    Expected fields (instant order report):
+      - order_id: str | int
+      - ord_status: EXECUTED | PENDING | REJECTED | CANCELLED
+      - avgpx: float (executed price)
+      - cumqty: float (contract_value / quantity as defined by provider)
+      - side: BUY | SELL
+      - reason: str (present on rejections/cancellations)
+
+    Returns None if minimum required fields are missing.
+    """
     fields = _normalize_fields(msg)
-    report = {
+    order_id = fields.get("order_id")
+    ord_status = fields.get("ord_status")
+    if order_id is None or ord_status is None:
+        return None
+    report: Dict[str, Any] = {
         "type": "execution_report",
-        "order_id": fields.get("11"),
-        "exec_id": fields.get("17"),
-        "ord_status": fields.get("39"),
-        "avgpx": fields.get("6"),
-        "cumqty": fields.get("14"),
+        "order_id": order_id,
+        # exec_id is optional, keep if provider sends it
+        "exec_id": fields.get("exec_id"),
+        "ord_status": ord_status,
+        "avgpx": fields.get("avgpx"),
+        "cumqty": fields.get("cumqty"),
+        "side": fields.get("side"),
+        "reason": fields.get("reason"),
         "ts": int(time.time() * 1000),
         "raw": fields,
     }
@@ -99,7 +125,7 @@ class ProviderConnectionManager:
     Maintains a persistent connection to provider.
     - Single connection used for both sending and receiving
     - Outbound messages come via an asyncio.Queue
-    - Inbound frames parsed; 35=8 ERs are published to RabbitMQ confirmation queue
+    - Inbound frames parsed; execution reports are published to RabbitMQ confirmation queue
     """
 
     def __init__(self):
@@ -162,25 +188,60 @@ class ProviderConnectionManager:
                 except Exception:
                     # Fallback to plain repr if JSON fails
                     _PROVIDER_RX_LOG.info(f"transport={self.transport} dir=in msg={msg!r}")
-                # Publish execution reports: either already structured or raw FIX 35=8
+                # Publish execution reports: either already structured or named-field dicts
                 report = None
                 try:
-                    if isinstance(msg, dict) and str(msg.get("type")) == "execution_report":
-                        report = msg
-                    else:
-                        fields = _normalize_fields(msg)
-                        if str(fields.get("35")) == "8":  # FIX ExecutionReport
+                    if isinstance(msg, dict):
+                        if str(msg.get("type")) == "execution_report":
+                            # Already a proper report, pass through
+                            report = msg
+                        else:
+                            # Build from named fields (no FIX tag mapping)
                             report = _build_report(msg)
                 except Exception:
                     report = None
                 if report is not None:
+                    # Enrich with group/symbol spread data from Redis before publish
+                    try:
+                        lifecycle_id = report.get("order_id") or report.get("exec_id")
+                        canonical_order_id = None
+                        if lifecycle_id:
+                            canonical_order_id = await redis_cluster.get(f"global_order_lookup:{lifecycle_id}")
+                        if not canonical_order_id and lifecycle_id:
+                            canonical_order_id = str(lifecycle_id)
+
+                        group_val = report.get("group")
+                        symbol_val = report.get("symbol")
+                        if canonical_order_id and (not group_val or not symbol_val):
+                            od = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
+                            group_val = group_val or od.get("group")
+                            symbol_val = symbol_val or od.get("symbol")
+                        if group_val and symbol_val:
+                            gkey = f"groups:{{{group_val}}}:{str(symbol_val).upper()}"
+                            try:
+                                ghash = await redis_cluster.hgetall(gkey)
+                            except Exception:
+                                ghash = {}
+                            spread = ghash.get("spread")
+                            spread_pip = ghash.get("spread_pip")
+                            # Attach to report
+                            report["group"] = group_val
+                            report["symbol"] = str(symbol_val).upper()
+                            if spread is not None:
+                                report["spread"] = spread
+                            if spread_pip is not None:
+                                report["spread_pip"] = spread_pip
+                    except Exception:
+                        # Enrichment is best-effort; proceed even if it fails
+                        pass
+
                     await self._publisher.publish(report)
                     try:
                         logger.debug(
                             "Published ER to %s: order_id=%s ord_status=%s",
                             CONFIRMATION_QUEUE,
-                            report.get("order_id") or (report.get("raw") or {}).get("11"),
-                            report.get("ord_status") or (report.get("raw") or {}).get("39"),
+                            report.get("order_id"),
+                            report.get("ord_status"),
                         )
                     except Exception:
                         pass

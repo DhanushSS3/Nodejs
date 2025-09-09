@@ -114,19 +114,35 @@ class Dispatcher:
                     return
 
                 payload = await _compose_payload(report, order_data, canonical_order_id)
-                # Route based on provider OrdStatus (39)
-                raw = report.get("raw") or {}
-                ord_status = str(report.get("ord_status") or raw.get("39") or "").strip()
-                if ord_status == "2":
+                # Route based on Redis status (engine/UI state) and provider ord_status (string)
+                redis_status = str(order_data.get("status") or order_data.get("order_status") or "").upper()
+                ord_status = str(report.get("ord_status") or "").upper().strip()
+                target_queue = None
+                if redis_status == "OPEN" and ord_status == "EXECUTED":
                     target_queue = OPEN_QUEUE
-                elif ord_status == "8":
+                elif redis_status == "OPEN" and ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
                 else:
-                    logger.info("OrdStatus %s not handled; DLQ", ord_status)
-                    await self._publish(DLQ, {"reason": "unhandled_ord_status", "ord_status": ord_status, "order_id": canonical_order_id, "report": report})
+                    logger.info(
+                        "Unmapped routing state; DLQ. redis_status=%s ord_status=%s order_id=%s",
+                        redis_status, ord_status, canonical_order_id,
+                    )
+                    await self._publish(
+                        DLQ,
+                        {
+                            "reason": "unmapped_routing_state",
+                            "redis_status": redis_status,
+                            "ord_status": ord_status,
+                            "order_id": canonical_order_id,
+                            "report": report,
+                        },
+                    )
                     return
 
-                logger.info("Routing ER ord_status=%s order_id=%s -> %s", ord_status, canonical_order_id, target_queue)
+                logger.info(
+                    "Routing ER redis_status=%s ord_status=%s order_id=%s -> %s",
+                    redis_status, ord_status, canonical_order_id, target_queue,
+                )
                 await self._publish(target_queue, payload)
             except Exception as e:
                 logger.exception("Dispatcher handle error: %s", e)

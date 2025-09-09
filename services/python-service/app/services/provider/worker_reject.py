@@ -1,6 +1,8 @@
 import os
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import orjson
@@ -61,7 +63,8 @@ async def _update_redis_for_reject(payload: Dict[str, Any]) -> Dict[str, Any]:
     exec_id = report.get("exec_id") or (report.get("raw") or {}).get("17")
     avspx = report.get("avgpx") or (report.get("raw") or {}).get("6")
     cumqty = report.get("cumqty") or (report.get("raw") or {}).get("14")
-    reason = (report.get("raw") or {}).get("58") or report.get("reason")
+    # Prefer named 'reason' field; fallback to raw FIX tag 58 if present
+    reason = report.get("reason") or (report.get("raw") or {}).get("58")
     ts = report.get("ts")
 
     # Keys
@@ -153,8 +156,9 @@ class RejectWorker:
 
             # Check provider ord_status and ensure it's a rejection (8)
             er = (payload.get("execution_report") or {})
+            # With new provider format, ord_status is a string like 'REJECTED'. Keep 8 for backward compat.
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip()
-            if ord_status != "8":
+            if ord_status not in ("REJECTED", "8"):
                 logger.warning("[REJECT:skip] order_id=%s ord_status=%s not 8 (Rejected)", order_id, ord_status)
                 await self._ack(message)
                 return
@@ -184,7 +188,43 @@ class RejectWorker:
                     (str(float(new_used)) if new_used is not None else None),
                 )
 
-                # Step 3: publish DB update intent for Node consumer
+                # Step 3: if no other open orders for this symbol remain, remove from symbol_holders
+                try:
+                    symbol = str(payload.get("symbol") or "").upper()
+                    if symbol:
+                        # Check if user still has any other open orders for this symbol
+                        orders = await fetch_user_orders(user_type, user_id)
+                        any_same_symbol = False
+                        for od in orders:
+                            if str(od.get("symbol")).upper() == symbol and str(od.get("order_id")) != order_id:
+                                any_same_symbol = True
+                                break
+                        if not any_same_symbol:
+                            sym_set = f"symbol_holders:{symbol}:{user_type}"
+                            await redis_cluster.srem(sym_set, f"{user_type}:{user_id}")
+                except Exception:
+                    logger.exception("[REJECT:symbol_holders] cleanup failed")
+
+                # Log calculated reject data to dedicated file
+                try:
+                    calc = {
+                        "type": "ORDER_REJECT_CALC",
+                        "order_id": order_id,
+                        "user_type": user_type,
+                        "user_id": user_id,
+                        "symbol": str(payload.get("symbol") or "").upper(),
+                        "provider": {
+                            "ord_status": "REJECTED",
+                            "exec_id": er.get("exec_id") or (er.get("raw") or {}).get("17"),
+                            "reason": er.get("reason") or (er.get("raw") or {}).get("58"),
+                        },
+                        "new_used_margin": (float(new_used) if new_used is not None else None),
+                    }
+                    _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
+                except Exception:
+                    pass
+
+                # Step 4: publish DB update intent for Node consumer
                 try:
                     db_msg = {
                         "type": "ORDER_REJECTED",
@@ -194,8 +234,8 @@ class RejectWorker:
                         "order_status": "REJECTED",
                         "provider": {
                             "exec_id": er.get("exec_id") or (er.get("raw") or {}).get("17"),
-                            "reason": (er.get("raw") or {}).get("58"),
-                            "ord_status": ord_status,
+                            "reason": er.get("reason") or (er.get("raw") or {}).get("58"),
+                            "ord_status": "REJECTED",
                         },
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
@@ -227,3 +267,27 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
+# ------------- Dedicated calculated orders file logger -------------
+def _get_orders_calc_logger() -> logging.Logger:
+    lg = logging.getLogger("orders.calculated")
+    # Avoid duplicate handlers
+    for h in lg.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
+            return lg
+    try:
+        base_dir = Path(__file__).resolve().parents[3]
+    except Exception:
+        base_dir = Path('.')
+    log_dir = base_dir / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / 'orders_calculated.log'
+    fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+    fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    fh._orders_calc = True
+    lg.addHandler(fh)
+    lg.setLevel(logging.INFO)
+    return lg
+
+
+_ORDERS_CALC_LOG = _get_orders_calc_logger()
