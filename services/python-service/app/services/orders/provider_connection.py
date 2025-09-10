@@ -1,3 +1,5 @@
+# Provider Node internal lookup config will be declared after imports
+
 import os
 import asyncio
 import struct
@@ -8,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import msgpack
+import aiohttp
 import orjson
 import aio_pika
 from app.config.redis_config import redis_cluster
@@ -26,6 +29,32 @@ CONFIRMATION_QUEUE = os.getenv("CONFIRMATION_QUEUE", "confirmation_queue")
 
 # Frame
 LEN_HDR = 4
+
+# After imports and logger setup: Node internal lookup config and helper
+INTERNAL_PROVIDER_URL = os.getenv("INTERNAL_PROVIDER_URL", "http://127.0.0.1:3000/api/internal/provider")
+
+
+async def _node_lookup_any_id(any_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Call Node internal lookup to resolve an order by any lifecycle ID and fetch
+    user + group config. Live orders only.
+    Returns payload dict or None on failure.
+    """
+    timeout = aiohttp.ClientTimeout(total=3.0)
+    url = f"{INTERNAL_PROVIDER_URL}/orders/lookup/{any_id}"
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                return data.get("data") or None
+    except Exception as e:
+        try:
+            logger.warning("Node provider lookup failed for %s: %s", any_id, e)
+        except Exception:
+            pass
+        return None
 
 
 def _pack(obj: Dict[str, Any]) -> bytes:
@@ -201,31 +230,90 @@ class ProviderConnectionManager:
                 except Exception:
                     report = None
                 if report is not None:
-                    # Enrich with group/symbol spread data from Redis before publish
+                    # Enrich with group/symbol spread data before publish; add DB fallback via Node
                     try:
                         lifecycle_id = report.get("order_id") or report.get("exec_id")
                         canonical_order_id = None
                         if lifecycle_id:
                             canonical_order_id = await redis_cluster.get(f"global_order_lookup:{lifecycle_id}")
-                        if not canonical_order_id and lifecycle_id:
-                            canonical_order_id = str(lifecycle_id)
 
                         group_val = report.get("group")
                         symbol_val = report.get("symbol")
-                        if canonical_order_id and (not group_val or not symbol_val):
-                            od = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
-                            group_val = group_val or od.get("group")
-                            symbol_val = symbol_val or od.get("symbol")
+
+                        # If no mapping or missing order_data fields, try Redis first then fallback to Node DB lookup
+                        od: Dict[str, Any] = {}
+                        if canonical_order_id:
+                            od = await redis_cluster.hgetall(f"order_data:{canonical_order_id}") or {}
+
+                        if (not canonical_order_id) or (not group_val or not symbol_val) and not od:
+                            if lifecycle_id:
+                                lookup = await _node_lookup_any_id(str(lifecycle_id))
+                            else:
+                                lookup = None
+                            if lookup:
+                                # Resolve canonical id and cache all lifecycle ids -> canonical mapping
+                                can_id = str((lookup.get("order") or {}).get("order_id")) if lookup.get("order") else None
+                                if can_id:
+                                    canonical_order_id = can_id
+                                    # Persist global lookups for all known lifecycle ids
+                                    ids_to_map = [
+                                        (lookup["order"].get("order_id"),),
+                                        (lookup["order"].get("close_id"),),
+                                        (lookup["order"].get("cancel_id"),),
+                                        (lookup["order"].get("modify_id"),),
+                                        (lookup["order"].get("takeprofit_id"),),
+                                        (lookup["order"].get("stoploss_id"),),
+                                        (lookup["order"].get("takeprofit_cancel_id"),),
+                                        (lookup["order"].get("stoploss_cancel_id"),),
+                                    ]
+                                    pipe = redis_cluster.pipeline()
+                                    for tup in ids_to_map:
+                                        idv = tup[0]
+                                        if idv:
+                                            pipe.set(f"global_order_lookup:{idv}", can_id)
+                                    await pipe.execute()
+
+                                    # Backfill minimal order_data fields
+                                    try:
+                                        group_val = group_val or (lookup.get("user") or {}).get("group")
+                                        symbol_val = symbol_val or (lookup.get("order") or {}).get("symbol")
+                                        gcfg = lookup.get("group_config") or {}
+                                        od_update = {}
+                                        if group_val:
+                                            od_update["group"] = str(group_val)
+                                        if symbol_val:
+                                            od_update["symbol"] = str(symbol_val).upper()
+                                        if gcfg.get("type") is not None:
+                                            od_update["type"] = str(gcfg.get("type"))
+                                        if gcfg.get("contract_size") is not None:
+                                            od_update["contract_size"] = str(gcfg.get("contract_size"))
+                                        if gcfg.get("profit") is not None:
+                                            od_update["profit"] = str(gcfg.get("profit"))
+                                        if gcfg.get("spread") is not None:
+                                            od_update["spread"] = str(gcfg.get("spread"))
+                                        if gcfg.get("spread_pip") is not None:
+                                            od_update["spread_pip"] = str(gcfg.get("spread_pip"))
+                                        if od_update:
+                                            await redis_cluster.hset(f"order_data:{can_id}", mapping=od_update)
+                                            od.update(od_update)
+                                    except Exception:
+                                        pass
+
+                        # Attach group/symbol/spread if available; normalize report.order_id to canonical
+                        if canonical_order_id:
+                            report["order_id"] = str(canonical_order_id)
+                        # Prefer report values, fallback to order_data
+                        group_val = report.get("group") or od.get("group") or group_val
+                        symbol_val = report.get("symbol") or od.get("symbol") or symbol_val
                         if group_val and symbol_val:
                             gkey = f"groups:{{{group_val}}}:{str(symbol_val).upper()}"
                             try:
                                 ghash = await redis_cluster.hgetall(gkey)
                             except Exception:
                                 ghash = {}
-                            spread = ghash.get("spread")
-                            spread_pip = ghash.get("spread_pip")
-                            # Attach to report
-                            report["group"] = group_val
+                            spread = ghash.get("spread") or od.get("spread")
+                            spread_pip = ghash.get("spread_pip") or od.get("spread_pip")
+                            report["group"] = str(group_val)
                             report["symbol"] = str(symbol_val).upper()
                             if spread is not None:
                                 report["spread"] = spread
