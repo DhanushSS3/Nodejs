@@ -4,6 +4,7 @@ const idGenerator = require('../services/idGenerator.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
+const portfolioEvents = require('../services/events/portfolio.events');
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -139,7 +140,6 @@ async function placeInstantOrder(req, res) {
         const reasonStr = normalizeStr(detail?.detail?.reason || detail?.reason || 'execution_failed');
         const rejectStatus = {
           order_status: 'REJECTED',
-          status: reasonStr,
           close_message: reasonStr,
         };
         if (initialOrder) {
@@ -268,6 +268,19 @@ async function placeInstantOrder(req, res) {
       }
     }
 
+    // Emit WS event for local execution order update
+    if (flow === 'local') {
+      try {
+        portfolioEvents.emitUserUpdate(parsed.user_type, parsed.user_id, {
+          type: 'order_update',
+          order_id: finalOrderId,
+          update: updateFields,
+        });
+      } catch (e) {
+        logger.warn('Failed to emit portfolio event for local order update', { error: e.message, order_id: finalOrderId });
+      }
+    }
+
     // Persist user's overall used margin only for local execution here.
     // For provider flow, the async worker (on provider confirmation) will persist to SQL instead.
     if (flow === 'local' && typeof used_margin_executed === 'number') {
@@ -277,6 +290,15 @@ async function placeInstantOrder(req, res) {
           userId: parseInt(parsed.user_id),
           usedMargin: used_margin_executed,
         });
+        // Emit WS event for margin change
+        try {
+          portfolioEvents.emitUserUpdate(parsed.user_type, parsed.user_id, {
+            type: 'user_margin_update',
+            used_margin_usd: used_margin_executed,
+          });
+        } catch (e) {
+          logger.warn('Failed to emit portfolio event after local margin update', { error: e.message, userId: parsed.user_id });
+        }
       } catch (mErr) {
         logger.error('Failed to update user used margin', {
           error: mErr.message,
