@@ -562,23 +562,6 @@ class OpenWorker:
                         "final_order_qty": margins.get("final_order_qty"),
                         "single_margin_usd": margins.get("single_margin_usd"),
                         "commission_entry": (commission_entry if 'commission_entry' in locals() else None),
-                        # Commission config debug (normalized and legacy + sources/raw)
-                        "commission_type": (ctype if 'ctype' in locals() else None),
-                        "commission_value_type": (vtype if 'vtype' in locals() else None),
-                        "commission_rate": (rate if 'rate' in locals() else None),
-                        "commision_type": (ctype if 'ctype' in locals() else None),
-                        "commision_value_type": (vtype if 'vtype' in locals() else None),
-                        "commision": (rate if 'rate' in locals() else None),
-                        "commission_sources": {
-                            "rate": (rate_src if 'rate_src' in locals() else None),
-                            "type": (ctype_src if 'ctype_src' in locals() else None),
-                            "value_type": (vtype_src if 'vtype_src' in locals() else None),
-                        },
-                        "commission_raw": {
-                            "rate_raw": (rate_raw if 'rate_raw' in locals() else None),
-                            "type_raw": (ctype_raw if 'ctype_raw' in locals() else None),
-                            "value_type_raw": (vtype_raw if 'vtype_raw' in locals() else None),
-                        },
                         "total_used_margin_usd": margins.get("total_used_margin_usd"),
                         "half_spread": margins.get("half_spread"),
                         "contract_size": margins.get("contract_size"),
@@ -628,23 +611,6 @@ class OpenWorker:
                             "order_price": db_msg.get("order_price"),
                             "margin": db_msg.get("margin"),
                             "commission": db_msg.get("commission"),
-                            # Commission config debug (normalized and legacy + sources/raw)
-                            "commission_type": (ctype if 'ctype' in locals() else None),
-                            "commission_value_type": (vtype if 'vtype' in locals() else None),
-                            "commission_rate": (rate if 'rate' in locals() else None),
-                            "commision_type": (ctype if 'ctype' in locals() else None),
-                            "commision_value_type": (vtype if 'vtype' in locals() else None),
-                            "commision": (rate if 'rate' in locals() else None),
-                            "commission_sources": {
-                                "rate": (rate_src if 'rate_src' in locals() else None),
-                                "type": (ctype_src if 'ctype_src' in locals() else None),
-                                "value_type": (vtype_src if 'vtype_src' in locals() else None),
-                            },
-                            "commission_raw": {
-                                "rate_raw": (rate_raw if 'rate_raw' in locals() else None),
-                                "type_raw": (ctype_raw if 'ctype_raw' in locals() else None),
-                                "value_type_raw": (vtype_raw if 'vtype_raw' in locals() else None),
-                            },
                             "used_margin_usd": db_msg.get("used_margin_usd"),
                         }
                         _ORDERS_CALC_LOG.info(orjson.dumps(dbg).decode())

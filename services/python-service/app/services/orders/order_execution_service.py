@@ -1,9 +1,6 @@
 import time
 import logging
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
-import orjson
 
 from app.services.price_utils import get_execution_price
 from app.services.portfolio.margin_calculator import compute_single_order_margin
@@ -332,54 +329,7 @@ class OrderExecutor:
                 contract_size=contract_size,
             )
 
-        # --- DEBUG: Log commission config snapshot and calculation context ---
-        try:
-            def _get_orders_calc_logger() -> logging.Logger:
-                lg = logging.getLogger("orders.calculated")
-                # Avoid duplicate handlers
-                for h in lg.handlers:
-                    if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
-                        return lg
-                try:
-                    base_dir = Path(__file__).resolve().parents[3]
-                except Exception:
-                    base_dir = Path('.')
-                log_dir = base_dir / 'logs'
-                log_dir.mkdir(parents=True, exist_ok=True)
-                log_file = log_dir / 'orders_calculated.log'
-                fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
-                fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
-                fh._orders_calc = True
-                lg.addHandler(fh)
-                lg.setLevel(logging.INFO)
-                return lg
-
-            _ORDERS_CALC_LOG = _get_orders_calc_logger()
-            calc = {
-                "type": "ORDER_EXEC_CALC",
-                "flow": flow,
-                "order_id": order_id,
-                "user_type": user_type,
-                "user_id": user_id,
-                "symbol": symbol,
-                "side": order_type,
-                "final_exec_price": exec_price,
-                "final_order_qty": order_qty,
-                "single_margin_usd": float(margin_usd),
-                "commission_entry": commission_entry,
-                # Commission config debug (normalized and legacy aliases)
-                "commission_type": commission_type,
-                "commission_value_type": commission_value_type,
-                "commission_rate": commission_rate,
-                "commision_type": commission_type,
-                "commision_value_type": commission_value_type,
-                "commision": commission_rate,
-                "half_spread": (pricing_meta.get("pricing") or {}).get("half_spread"),
-                "contract_size": contract_size,
-            }
-            _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
-        except Exception:
-            pass
+        # (Removed temporary debug logging)
 
         order_fields: Dict[str, Any] = {
             "order_id": order_id,
