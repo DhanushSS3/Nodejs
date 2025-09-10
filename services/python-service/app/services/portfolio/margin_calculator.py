@@ -3,6 +3,7 @@ import logging
 from typing import Optional, Dict
 
 from app.services.portfolio.conversion_utils import convert_to_usd
+from app.services.groups.group_config_helper import get_group_config_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -75,4 +76,52 @@ async def compute_single_order_margin(
         return margin_usd
     except Exception as e:
         logger.error(f"compute_single_order_margin error for symbol={symbol}: {e}")
+        return None if strict else 0.0
+
+
+async def compute_single_order_margin_with_fallback(
+    *,
+    order_quantity: float,
+    execution_price: float,
+    symbol: str,
+    group: str,
+    leverage: float,
+    instrument_type: Optional[int] = None,
+    prices_cache: Optional[Dict] = None,
+    crypto_margin_factor: Optional[float] = None,
+    strict: bool = True,
+) -> Optional[float]:
+    """
+    Wrapper that ensures required group fields exist by fetching Redis first,
+    then falling back to DB via Node and caching into Redis.
+    Calls compute_single_order_margin() with resolved fields.
+    """
+    try:
+        cfg = await get_group_config_with_fallback(group, symbol)
+        # Prefer provided instrument_type if set, else fallback
+        inst_type = instrument_type if instrument_type is not None else (
+            int(cfg.get("type")) if cfg.get("type") is not None else 1
+        )
+        cs_val = None
+        if cfg.get("contract_size") is not None:
+            try:
+                cs_val = float(cfg.get("contract_size"))
+            except (TypeError, ValueError):
+                cs_val = None
+        profit_ccy = cfg.get("profit")
+
+        return await compute_single_order_margin(
+            contract_size=cs_val,
+            order_quantity=order_quantity,
+            execution_price=execution_price,
+            profit_currency=str(profit_ccy).upper() if profit_ccy else None,
+            symbol=symbol,
+            leverage=leverage,
+            instrument_type=inst_type,
+            prices_cache=prices_cache,
+            crypto_margin_factor=crypto_margin_factor,
+            strict=strict,
+        )
+    except Exception as e:
+        logger.error(f"compute_single_order_margin_with_fallback error for symbol={symbol}: {e}")
         return None if strict else 0.0

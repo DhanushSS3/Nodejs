@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Tuple, List
 
 from app.services.price_utils import get_execution_price
 from app.services.portfolio.margin_calculator import compute_single_order_margin
+from app.services.groups.group_config_helper import get_group_config_with_fallback
 from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.order_repository import (
     fetch_user_config,
@@ -145,15 +146,25 @@ class OrderExecutor:
 
         # 5) Fetch group data
         g = await fetch_group_data(symbol, group)
+        # Resolve required fields with Redis-first and DB fallback
+        gfb = await get_group_config_with_fallback(group, symbol)
+        # Prefer Redis group values; fallback to DB response
+        # contract_size
+        contract_size = None
+        raw_cs = g.get("contract_size") if g.get("contract_size") is not None else gfb.get("contract_size")
+        if raw_cs is not None:
+            try:
+                contract_size = float(raw_cs)
+            except (TypeError, ValueError):
+                contract_size = None
+        # profit currency
+        profit_currency = g.get("profit") or gfb.get("profit") or None
+        # instrument type
         try:
-            contract_size = float(g.get("contract_size")) if g.get("contract_size") is not None else None
-        except (TypeError, ValueError):
-            contract_size = None
-        profit_currency = (g.get("profit") or None)
-        try:
-            instrument_type = int(g.get("type")) if g.get("type") is not None else 1
+            instrument_type = int(g.get("type") if g.get("type") is not None else (gfb.get("type") if gfb.get("type") is not None else 1))
         except (TypeError, ValueError):
             instrument_type = 1
+        # crypto margin factor (DB may not have it; best-effort from Redis)
         try:
             crypto_margin_factor = float(g.get("crypto_margin_factor")) if g.get("crypto_margin_factor") is not None else None
         except (TypeError, ValueError):
@@ -320,6 +331,10 @@ class OrderExecutor:
         if flow == "provider":
             try:
                 # Build canonical order record with required fields
+                # Merge spread/spread_pip from fallback config when available
+                spread_val = g.get("spread") or gfb.get("spread")
+                spread_pip_val = g.get("spread_pip") or gfb.get("spread_pip")
+
                 canonical: Dict[str, Any] = {
                     # Order IDs
                     "order_id": order_id,
@@ -330,8 +345,8 @@ class OrderExecutor:
                     "leverage": leverage,
                     # Instrument / group data (best-effort from fetched group hash)
                     "type": instrument_type,
-                    "spread": g.get("spread") if isinstance(g, dict) else None,
-                    "spread_pip": g.get("spread_pip") if isinstance(g, dict) else None,
+                    "spread": spread_val if spread_val is not None else None,
+                    "spread_pip": spread_pip_val if spread_pip_val is not None else None,
                     "contract_size": contract_size if contract_size is not None else None,
                     "profit": profit_currency,
                     # Order metadata
