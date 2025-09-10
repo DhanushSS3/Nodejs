@@ -3,7 +3,7 @@ from typing import Dict, Any
 import logging
 
 from ..services.orders.order_execution_service import OrderExecutor
-from ..services.orders.service_provider_client import send_provider_order_direct_with_timeout
+from ..services.orders.service_provider_client import send_provider_order
 from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
@@ -44,7 +44,7 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
             # Otherwise server error
             raise HTTPException(status_code=500, detail=result)
 
-        # If provider flow, attempt direct send with 5s timeout. If it fails, auto-reject.
+        # If provider flow, send via persistent connection. If not connected within wait window, auto-reject.
         provider_payload = result.get("provider_send_payload")
         if provider_payload:
             order_id = str(provider_payload.get("order_id"))
@@ -52,9 +52,9 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
             user_type = str(provider_payload.get("user_type"))
             symbol = str(provider_payload.get("symbol") or "").upper()
             try:
-                ok, via = await send_provider_order_direct_with_timeout(provider_payload, timeout_sec=5.0)
+                ok, via = await send_provider_order(provider_payload)
             except Exception as e:
-                logger.error(f"Direct provider send exception for {order_id}: {e}")
+                logger.error(f"Persistent provider send exception for {order_id}: {e}")
                 ok, via = False, "error"
 
             if not ok:
@@ -118,7 +118,10 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
                     logger.warning(f"Failed to overwrite idempotency result for {order_id}: {idem_err}")
 
                 # Return error so Node will update SQL status and close_message
-                reason = "provider_send_timeout" if via == "timeout" else ("provider_unreachable" if via in ("none", "error") else f"provider_via_{via}_failed")
+                reason = (
+                    "provider_unreachable" if via in ("unavailable", "none", "error")
+                    else ("provider_send_timeout" if via == "timeout" else f"provider_via_{via}_failed")
+                )
                 raise HTTPException(status_code=503, detail={
                     "ok": False,
                     "reason": reason,

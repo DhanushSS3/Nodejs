@@ -191,7 +191,7 @@ class MarketListener:
                 if success:
                     logger.debug(f"[BATCH] ✅ Successfully processed {len(merged_market_prices)} unique symbols from {len(batch)} messages")
                 else:
-                    logger.error(f"[BATCH] ❌ Failed to process batch of {len(batch)} messages with {len(merged_market_prices)} symbols")
+                    logger.debug(f"[BATCH] ❌ Failed to process batch of {len(batch)} messages with {len(merged_market_prices)} symbols")
             else:
                 logger.warning(f"[BATCH] No market_prices found in batch of {len(batch)} messages")
             

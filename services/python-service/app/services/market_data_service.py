@@ -44,7 +44,7 @@ class MarketDataService:
                     valid_updates.append(processed_data)
             
             if not valid_updates:
-                logger.warning("No valid price updates to process")
+                logger.debug("No valid price updates to process")
                 return False
             
             # Process partial updates with Redis merge logic
@@ -171,7 +171,7 @@ class MarketDataService:
             # If both prices are provided, validate bid <= ask
             if 'bid' in update_fields and 'ask' in update_fields:
                 if update_fields['bid'] > update_fields['ask']:
-                    logger.info(f"Bid > Ask for {symbol}: bid={update_fields['bid']}, ask={update_fields['ask']}")
+                    logger.debug(f"Bid > Ask for {symbol}: bid={update_fields['bid']}, ask={update_fields['ask']}")
                     return None
             
             # If only one price is provided, we need to check against existing price in Redis

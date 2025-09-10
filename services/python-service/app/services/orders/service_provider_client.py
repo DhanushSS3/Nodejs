@@ -19,6 +19,8 @@ class ProviderSendError(Exception):
 UDS_PATH = os.getenv("EXEC_UDS_PATH", "/run/fx_exec/exec.sock")
 TCP_HOST = os.getenv("EXEC_TCP_HOST", "127.0.0.1")
 TCP_PORT = int(os.getenv("EXEC_TCP_PORT", "9001"))
+PROVIDER_SEND_MODE = os.getenv("PROVIDER_SEND_MODE", "persistent").strip().lower()  # 'persistent' | 'direct'
+PROVIDER_SEND_WAIT_SEC = float(os.getenv("PROVIDER_SEND_WAIT_SEC", "2.0"))
 CONNECT_TIMEOUT_SEC = float(os.getenv("EXEC_CONNECT_TIMEOUT", "2.0"))
 # Optional small window to read an immediate ACK without blocking long
 ACK_READ_TIMEOUT_SEC = float(os.getenv("EXEC_ACK_READ_TIMEOUT", "0.3"))
@@ -100,7 +102,7 @@ async def _try_send_tcp(payload: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "tcp"
 
     try:
-        await _send_over_stream(reader, writer, payload)
+        await _send_over_stream(reader, writer, payload, transport="TCP")
         return True, "tcp"
     except Exception as e:
         logger.error("TCP send failed: %s", e)
@@ -119,25 +121,20 @@ async def send_provider_order(payload: Dict[str, Any]) -> Tuple[bool, str]:
     for both send and receive). Fallback: direct UDS/TCP short connection.
     Returns (ok, sent_via) where sent_via is one of 'persistent', 'uds', 'tcp', 'none', or 'error'.
     """
-    # First try persistent manager
+    # Default: persistent manager with automatic reconnect
     try:
         mgr = get_provider_connection_manager()
+        # Ensure connection is up; if not, wait briefly and then fail fast
+        if not mgr.is_connected():
+            ok_conn = await mgr.wait_until_connected(PROVIDER_SEND_WAIT_SEC)
+            if not ok_conn:
+                return False, "unavailable"
         await mgr.send(payload)
         return True, "persistent"
     except Exception as e:
-        logger.error("provider manager enqueue failed, falling back: %s", e)
-        # Fallback path: direct short-lived connection
-        try:
-            ok, via = await _try_send_uds(payload)
-            if ok:
-                return True, via
-            ok2, via2 = await _try_send_tcp(payload)
-            if ok2:
-                return True, via2
-            return False, "none"
-        except Exception as e2:
-            logger.error("send_provider_order fallback error: %s", e2)
-            return False, "error"
+        logger.error("provider manager enqueue failed (persistent mode): %s", e)
+        # In persistent mode, do NOT fallback to direct; report unavailable
+        return False, "unavailable"
 
 
 async def send_provider_order_direct_with_timeout(payload: Dict[str, Any], timeout_sec: float = 5.0) -> Tuple[bool, str]:

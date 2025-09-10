@@ -416,6 +416,19 @@ class ProviderConnectionManager:
         """Queue an order payload to be sent on the persistent connection."""
         await self._send_queue.put(dict(payload))
 
+    # ---- Connection helpers ----
+    def is_connected(self) -> bool:
+        """Return True if provider transport is currently connected."""
+        return self._connected.is_set()
+
+    async def wait_until_connected(self, timeout_sec: float) -> bool:
+        """Wait up to timeout for connection. Returns True if connected, else False."""
+        try:
+            await asyncio.wait_for(self._connected.wait(), timeout=timeout_sec)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
 
 # Singleton accessor
 _manager: Optional[ProviderConnectionManager] = None
