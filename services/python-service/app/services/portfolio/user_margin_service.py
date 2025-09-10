@@ -2,6 +2,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, List, Tuple, Set
 
+import asyncio
 from app.config.redis_config import redis_cluster
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.symbol_margin_aggregator import compute_symbol_margin
@@ -263,19 +264,59 @@ async def _gather_all(tasks: List) -> List:
 
 
 async def _fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
-    key = f"user:{{{user_type}:{user_id}}}:config"
-    try:
-        data = await redis_cluster.hgetall(key)
-        if not data:
-            # Backward compatible read from legacy non-hash-tagged key
-            legacy_key = f"user:{user_type}:{user_id}:config"
+    tagged_key = f"user:{{{user_type}:{user_id}}}:config"
+    legacy_key = f"user:{user_type}:{user_id}:config"
+    data: Dict[str, Any] = {}
+
+    # Try tagged first; on empty or failure, try legacy; small retry once.
+    for attempt in range(2):
+        # Attempt tagged read
+        try:
+            data = await redis_cluster.hgetall(tagged_key)
+            if data:
+                break
+        except Exception as e:
+            logger.warning(
+                "_fetch_user_config tagged read failed for %s:%s (attempt %s): %s",
+                user_type,
+                user_id,
+                attempt + 1,
+                e,
+            )
+
+        # Attempt legacy read when tagged is missing or errored
+        try:
+            legacy = await redis_cluster.hgetall(legacy_key)
+        except Exception as le:
+            logger.error(
+                "_fetch_user_config legacy read failed for %s:%s (attempt %s): %s",
+                user_type,
+                user_id,
+                attempt + 1,
+                le,
+            )
+            legacy = {}
+
+        if legacy:
+            data = legacy
+            # Best-effort backfill into tagged key to stabilize future reads
             try:
-                data = await redis_cluster.hgetall(legacy_key)
-            except Exception:
-                data = {}
-    except Exception as e:
-        logger.error(f"_fetch_user_config error for {user_type}:{user_id}: {e}")
-        data = {}
+                await redis_cluster.hset(tagged_key, mapping=legacy)
+            except Exception as be:
+                logger.warning(
+                    "_fetch_user_config backfill to tagged failed for %s:%s: %s",
+                    user_type,
+                    user_id,
+                    be,
+                )
+            break
+
+        # Short delay before next attempt
+        try:
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+
     group = data.get("group") or "Standard"
     lev = _safe_float(data.get("leverage")) or 0.0
     return {"group": group, "leverage": lev}
