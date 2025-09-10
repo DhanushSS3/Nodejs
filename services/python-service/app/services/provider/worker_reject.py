@@ -3,7 +3,7 @@ import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import orjson
 import aio_pika
@@ -102,22 +102,29 @@ async def _update_redis_for_reject(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def _recompute_used_margin_excluding(order_id: str, user_type: str, user_id: str) -> Optional[float]:
+async def _recompute_used_margin_excluding(order_id: str, user_type: str, user_id: str) -> Tuple[Optional[float], Optional[float]]:
+    """Recompute both executed and total margins excluding the rejected order.
+    Returns (executed_margin, total_margin)
+    """
     try:
         orders = await fetch_user_orders(user_type, user_id)
         # Exclude this order from the list before recompute
         filtered = [od for od in orders if str(od.get("order_id")) != str(order_id)]
-        total_used, _ = await compute_user_total_margin(
+        executed_margin, total_margin, _ = await compute_user_total_margin(
             user_type=user_type,
             user_id=user_id,
             orders=filtered,
             prices_cache=None,
-            strict=True,
+            strict=False,
+            include_queued=True,
         )
-        return float(total_used) if total_used is not None else None
+        return (
+            float(executed_margin) if executed_margin is not None else None,
+            float(total_margin) if total_margin is not None else None
+        )
     except Exception:
         logger.exception("_recompute_used_margin_excluding failed")
-        return None
+        return None, None
 
 
 class RejectWorker:
@@ -180,14 +187,21 @@ class RejectWorker:
                 logger.debug("[REJECT:update_redis_done] ctx=%s", ctx)
 
                 # Step 2: recompute used margin excluding this order
-                new_used = await _recompute_used_margin_excluding(order_id, user_type, user_id)
-                if new_used is not None:
-                    portfolio_key = f"user_portfolio:{{{user_type}:{user_id}}}"
-                    await redis_cluster.hset(portfolio_key, mapping={"used_margin": str(float(new_used))})
+                new_executed, new_total = await _recompute_used_margin_excluding(order_id, user_type, user_id)
+                portfolio_key = f"user_portfolio:{{{user_type}:{user_id}}}"
+                margin_updates = {}
+                if new_executed is not None:
+                    margin_updates["used_margin_executed"] = str(float(new_executed))
+                    margin_updates["used_margin"] = str(float(new_executed))  # Legacy field
+                if new_total is not None:
+                    margin_updates["used_margin_all"] = str(float(new_total))
+                if margin_updates:
+                    await redis_cluster.hset(portfolio_key, mapping=margin_updates)
                 logger.info(
-                    "[REJECT:updated] order_id=%s new_used_margin=%s",
+                    "[REJECT:updated] order_id=%s new_executed_margin=%s new_total_margin=%s",
                     order_id,
-                    (str(float(new_used)) if new_used is not None else None),
+                    (str(float(new_executed)) if new_executed is not None else None),
+                    (str(float(new_total)) if new_total is not None else None),
                 )
 
                 # Step 3: if no other open orders for this symbol remain, remove from symbol_holders
@@ -220,7 +234,8 @@ class RejectWorker:
                             "exec_id": er.get("exec_id") or (er.get("raw") or {}).get("17"),
                             "reason": er.get("reason") or (er.get("raw") or {}).get("58"),
                         },
-                        "new_used_margin": (float(new_used) if new_used is not None else None),
+                        "new_executed_margin": (float(new_executed) if new_executed is not None else None),
+                        "new_total_margin": (float(new_total) if new_total is not None else None),
                     }
                     _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
                 except Exception:

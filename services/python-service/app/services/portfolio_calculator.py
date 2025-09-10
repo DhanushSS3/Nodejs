@@ -19,6 +19,7 @@ from ..config.redis_config import redis_cluster, redis_pubsub_client
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.symbol_margin_aggregator import compute_symbol_margin
 from app.services.portfolio.conversion_utils import convert_to_usd as portfolio_convert_to_usd
+from app.services.portfolio.user_margin_service import compute_user_total_margin
 
 # Env-driven strict mode
 STRICT_MODE = os.getenv("PORTFOLIO_STRICT_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -497,8 +498,36 @@ class PortfolioCalculatorListener:
         used_margin = 0.0
         skipped = 0
         degraded_flags: Set[str] = set()
-        # Accumulate per-order margins to compute hedged symbol margin later
-        orders_by_symbol: Dict[str, List[Dict]] = {}
+        
+        # Determine if there are queued orders; if so we will prefer used_margin_all from cache
+        has_queued = False
+        for _od in (orders or []):
+            try:
+                if (str((_od.get('order_status') or '')).upper() == 'QUEUED') or (str((_od.get('execution_status') or '')).upper() == 'QUEUED'):
+                    has_queued = True
+                    break
+            except Exception:
+                pass
+        
+        # Fetch cached margin fields from user_portfolio
+        cached_used_executed: Optional[float] = None
+        cached_used_all: Optional[float] = None
+        try:
+            if user_ctx and ':' in user_ctx:
+                _ut, _uid = user_ctx.split(':', 1)
+                pf_key = f"user_portfolio:{{{_ut}:{_uid}}}"
+                pf = await redis_cluster.hgetall(pf_key)
+                if pf:
+                    try:
+                        cached_used_executed = float(pf.get('used_margin_executed')) if pf.get('used_margin_executed') is not None else None
+                    except (TypeError, ValueError):
+                        cached_used_executed = None
+                    try:
+                        cached_used_all = float(pf.get('used_margin_all')) if pf.get('used_margin_all') is not None else None
+                    except (TypeError, ValueError):
+                        cached_used_all = None
+        except Exception as e:
+            self.logger.error(f"failed_to_fetch_cached_margins user={user_ctx} err={e}")
 
         for order in orders:
             try:
@@ -565,48 +594,38 @@ class PortfolioCalculatorListener:
                     continue
                 total_pl_usd += pnl_usd
 
-                # Compute per-order margin in USD using helper (ask price used)
-                try:
-                    instrument_type = int((g.get('type') or 1))
-                except (TypeError, ValueError):
-                    instrument_type = 1
-                try:
-                    crypto_margin_factor = float(g.get('crypto_margin_factor')) if (g.get('crypto_margin_factor') is not None) else None
-                except (TypeError, ValueError):
-                    crypto_margin_factor = None
-
-                margin_usd = await compute_single_order_margin(
-                    contract_size=contract_size or 0.0,
-                    order_quantity=quantity,
-                    execution_price=market_ask,
-                    profit_currency=(profit_currency.upper() if profit_currency else None),
-                    symbol=symbol,
-                    leverage=leverage,
-                    instrument_type=instrument_type,
-                    prices_cache=prices,
-                    crypto_margin_factor=crypto_margin_factor,
-                    strict=self.strict_mode,
-                )
-
-                if margin_usd is None:
-                    skipped += 1
-                    degraded_flags.update({'orders_skipped', 'missing_conversion'})
-                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=margin_conversion_failed")
-                    continue
-
-                orders_by_symbol.setdefault(symbol, []).append({
-                    'order_type': order_type,
-                    'order_quantity': quantity,
-                    'order_margin_usd': float(margin_usd),
-                })
+                # Skip per-order margin computation on market ticks; use cached portfolio margins instead
+                # PnL is still computed above; margin values will be sourced from cached fields below
+                pass
 
             except Exception as e:
                 self.logger.error(f"Error calculating order PnL: {order}: {e}")
                 continue
 
-        # Aggregate hedged margin per symbol
-        for sym, od_list in orders_by_symbol.items():
-            used_margin += compute_symbol_margin(od_list)
+        # Choose used_margin from cached portfolio fields
+        # Prefer used_margin_all when there are queued orders; otherwise use executed only.
+        chosen_used: Optional[float] = None
+        if has_queued and (cached_used_all is not None):
+            chosen_used = float(cached_used_all)
+        elif cached_used_executed is not None:
+            chosen_used = float(cached_used_executed)
+        
+        # Fallback: compute executed and (optionally) total if cache missing
+        if chosen_used is None:
+            try:
+                exec_margin, total_margin, _ = await compute_user_total_margin(
+                    user_type=user_ctx.split(':', 1)[0] if user_ctx and ':' in user_ctx else 'live',
+                    user_id=user_ctx.split(':', 1)[1] if user_ctx and ':' in user_ctx else '0',
+                    orders=orders,
+                    prices_cache=prices,
+                    strict=False,
+                    include_queued=True,
+                )
+                chosen_used = float(total_margin) if has_queued and (total_margin is not None) else (float(exec_margin) if exec_margin is not None else 0.0)
+            except Exception as e:
+                self.logger.error(f"fallback_margin_compute_failed user={user_ctx} err={e}")
+                chosen_used = 0.0
+        used_margin = float(chosen_used or 0.0)
 
         equity = (balance or 0.0) + total_pl_usd
         free_margin = equity - used_margin
@@ -669,9 +688,75 @@ class PortfolioCalculatorListener:
     async def _update_user_portfolio(self, user_type: str, user_id: str, portfolio: dict):
         """
         Write portfolio metrics to Redis hash user_portfolio:{{user_type:user_id}}
+        Optimization:
+        - Do not recompute margins on every tick.
+        - Use cached used_margin_executed/used_margin_all when present.
+        - Only compute margins if missing, or to backfill when queued orders exist.
         """
         redis_key = f"user_portfolio:{{{user_type}:{user_id}}}"
         try:
+            # Fetch orders and detect if there are queued orders
+            orders = await self._fetch_user_orders(user_type, user_id)
+            has_queued = False
+            for _od in (orders or []):
+                try:
+                    if (str((_od.get('order_status') or '')).upper() == 'QUEUED') or (str((_od.get('execution_status') or '')).upper() == 'QUEUED'):
+                        has_queued = True
+                        break
+                except Exception:
+                    pass
+
+            # Read existing portfolio margin fields
+            existing_pf = await redis_cluster.hgetall(redis_key)
+            existing_exe = None
+            existing_all = None
+            try:
+                if existing_pf and (existing_pf.get('used_margin_executed') is not None):
+                    existing_exe = float(existing_pf.get('used_margin_executed'))
+            except (TypeError, ValueError):
+                existing_exe = None
+            try:
+                if existing_pf and (existing_pf.get('used_margin_all') is not None):
+                    existing_all = float(existing_pf.get('used_margin_all'))
+            except (TypeError, ValueError):
+                existing_all = None
+
+            executed_margin = existing_exe
+            total_margin = existing_all
+
+            # Compute only if necessary
+            if has_queued:
+                if (executed_margin is None) or (total_margin is None):
+                    executed_margin, total_margin, _ = await compute_user_total_margin(
+                        user_type=user_type,
+                        user_id=user_id,
+                        orders=orders,
+                        prices_cache=None,
+                        strict=False,
+                        include_queued=True,
+                    )
+            else:
+                if executed_margin is None:
+                    executed_margin, _, _ = await compute_user_total_margin(
+                        user_type=user_type,
+                        user_id=user_id,
+                        orders=orders,
+                        prices_cache=None,
+                        strict=False,
+                        include_queued=False,
+                    )
+                total_margin = executed_margin if executed_margin is not None else total_margin
+
+            # Add margin fields to portfolio (as strings for Redis)
+            if executed_margin is not None:
+                portfolio['used_margin_executed'] = str(float(executed_margin))
+            if total_margin is not None:
+                portfolio['used_margin_all'] = str(float(total_margin))
+
+            # Legacy field reflects the margin used for current calculations view
+            chosen_used = (float(total_margin) if (has_queued and (total_margin is not None)) else (float(executed_margin) if executed_margin is not None else 0.0))
+            portfolio['used_margin'] = str(round(chosen_used, 2))
+
             await redis_cluster.hset(redis_key, mapping=portfolio)
             self.logger.debug(f"Updated portfolio for {redis_key}: {portfolio}")
         except Exception as e:

@@ -225,7 +225,8 @@ async def place_order_atomic_or_fallback(
     symbol: str,
     order_fields: Dict[str, Any],
     single_order_margin_usd: Optional[float],
-    recomputed_user_used_margin_usd: Optional[float],
+    recomputed_user_used_margin_executed: Optional[float],
+    recomputed_user_used_margin_all: Optional[float],
 ) -> Tuple[bool, str]:
     """
     Try to place order atomically via Lua. If cluster raises CROSSSLOT, fallback to non-atomic path.
@@ -252,7 +253,8 @@ async def place_order_atomic_or_fallback(
             symbol,
             order_fields_json,
             "" if single_order_margin_usd is None else str(float(single_order_margin_usd)),
-            "" if recomputed_user_used_margin_usd is None else str(float(recomputed_user_used_margin_usd)),
+            "" if recomputed_user_used_margin_executed is None else str(float(recomputed_user_used_margin_executed)),
+            "" if recomputed_user_used_margin_all is None else str(float(recomputed_user_used_margin_all)),
         ]
         raw = await redis_cluster.eval(lua_src, len(keys), *keys, *args)
         # Script returns JSON string
@@ -317,7 +319,8 @@ async def place_order_atomic_or_fallback(
                 order_id=order_id,
                 symbol=symbol,
                 order_fields=order_fields,
-                recomputed_user_used_margin_usd=recomputed_user_used_margin_usd,
+                recomputed_user_used_margin_executed=recomputed_user_used_margin_executed,
+                recomputed_user_used_margin_all=recomputed_user_used_margin_all,
             )
         return False, reason
     except ResponseError as re:
@@ -330,7 +333,8 @@ async def place_order_atomic_or_fallback(
                 order_id=order_id,
                 symbol=symbol,
                 order_fields=order_fields,
-                recomputed_user_used_margin_usd=recomputed_user_used_margin_usd,
+                recomputed_user_used_margin_executed=recomputed_user_used_margin_executed,
+                recomputed_user_used_margin_all=recomputed_user_used_margin_all,
             )
         logger.error("EVALSHA ResponseError: %s", re)
         return False, "evalsha_error"
@@ -346,7 +350,8 @@ async def _place_order_non_atomic(
     order_id: str,
     symbol: str,
     order_fields: Dict[str, Any],
-    recomputed_user_used_margin_usd: Optional[float],
+    recomputed_user_used_margin_executed: Optional[float],
+    recomputed_user_used_margin_all: Optional[float],
 ) -> Tuple[bool, str]:
     """Best-effort non-atomic placement when Lua cannot be used on cluster."""
     try:
@@ -368,9 +373,14 @@ async def _place_order_non_atomic(
         # Index the order id
         index_key = f"user_orders_index:{{{hash_tag}}}"
         await redis_cluster.sadd(index_key, order_id)
-        # Update used margin if provided
-        if recomputed_user_used_margin_usd is not None:
-            await redis_cluster.hset(portfolio_key, mapping={"used_margin": str(float(recomputed_user_used_margin_usd))})
+        # Update both margin fields if provided
+        margin_updates = {}
+        if recomputed_user_used_margin_executed is not None:
+            margin_updates["used_margin_executed"] = str(float(recomputed_user_used_margin_executed))
+        if recomputed_user_used_margin_all is not None:
+            margin_updates["used_margin_all"] = str(float(recomputed_user_used_margin_all))
+        if margin_updates:
+            await redis_cluster.hset(portfolio_key, mapping=margin_updates)
         return True, ""
     except Exception as e:
         logger.error("_place_order_non_atomic error: %s", e)

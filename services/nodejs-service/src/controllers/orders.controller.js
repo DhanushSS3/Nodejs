@@ -187,7 +187,9 @@ async function placeInstantOrder(req, res) {
     const exec_price = result.exec_price;
     const margin_usd = result.margin_usd;
     const contract_value = result.contract_value;
-    const used_margin_usd = result.used_margin_usd;
+    // New fields from Python service; keep fallback for older responses
+    const used_margin_executed = (result.used_margin_executed !== undefined) ? result.used_margin_executed : result.used_margin_usd;
+    const used_margin_all = result.used_margin_all;
 
     // Post-success DB update
     const updateFields = {};
@@ -266,12 +268,12 @@ async function placeInstantOrder(req, res) {
 
     // Persist user's overall used margin only for local execution here.
     // For provider flow, the async worker (on provider confirmation) will persist to SQL instead.
-    if (flow === 'local' && typeof used_margin_usd === 'number') {
+    if (flow === 'local' && typeof used_margin_executed === 'number') {
       try {
         await updateUserUsedMargin({
           userType: parsed.user_type,
           userId: parseInt(parsed.user_id),
-          usedMargin: used_margin_usd,
+          usedMargin: used_margin_executed,
         });
       } catch (mErr) {
         logger.error('Failed to update user used margin', {

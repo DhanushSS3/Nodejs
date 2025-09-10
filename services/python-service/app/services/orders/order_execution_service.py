@@ -194,23 +194,28 @@ class OrderExecutor:
 
         # 8) Free margin / balance check
         portfolio = await fetch_user_portfolio(user_type, user_id)
-        fm = None
+        
+        # Get current used_margin_all (includes queued orders)
+        current_used_margin_all = 0.0
         try:
-            if portfolio and portfolio.get("free_margin") is not None:
-                fm = float(portfolio.get("free_margin"))
+            if portfolio and portfolio.get("used_margin_all") is not None:
+                current_used_margin_all = float(portfolio.get("used_margin_all"))
         except (TypeError, ValueError):
-            fm = None
-        balance = cfg.get("wallet_balance")
-
-        # Decide compare source
-        compare_value = fm if (fm is not None) else (float(balance) if balance is not None else 0.0)
-        if compare_value < float(margin_usd):
+            current_used_margin_all = 0.0
+        
+        balance = float(cfg.get("wallet_balance") or 0.0)
+        
+        # Calculate free margin considering all orders (including queued)
+        free_margin_with_queued = balance - current_used_margin_all
+        
+        if free_margin_with_queued < float(margin_usd):
             result = {
                 "ok": False,
                 "reason": "insufficient_margin",
                 "required_margin": float(margin_usd),
-                "available": float(compare_value),
-                "source": "free_margin" if fm is not None else "wallet_balance",
+                "available": float(free_margin_with_queued),
+                "current_used_margin_all": float(current_used_margin_all),
+                "balance": float(balance),
             }
             if idem_key:
                 await save_idempotency_result(idem_key, result)
@@ -223,16 +228,22 @@ class OrderExecutor:
             "symbol": symbol,
             "order_type": order_type,
             "order_quantity": order_qty,
+            "order_status": "QUEUED" if flow == "provider" else "OPEN",
+            "execution_status": "QUEUED" if flow == "provider" else "EXECUTED",
         }
         orders_for_calc: List[Dict[str, Any]] = existing_orders + [new_order_for_calc]
-        total_used_margin, meta = await compute_user_total_margin(
+        
+        # Calculate both executed and total margins
+        executed_margin, total_margin_with_queued, meta = await compute_user_total_margin(
             user_type=user_type,
             user_id=user_id,
             orders=orders_for_calc,
             prices_cache=None,
             strict=True,
+            include_queued=True,
         )
-        if total_used_margin is None:
+        
+        if total_margin_with_queued is None:
             result = {"ok": False, "reason": "overall_margin_failed", "meta": meta}
             if idem_key:
                 await save_idempotency_result(idem_key, result)
@@ -296,7 +307,8 @@ class OrderExecutor:
             symbol=symbol,
             order_fields=order_fields,
             single_order_margin_usd=float(margin_usd),
-            recomputed_user_used_margin_usd=float(total_used_margin),
+            recomputed_user_used_margin_executed=float(executed_margin),
+            recomputed_user_used_margin_all=float(total_margin_with_queued),
         )
         if not ok_place:
             result = {"ok": False, "reason": f"place_order_failed:{reason}"}
@@ -386,7 +398,8 @@ class OrderExecutor:
             "flow": flow,
             "exec_price": exec_price,
             "margin_usd": float(margin_usd),
-            "used_margin_usd": float(total_used_margin),
+            "used_margin_executed": float(executed_margin),
+            "used_margin_all": float(total_margin_with_queued),
             "contract_value": float(contract_value) if contract_value is not None else None,
         }
         if provider_send_payload:

@@ -141,7 +141,7 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
 async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Recompute single order margin and user total used margin.
-    Returns dict with keys: single_margin_usd, total_used_margin_usd, final_exec_price, final_order_qty
+    Returns dict with keys: single_margin_usd, used_margin_executed, used_margin_all, final_exec_price, final_order_qty
     """
     symbol = str(payload.get("symbol") or "").upper()
     leverage = float(payload.get("leverage") or 0.0)
@@ -280,16 +280,18 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     except Exception:
         logger.exception("[OPEN:overlay] failed to overlay executed order into orders list")
 
-    total_used, meta = await compute_user_total_margin(
+    executed_m, total_m, meta = await compute_user_total_margin(
         user_type=user_type,
         user_id=user_id,
         orders=orders,
         prices_cache=None,
         strict=True,
+        include_queued=True,
     )
     return {
         "single_margin_usd": single_margin,
-        "total_used_margin_usd": float(total_used) if total_used is not None else None,
+        "used_margin_executed": float(executed_m) if executed_m is not None else None,
+        "used_margin_all": float(total_m) if total_m is not None else None,
         "final_exec_price": final_price,
         "final_order_qty": final_qty,
         "half_spread": half_spread,
@@ -420,18 +422,34 @@ class OpenWorker:
                 if upd_map:
                     pipe.hset(ctx["order_key"], mapping=upd_map)
                     pipe.hset(ctx["order_data_key"], mapping=upd_map)
-                # Update portfolio used_margin with recomputed total, if available
-                if margins.get("total_used_margin_usd") is not None:
-                    portfolio_key = f"user_portfolio:{{{payload.get('user_type')}:{payload.get('user_id')}}}"
-                    pipe.hset(portfolio_key, mapping={"used_margin": str(float(margins["total_used_margin_usd"]))})
+                # Update portfolio used_margin with recomputed totals (always recalc post-confirmation)
+                portfolio_key = f"user_portfolio:{{{payload.get('user_type')}:{payload.get('user_id')}}}"
+                # Recalculate both margin fields
+                from app.services.portfolio.user_margin_service import compute_user_total_margin
+                orders = await fetch_user_orders(payload.get('user_type'), payload.get('user_id'))
+                executed_margin, total_margin, _ = await compute_user_total_margin(
+                    user_type=payload.get('user_type'),
+                    user_id=str(payload.get('user_id')),
+                    orders=orders,
+                    prices_cache=None,
+                    strict=False,
+                    include_queued=True,
+                )
+                margin_updates = {
+                    "used_margin_executed": str(float(executed_margin)) if executed_margin is not None else "0.0",
+                    "used_margin_all": str(float(total_margin)) if total_margin is not None else "0.0",
+                    "used_margin": str(float(executed_margin)) if executed_margin is not None else "0.0",  # Legacy field now points to executed only
+                }
+                pipe.hset(portfolio_key, mapping=margin_updates)
                 await pipe.execute()
                 logger.info(
-                    "[OPEN:updated] order_id=%s price=%s qty=%s margin=%s used_margin=%s",
+                    "[OPEN:updated] order_id=%s price=%s qty=%s margin=%s used_margin_executed=%s used_margin_all=%s",
                     ctx.get("order_id"),
                     upd_map.get("order_price"),
                     upd_map.get("order_quantity"),
                     upd_map.get("margin"),
-                    (str(float(margins["total_used_margin_usd"])) if margins.get("total_used_margin_usd") is not None else None),
+                    (str(float(margins["used_margin_executed"])) if margins.get("used_margin_executed") is not None else None),
+                    (str(float(margins["used_margin_all"])) if margins.get("used_margin_all") is not None else None),
                 )
 
                 # Log calculated order data to dedicated file
@@ -471,7 +489,11 @@ class OpenWorker:
                         "order_price": margins.get("final_exec_price") or payload.get("order_price"),
                         # Persist per-order executed margin in SQL via DB consumer
                         "margin": margins.get("single_margin_usd"),
-                        "used_margin_usd": margins.get("total_used_margin_usd"),
+                        # Backward compatibility: used_margin_usd mirrors executed margin
+                        "used_margin_usd": margins.get("used_margin_executed"),
+                        # New fields
+                        "used_margin_executed": margins.get("used_margin_executed"),
+                        "used_margin_all": margins.get("used_margin_all"),
                         "provider": {
                             "exec_id": (payload.get("execution_report") or {}).get("exec_id"),
                             "avgpx": (payload.get("execution_report") or {}).get("avgpx") or (payload.get("execution_report") or {}).get("raw", {}).get("6"),

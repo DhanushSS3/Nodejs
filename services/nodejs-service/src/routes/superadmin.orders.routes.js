@@ -158,4 +158,87 @@ router.post('/ensure/symbol-holder', ctrl.ensureSymbolHolder);
  */
 router.get('/portfolio', ctrl.getUserPortfolio);
 
+/**
+ * @swagger
+ * /api/superadmin/orders/reject-queued:
+ *   post:
+ *     summary: Manually reject a queued order and release reserved margin
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [order_id, user_type, user_id]
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *               user_id:
+ *                 type: string
+ *               reason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Order rejected and margin released
+ */
+router.post('/reject-queued', ctrl.rejectQueued);
+
+/**
+ * @swagger
+ * /api/superadmin/orders/queued:
+ *   get:
+ *     summary: List all queued orders for a user
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: user_type
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *       - in: query
+ *         name: user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Queued orders retrieved
+ */
+router.get('/queued', ctrl.getQueuedOrders);
+
+/**
+ * @swagger
+ * /api/superadmin/orders/margin-status:
+ *   get:
+ *     summary: Get executed vs total margin status for a user
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: user_type
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *       - in: query
+ *         name: user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Margin status retrieved
+ */
+router.get('/margin-status', ctrl.getMarginStatus);
+
 module.exports = router;

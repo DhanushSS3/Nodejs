@@ -17,22 +17,34 @@ async def compute_user_total_margin(
     orders: Optional[List[Dict[str, Any]]] = None,
     prices_cache: Optional[Dict[str, Dict[str, float]]] = None,
     strict: bool = True,
-) -> Tuple[Optional[float], Dict[str, Any]]:
+    include_queued: bool = True,
+) -> Tuple[Optional[float], Optional[float], Dict[str, Any]]:
     """
     Orchestrate margin computation for a user's open orders.
 
-    Returns (total_user_margin_usd, meta)
+    Args:
+        include_queued: If True, includes queued orders in calculation
+
+    Returns (executed_margin_usd, total_margin_usd, meta)
+    - executed_margin_usd: Margin for executed orders only
+    - total_margin_usd: Margin for all orders (executed + queued if include_queued=True)
     meta includes:
-      - per_order: {order_id: {'margin_usd': Optional[float], 'reason': Optional[str]}}
+      - per_order: {order_id: {'margin_usd': Optional[float], 'reason': Optional[str], 'status': str}}
       - per_symbol: {symbol: symbol_margin}
+      - per_symbol_executed: {symbol: symbol_margin for executed only}
       - skipped_orders_count: int
       - fatal: bool
+      - queued_orders_count: int
+      - executed_orders_count: int
     """
     meta: Dict[str, Any] = {
         "per_order": {},
         "per_symbol": {},
+        "per_symbol_executed": {},
         "skipped_orders_count": 0,
         "fatal": False,
+        "queued_orders_count": 0,
+        "executed_orders_count": 0,
     }
 
     # Fetch orders if not provided
@@ -40,7 +52,7 @@ async def compute_user_total_margin(
 
     # Fast-path: no orders => zero margin
     if not user_orders:
-        return 0.0, meta
+        return 0.0, 0.0, meta
 
     # Fetch user config (group + leverage)
     user_cfg = await _fetch_user_config(user_type, user_id)
@@ -52,9 +64,9 @@ async def compute_user_total_margin(
         # Mark all orders as skipped due to leverage
         for od in user_orders:
             oid = od.get("order_id") or "unknown"
-            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_or_invalid_leverage"}
+            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_or_invalid_leverage", "status": "skipped"}
         meta["skipped_orders_count"] = len(user_orders)
-        return None, meta
+        return None, None, meta
 
     # Build symbol set and fetch group data
     symbols: List[str] = sorted({str(od.get("symbol")) for od in user_orders if od.get("symbol")})
@@ -88,18 +100,31 @@ async def compute_user_total_margin(
 
     # Compute per-order margins
     orders_by_symbol: Dict[str, List[Dict[str, Any]]] = {}
+    orders_by_symbol_executed: Dict[str, List[Dict[str, Any]]] = {}
 
     for od in user_orders:
         oid = od.get("order_id") or "unknown"
         sym = od.get("symbol")
+        
+        # Determine order status (QUEUED vs OPEN/EXECUTED)
+        order_status = od.get("order_status", "").upper()
+        execution_status = od.get("execution_status", "").upper()
+        is_queued = order_status == "QUEUED" or execution_status == "QUEUED"
+        
         if not sym:
-            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_symbol"}
+            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_symbol", "status": "skipped"}
             meta["skipped_orders_count"] += 1
             continue
 
+        # Skip queued orders if not including them
+        if is_queued and not include_queued:
+            meta["per_order"][oid] = {"margin_usd": None, "reason": "queued_excluded", "status": "queued"}
+            meta["queued_orders_count"] += 1
+            continue
+        
         g = group_data.get(sym)
         if not g:
-            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_group_data"}
+            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_group_data", "status": "skipped"}
             meta["skipped_orders_count"] += 1
             continue
 
@@ -110,14 +135,14 @@ async def compute_user_total_margin(
 
         if strict and (contract_size is None or not profit_currency):
             reason = "missing_contract_size" if contract_size is None else "missing_profit_currency"
-            meta["per_order"][oid] = {"margin_usd": None, "reason": reason}
+            meta["per_order"][oid] = {"margin_usd": None, "reason": reason, "status": "skipped"}
             meta["skipped_orders_count"] += 1
             continue
 
         # Execution price: use ask for conservative margin regardless of side
         sym_price = prices_cache_local.get(sym)
         if not sym_price or _safe_float(sym_price.get("ask")) in (None, 0.0):
-            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_price"}
+            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_price", "status": "skipped"}
             meta["skipped_orders_count"] += 1
             continue
         execution_price = float(sym_price["ask"])  # conservative
@@ -139,25 +164,44 @@ async def compute_user_total_margin(
         )
 
         if margin_usd is None:
-            meta["per_order"][oid] = {"margin_usd": None, "reason": "conversion_failed_or_invalid_inputs"}
+            meta["per_order"][oid] = {"margin_usd": None, "reason": "conversion_failed_or_invalid_inputs", "status": "skipped"}
             meta["skipped_orders_count"] += 1
             continue
 
-        meta["per_order"][oid] = {"margin_usd": float(margin_usd), "reason": None}
-        orders_by_symbol.setdefault(sym, []).append({
+        # Track order status
+        status = "queued" if is_queued else "executed"
+        meta["per_order"][oid] = {"margin_usd": float(margin_usd), "reason": None, "status": status}
+        
+        # Add to appropriate collections
+        order_entry = {
             "order_type": order_type,
             "order_quantity": qty,
             "order_margin_usd": float(margin_usd),
-        })
+        }
+        
+        orders_by_symbol.setdefault(sym, []).append(order_entry)
+        
+        if not is_queued:
+            orders_by_symbol_executed.setdefault(sym, []).append(order_entry)
+            meta["executed_orders_count"] += 1
+        else:
+            meta["queued_orders_count"] += 1
 
-    # Aggregate per-symbol hedged margins
+    # Aggregate per-symbol hedged margins for all orders
     total_margin = 0.0
     for sym, od_list in orders_by_symbol.items():
         sym_margin = compute_symbol_margin(od_list)
         meta["per_symbol"][sym] = float(sym_margin)
         total_margin += float(sym_margin)
+    
+    # Aggregate per-symbol hedged margins for executed orders only
+    executed_margin = 0.0
+    for sym, od_list in orders_by_symbol_executed.items():
+        sym_margin = compute_symbol_margin(od_list)
+        meta["per_symbol_executed"][sym] = float(sym_margin)
+        executed_margin += float(sym_margin)
 
-    return float(total_margin), meta
+    return float(executed_margin), float(total_margin), meta
 
 
 # Internal helpers

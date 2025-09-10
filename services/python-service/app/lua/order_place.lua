@@ -11,7 +11,8 @@
 -- 4) symbol
 -- 5) order_fields_json
 -- 6) single_order_margin_usd
--- 7) recomputed_user_used_margin_usd
+-- 7) recomputed_user_used_margin_executed
+-- 8) recomputed_user_used_margin_all
 --
 -- Notes on Redis Cluster:
 -- In a Redis Cluster, EVAL requires that all KEYS[] target the same hash slot. Ensure
@@ -29,7 +30,8 @@ local order_id = ARGV[3]
 local symbol = ARGV[4]
 local order_fields_json = ARGV[5]
 local single_order_margin_usd = ARGV[6]
-local recomputed_user_used_margin_usd = ARGV[7]
+local recomputed_user_used_margin_executed = ARGV[7]
+local recomputed_user_used_margin_all = ARGV[8]
 
 local resp = { ok = false, reason = nil }
 
@@ -128,9 +130,12 @@ redis.call('HSET', unpack(args))
 
 -- Note: symbol_holders update must be performed by the caller after success
 
--- Update user portfolio used margin if provided
-if recomputed_user_used_margin_usd and tostring(recomputed_user_used_margin_usd) ~= '' then
-  redis.call('HSET', portfolio_key, 'used_margin', tostring(recomputed_user_used_margin_usd))
+-- Update user portfolio used margins (both executed and all) if provided
+if recomputed_user_used_margin_executed and tostring(recomputed_user_used_margin_executed) ~= '' then
+  redis.call('HSET', portfolio_key, 'used_margin_executed', tostring(recomputed_user_used_margin_executed))
+end
+if recomputed_user_used_margin_all and tostring(recomputed_user_used_margin_all) ~= '' then
+  redis.call('HSET', portfolio_key, 'used_margin_all', tostring(recomputed_user_used_margin_all))
 end
 
 -- Event streaming is not handled here to avoid cross-slot access; perform externally if needed

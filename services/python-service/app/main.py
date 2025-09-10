@@ -5,6 +5,7 @@ import logging
 import asyncio
 from .api.market_api import router as market_router
 from .api.orders_api import router as orders_router
+from .api.admin_orders_api import router as admin_orders_router
 from .market_listener import start_market_listener
 from .services.portfolio_calculator import start_portfolio_listener
 from .services.orders.provider_connection import get_provider_connection_manager
@@ -69,6 +70,7 @@ app.add_middleware(
 # Include API routes
 app.include_router(market_router, prefix="/api")
 app.include_router(orders_router, prefix="/api")
+app.include_router(admin_orders_router)
 
 @app.get("/")
 async def root():

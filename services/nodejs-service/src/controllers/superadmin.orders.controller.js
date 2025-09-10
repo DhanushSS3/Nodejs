@@ -1,3 +1,4 @@
+const axios = require('axios');
 const OrdersIndexRebuildService = require('../services/orders.index.rebuild.service');
 const OrdersBackfillService = require('../services/orders.backfill.service');
 const { redisCluster } = require('../../config/redis');
@@ -7,6 +8,81 @@ function ok(res, data, message = 'OK') {
 }
 function bad(res, message, code = 400) {
   return res.status(code).json({ success: false, message });
+}
+
+// POST /api/superadmin/orders/reject-queued
+// body: { order_id: string, user_type: 'live'|'demo', user_id: string|number, reason?: string }
+async function rejectQueued(req, res) {
+  try {
+    const order_id = String(req.body.order_id || '').trim();
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id = String(req.body.user_id || '').trim();
+    const reason = req.body.reason ? String(req.body.reason) : undefined;
+
+    if (!order_id || !['live', 'demo'].includes(user_type) || !user_id) {
+      return bad(res, 'order_id, user_type (live|demo) and user_id are required');
+    }
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    const payload = { order_id, user_type, user_id, reason };
+    const pyResp = await axios.post(
+      `${baseUrl}/api/admin/orders/reject-queued`,
+      payload,
+      { timeout: 15000, headers: { Authorization: req.headers['authorization'] || '' } }
+    );
+    const data = pyResp?.data || { success: true };
+    return ok(res, data?.data || data, data?.message || 'Queued order rejected');
+  } catch (err) {
+    const status = err?.response?.status || 500;
+    const detail = err?.response?.data || { message: err.message };
+    return bad(res, `Failed to reject queued order: ${detail?.message || err.message}`, status);
+  }
+}
+
+// GET /api/superadmin/orders/queued
+// query: { user_type: 'live'|'demo', user_id: string|number }
+async function getQueuedOrders(req, res) {
+  try {
+    const user_type = String((req.query.user_type ?? req.body?.user_type) || '').toLowerCase();
+    const user_id = String((req.query.user_id ?? req.body?.user_id) || '').trim();
+    if (!['live', 'demo'].includes(user_type) || !user_id) {
+      return bad(res, 'user_type (live|demo) and user_id are required');
+    }
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    const pyResp = await axios.get(
+      `${baseUrl}/api/admin/orders/queued/${user_type}/${user_id}`,
+      { timeout: 15000, headers: { Authorization: req.headers['authorization'] || '' } }
+    );
+    const data = pyResp?.data || { success: true };
+    return ok(res, data?.data || data, data?.message || 'Queued orders fetched');
+  } catch (err) {
+    const status = err?.response?.status || 500;
+    const detail = err?.response?.data || { message: err.message };
+    return bad(res, `Failed to fetch queued orders: ${detail?.message || err.message}`, status);
+  }
+}
+
+// GET /api/superadmin/orders/margin-status
+// query: { user_type: 'live'|'demo', user_id: string|number }
+async function getMarginStatus(req, res) {
+  try {
+    const user_type = String((req.query.user_type ?? req.body?.user_type) || '').toLowerCase();
+    const user_id = String((req.query.user_id ?? req.body?.user_id) || '').trim();
+    if (!['live', 'demo'].includes(user_type) || !user_id) {
+      return bad(res, 'user_type (live|demo) and user_id are required');
+    }
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    const pyResp = await axios.get(
+      `${baseUrl}/api/admin/orders/margin-status/${user_type}/${user_id}`,
+      { timeout: 15000, headers: { Authorization: req.headers['authorization'] || '' } }
+    );
+    const data = pyResp?.data || { success: true };
+    return ok(res, data?.data || data, data?.message || 'Margin status fetched');
+  } catch (err) {
+    const status = err?.response?.status || 500;
+    const detail = err?.response?.data || { message: err.message };
+    return bad(res, `Failed to fetch margin status: ${detail?.message || err.message}`, status);
+  }
 }
 
 // POST /api/superadmin/orders/rebuild/user
@@ -128,4 +204,7 @@ module.exports = {
   ensureHolding,
   ensureSymbolHolder,
   getUserPortfolio,
+  rejectQueued,
+  getQueuedOrders,
+  getMarginStatus,
 };
