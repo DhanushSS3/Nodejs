@@ -27,6 +27,9 @@ async function lookupGroupConfig(req, res) {
       spread: row.spread?.toString?.() ?? null,
       spread_pip: row.spread_pip?.toString?.() ?? null,
       margin: row.margin?.toString?.() ?? null,
+      commision: row.commision?.toString?.() ?? null,
+      commision_type: row.commision_type != null ? Number(row.commision_type) : null,
+      commision_value_type: row.commision_value_type != null ? Number(row.commision_value_type) : null,
       pips: row.pips?.toString?.() ?? null,
     };
 

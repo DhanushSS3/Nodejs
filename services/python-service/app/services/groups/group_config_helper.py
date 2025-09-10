@@ -40,9 +40,20 @@ def _normalize_group_dict(src: Dict[str, Any]) -> Dict[str, Any]:
     if not src:
         return {}
     out: Dict[str, Any] = {}
+    # Pass-through keys
     for k in ("type", "contract_size", "profit", "spread", "spread_pip"):
         if k in src and src[k] is not None:
             out[k] = src[k]
+    # Commission fields: DB may use 'commision' (legacy) or 'commission' (alias)
+    if src.get("commision") is not None or src.get("commission") is not None:
+        out["commission_rate"] = src.get("commision") if src.get("commision") is not None else src.get("commission")
+    if src.get("commision_type") is not None:
+        out["commission_type"] = src.get("commision_type")
+    if src.get("commision_value_type") is not None:
+        out["commission_value_type"] = src.get("commision_value_type")
+    # Margin from groups table stored as group_margin to avoid confusion with order margin
+    if src.get("margin") is not None:
+        out["group_margin"] = src.get("margin")
     return out
 
 

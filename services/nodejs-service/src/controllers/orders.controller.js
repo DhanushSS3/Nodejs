@@ -189,6 +189,7 @@ async function placeInstantOrder(req, res) {
     const exec_price = result.exec_price;
     const margin_usd = result.margin_usd;
     const contract_value = result.contract_value;
+    const commission_entry = result.commission_entry; // optional for local flow
     // New fields from Python service; keep fallback for older responses
     const used_margin_executed = (result.used_margin_executed !== undefined) ? result.used_margin_executed : result.used_margin_usd;
     const used_margin_all = result.used_margin_all;
@@ -205,6 +206,9 @@ async function placeInstantOrder(req, res) {
     }
     if (typeof contract_value === 'number') {
       updateFields.contract_value = contract_value;
+    }
+    if (flow === 'local' && typeof commission_entry === 'number') {
+      updateFields.commission = commission_entry;
     }
     // Map to requested statuses
     if (flow === 'local') {
@@ -318,6 +322,7 @@ async function placeInstantOrder(req, res) {
       margin: margin_usd,
       exec_price: exec_price,
       contract_value: typeof contract_value === 'number' ? contract_value : undefined,
+      commission: typeof commission_entry === 'number' ? commission_entry : undefined,
     });
   } catch (error) {
     logger.transactionFailure('instant_place', error, { operationId });

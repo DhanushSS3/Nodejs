@@ -11,6 +11,7 @@ import aio_pika
 from app.config.redis_config import redis_cluster
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.user_margin_service import compute_user_total_margin
+from app.services.orders.commission_calculator import compute_entry_commission
 from app.services.orders.order_repository import fetch_group_data, fetch_user_orders
 
 logger = logging.getLogger(__name__)
@@ -452,6 +453,102 @@ class OpenWorker:
                     (str(float(margins["used_margin_all"])) if margins.get("used_margin_all") is not None else None),
                 )
 
+                # Step 3b: compute and persist ENTRY commission for provider EXECUTED (open)
+                try:
+                    # Fetch commission snapshot from canonical order_data; fallback to group hash
+                    rate_raw = await redis_cluster.hget(ctx["order_data_key"], "commission_rate")
+                    if rate_raw is None:
+                        rate_raw = await redis_cluster.hget(ctx["order_data_key"], "commission")
+                    ctype_raw = await redis_cluster.hget(ctx["order_data_key"], "commission_type")
+                    vtype_raw = await redis_cluster.hget(ctx["order_data_key"], "commission_value_type")
+                    # Normalize empty strings to None so fallback can trigger
+                    try:
+                        def _empty_to_none(x):
+                            if x is None:
+                                return None
+                            try:
+                                xs = x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
+                                return None if xs.strip() == "" else x
+                            except Exception:
+                                return x
+                        rate_raw = _empty_to_none(rate_raw)
+                        ctype_raw = _empty_to_none(ctype_raw)
+                        vtype_raw = _empty_to_none(vtype_raw)
+                    except Exception:
+                        pass
+                    # Track sources for debugging AFTER normalization
+                    rate_src = "order_data" if rate_raw is not None else None
+                    ctype_src = "order_data" if ctype_raw is not None else None
+                    vtype_src = "order_data" if vtype_raw is not None else None
+
+                    # Fallback to group hash if missing
+                    if rate_raw is None or ctype_raw is None or vtype_raw is None:
+                        try:
+                            group_val = str(payload.get("group") or "Standard")
+                            symbol_val = str(payload.get("symbol") or "").upper()
+                            gkey = f"groups:{{{group_val}}}:{symbol_val}" if symbol_val else None
+                            ghash = await redis_cluster.hgetall(gkey) if gkey else {}
+                        except Exception:
+                            ghash = {}
+                        if rate_raw is None:
+                            rate_raw = ghash.get("commission_rate") or ghash.get("commission") or ghash.get("commision")
+                            if rate_raw is not None and rate_src is None:
+                                rate_src = "group"
+                        if ctype_raw is None:
+                            ctype_raw = ghash.get("commission_type") or ghash.get("commision_type")
+                            if ctype_raw is not None and ctype_src is None:
+                                ctype_src = "group"
+                        if vtype_raw is None:
+                            vtype_raw = ghash.get("commission_value_type") or ghash.get("commision_value_type")
+                            if vtype_raw is not None and vtype_src is None:
+                                vtype_src = "group"
+
+                    def _to_float(x):
+                        try:
+                            return float(x)
+                        except Exception:
+                            return None
+
+                    def _to_int(x):
+                        try:
+                            return int(x)
+                        except Exception:
+                            return None
+
+                    rate = _to_float(rate_raw)
+                    ctype = _to_int(ctype_raw)
+                    vtype = _to_int(vtype_raw)
+                    qty = _to_float(margins.get("final_order_qty"))
+                    exec_px = _to_float(margins.get("final_exec_price") or (payload.get("execution_report") or {}).get("avgpx"))
+                    cs_val = _to_float(margins.get("contract_size"))
+
+                    commission_entry = 0.0
+                    if rate is not None and ctype is not None and vtype is not None and qty is not None and exec_px is not None:
+                        commission_entry = compute_entry_commission(
+                            commission_rate=rate,
+                            commission_type=ctype,
+                            commission_value_type=vtype,
+                            quantity=qty,
+                            order_price=exec_px,
+                            contract_size=cs_val,
+                        )
+
+                    # Persist commission: user holdings gets 'commission' for UI; canonical gets 'commission_entry'
+                    try:
+                        pipe_c = redis_cluster.pipeline()
+                        pipe_c.hset(ctx["order_key"], mapping={
+                            "commission": str(float(commission_entry)),
+                            "commission_entry": str(float(commission_entry)),
+                        })
+                        pipe_c.hset(ctx["order_data_key"], mapping={
+                            "commission_entry": str(float(commission_entry)),
+                        })
+                        await pipe_c.execute()
+                    except Exception:
+                        pass
+                except Exception:
+                    logger.exception("[OPEN:commission] failed to compute/persist entry commission")
+
                 # Log calculated order data to dedicated file
                 try:
                     calc = {
@@ -464,6 +561,24 @@ class OpenWorker:
                         "final_exec_price": margins.get("final_exec_price"),
                         "final_order_qty": margins.get("final_order_qty"),
                         "single_margin_usd": margins.get("single_margin_usd"),
+                        "commission_entry": (commission_entry if 'commission_entry' in locals() else None),
+                        # Commission config debug (normalized and legacy + sources/raw)
+                        "commission_type": (ctype if 'ctype' in locals() else None),
+                        "commission_value_type": (vtype if 'vtype' in locals() else None),
+                        "commission_rate": (rate if 'rate' in locals() else None),
+                        "commision_type": (ctype if 'ctype' in locals() else None),
+                        "commision_value_type": (vtype if 'vtype' in locals() else None),
+                        "commision": (rate if 'rate' in locals() else None),
+                        "commission_sources": {
+                            "rate": (rate_src if 'rate_src' in locals() else None),
+                            "type": (ctype_src if 'ctype_src' in locals() else None),
+                            "value_type": (vtype_src if 'vtype_src' in locals() else None),
+                        },
+                        "commission_raw": {
+                            "rate_raw": (rate_raw if 'rate_raw' in locals() else None),
+                            "type_raw": (ctype_raw if 'ctype_raw' in locals() else None),
+                            "value_type_raw": (vtype_raw if 'vtype_raw' in locals() else None),
+                        },
                         "total_used_margin_usd": margins.get("total_used_margin_usd"),
                         "half_spread": margins.get("half_spread"),
                         "contract_size": margins.get("contract_size"),
@@ -489,6 +604,8 @@ class OpenWorker:
                         "order_price": margins.get("final_exec_price") or payload.get("order_price"),
                         # Persist per-order executed margin in SQL via DB consumer
                         "margin": margins.get("single_margin_usd"),
+                        # Persist entry commission in SQL
+                        "commission": commission_entry if 'commission_entry' in locals() else None,
                         # Backward compatibility: used_margin_usd mirrors executed margin
                         "used_margin_usd": margins.get("used_margin_executed"),
                         # New fields
@@ -510,6 +627,24 @@ class OpenWorker:
                             "order_status": db_msg.get("order_status"),
                             "order_price": db_msg.get("order_price"),
                             "margin": db_msg.get("margin"),
+                            "commission": db_msg.get("commission"),
+                            # Commission config debug (normalized and legacy + sources/raw)
+                            "commission_type": (ctype if 'ctype' in locals() else None),
+                            "commission_value_type": (vtype if 'vtype' in locals() else None),
+                            "commission_rate": (rate if 'rate' in locals() else None),
+                            "commision_type": (ctype if 'ctype' in locals() else None),
+                            "commision_value_type": (vtype if 'vtype' in locals() else None),
+                            "commision": (rate if 'rate' in locals() else None),
+                            "commission_sources": {
+                                "rate": (rate_src if 'rate_src' in locals() else None),
+                                "type": (ctype_src if 'ctype_src' in locals() else None),
+                                "value_type": (vtype_src if 'vtype_src' in locals() else None),
+                            },
+                            "commission_raw": {
+                                "rate_raw": (rate_raw if 'rate_raw' in locals() else None),
+                                "type_raw": (ctype_raw if 'ctype_raw' in locals() else None),
+                                "value_type_raw": (vtype_raw if 'vtype_raw' in locals() else None),
+                            },
                             "used_margin_usd": db_msg.get("used_margin_usd"),
                         }
                         _ORDERS_CALC_LOG.info(orjson.dumps(dbg).decode())

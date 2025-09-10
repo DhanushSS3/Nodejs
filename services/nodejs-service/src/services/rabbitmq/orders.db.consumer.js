@@ -16,7 +16,7 @@ function getOrderModel(userType) {
 }
 
 async function applyDbUpdate(msg) {
-  const { type, order_id, user_id, user_type, order_status, order_price, margin, used_margin_usd } = msg || {};
+  const { type, order_id, user_id, user_type, order_status, order_price, margin, commission, used_margin_usd } = msg || {};
   if (!order_id || !user_id || !user_type) {
     throw new Error('Missing required fields in DB update message');
   }
@@ -30,6 +30,7 @@ async function applyDbUpdate(msg) {
     order_status,
     order_price,
     margin,
+    commission,
     used_margin_usd,
   });
 
@@ -52,6 +53,9 @@ async function applyDbUpdate(msg) {
         const marginStr = margin != null && Number.isFinite(Number(margin))
           ? Number(margin).toFixed(8)
           : (canonical.margin ?? null);
+        const commissionStr = commission != null && Number.isFinite(Number(commission))
+          ? Number(commission).toFixed(8)
+          : (canonical.commission ?? canonical.commission_entry ?? null);
 
         if (!symbol || !order_type) {
           logger.warn('Missing required fields in canonical order for SQL create', { order_id, symbol, order_type });
@@ -65,6 +69,7 @@ async function applyDbUpdate(msg) {
             order_price: String(price),
             order_quantity: String(order_quantity),
             margin: marginStr != null ? String(marginStr) : null,
+            commission: commissionStr != null ? String(commissionStr) : null,
             placed_by: 'user'
           });
           logger.info('Created SQL order row from Redis canonical for DB update', { order_id });
@@ -85,16 +90,21 @@ async function applyDbUpdate(msg) {
     if (margin != null && Number.isFinite(Number(margin))) {
       updateFields.margin = Number(margin).toFixed(8);
     }
+    if (commission != null && Number.isFinite(Number(commission))) {
+      updateFields.commission = Number(commission).toFixed(8);
+    }
 
     if (Object.keys(updateFields).length > 0) {
       const before = {
         margin: row.margin != null ? row.margin.toString() : null,
+        commission: row.commission != null ? row.commission.toString() : null,
         order_price: row.order_price != null ? row.order_price.toString() : null,
         order_status: row.order_status,
       };
       await row.update(updateFields);
       const after = {
         margin: row.margin != null ? row.margin.toString() : null,
+        commission: row.commission != null ? row.commission.toString() : null,
         order_price: row.order_price != null ? row.order_price.toString() : null,
         order_status: row.order_status,
       };

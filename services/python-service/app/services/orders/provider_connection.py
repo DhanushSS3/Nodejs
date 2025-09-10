@@ -295,6 +295,15 @@ class ProviderConnectionManager:
                                             od_update["spread"] = str(gcfg.get("spread"))
                                         if gcfg.get("spread_pip") is not None:
                                             od_update["spread_pip"] = str(gcfg.get("spread_pip"))
+                                        # Commission and group margin from groups config
+                                        if gcfg.get("commision") is not None:
+                                            od_update["commission_rate"] = str(gcfg.get("commision"))
+                                        if gcfg.get("commision_type") is not None:
+                                            od_update["commission_type"] = str(gcfg.get("commision_type"))
+                                        if gcfg.get("commision_value_type") is not None:
+                                            od_update["commission_value_type"] = str(gcfg.get("commision_value_type"))
+                                        if gcfg.get("margin") is not None:
+                                            od_update["group_margin"] = str(gcfg.get("margin"))
                                         if od_update:
                                             await redis_cluster.hset(f"order_data:{can_id}", mapping=od_update)
                                             od.update(od_update)
@@ -321,6 +330,39 @@ class ProviderConnectionManager:
                                 report["spread"] = spread
                             if spread_pip is not None:
                                 report["spread_pip"] = spread_pip
+
+                        # Attach group-level commission config snapshot for downstream workers (no computation here)
+                        try:
+                            if 'ghash' in locals():
+                                if od.get("group_margin") is not None:
+                                    report["group_margin"] = od.get("group_margin")
+                                rate = (
+                                    od.get("commission_rate")
+                                    or ghash.get("commission_rate")
+                                    or ghash.get("commission")
+                                    or ghash.get("commision")
+                                )
+                                # Accept legacy misspelled keys as fallback
+                                ctype = (
+                                    od.get("commission_type")
+                                    or od.get("commision_type")
+                                    or ghash.get("commission_type")
+                                    or ghash.get("commision_type")
+                                )
+                                vtype = (
+                                    od.get("commission_value_type")
+                                    or od.get("commision_value_type")
+                                    or ghash.get("commission_value_type")
+                                    or ghash.get("commision_value_type")
+                                )
+                                if rate is not None:
+                                    report["commission_rate"] = rate
+                                if ctype is not None:
+                                    report["commission_type"] = ctype
+                                if vtype is not None:
+                                    report["commission_value_type"] = vtype
+                        except Exception:
+                            pass
                     except Exception:
                         # Enrichment is best-effort; proceed even if it fails
                         pass

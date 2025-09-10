@@ -1,9 +1,13 @@
 import time
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
+import orjson
 
 from app.services.price_utils import get_execution_price
 from app.services.portfolio.margin_calculator import compute_single_order_margin
+from app.services.orders.commission_calculator import compute_entry_commission
 from app.services.groups.group_config_helper import get_group_config_with_fallback
 from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.order_repository import (
@@ -170,6 +174,52 @@ class OrderExecutor:
         except (TypeError, ValueError):
             crypto_margin_factor = None
 
+        # Commission config (normalized by group_config_helper)
+        def _empty_to_none(x):
+            if x is None:
+                return None
+            try:
+                xs = x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
+                return None if xs.strip() == "" else x
+            except Exception:
+                return x
+        def _f(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+        def _i(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+        # Read from Redis group hash first (g), else DB/normalized fallback (gfb)
+        rate_raw = (
+            g.get("commission_rate") if g.get("commission_rate") is not None else
+            (g.get("commission") if g.get("commission") is not None else g.get("commision"))
+        )
+        if rate_raw is None:
+            rate_raw = gfb.get("commission_rate") or gfb.get("commission") or gfb.get("commision")
+        rate_raw = _empty_to_none(rate_raw)
+        commission_rate = _f(rate_raw)
+
+        ctype_raw = (
+            g.get("commission_type") if g.get("commission_type") is not None else g.get("commision_type")
+        )
+        if ctype_raw is None:
+            ctype_raw = gfb.get("commission_type") or gfb.get("commision_type")
+        ctype_raw = _empty_to_none(ctype_raw)
+        commission_type = _i(ctype_raw)
+
+        vtype_raw = (
+            g.get("commission_value_type") if g.get("commission_value_type") is not None else g.get("commision_value_type")
+        )
+        if vtype_raw is None:
+            vtype_raw = gfb.get("commission_value_type") or gfb.get("commision_value_type")
+        vtype_raw = _empty_to_none(vtype_raw)
+        commission_value_type = _i(vtype_raw)
+        group_margin_cfg = _f(g.get("group_margin") if g.get("group_margin") is not None else gfb.get("group_margin"))
+
         if contract_size is None or not profit_currency:
             result = {"ok": False, "reason": "missing_group_data"}
             if idem_key:
@@ -270,6 +320,67 @@ class OrderExecutor:
         now_ms = int(time.time() * 1000)
         execution_status = "EXECUTED" if flow == "local" else "QUEUED"
         displayed_status = "OPEN" if flow == "local" else "QUEUED"
+        # Commission entry for local execution (charged on entry for types [0,1])
+        commission_entry = None
+        if flow == "local":
+            commission_entry = compute_entry_commission(
+                commission_rate=commission_rate,
+                commission_type=commission_type,
+                commission_value_type=commission_value_type,
+                quantity=order_qty,
+                order_price=float(exec_price),
+                contract_size=contract_size,
+            )
+
+        # --- DEBUG: Log commission config snapshot and calculation context ---
+        try:
+            def _get_orders_calc_logger() -> logging.Logger:
+                lg = logging.getLogger("orders.calculated")
+                # Avoid duplicate handlers
+                for h in lg.handlers:
+                    if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
+                        return lg
+                try:
+                    base_dir = Path(__file__).resolve().parents[3]
+                except Exception:
+                    base_dir = Path('.')
+                log_dir = base_dir / 'logs'
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_file = log_dir / 'orders_calculated.log'
+                fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+                fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+                fh._orders_calc = True
+                lg.addHandler(fh)
+                lg.setLevel(logging.INFO)
+                return lg
+
+            _ORDERS_CALC_LOG = _get_orders_calc_logger()
+            calc = {
+                "type": "ORDER_EXEC_CALC",
+                "flow": flow,
+                "order_id": order_id,
+                "user_type": user_type,
+                "user_id": user_id,
+                "symbol": symbol,
+                "side": order_type,
+                "final_exec_price": exec_price,
+                "final_order_qty": order_qty,
+                "single_margin_usd": float(margin_usd),
+                "commission_entry": commission_entry,
+                # Commission config debug (normalized and legacy aliases)
+                "commission_type": commission_type,
+                "commission_value_type": commission_value_type,
+                "commission_rate": commission_rate,
+                "commision_type": commission_type,
+                "commision_value_type": commission_value_type,
+                "commision": commission_rate,
+                "half_spread": (pricing_meta.get("pricing") or {}).get("half_spread"),
+                "contract_size": contract_size,
+            }
+            _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
+        except Exception:
+            pass
+
         order_fields: Dict[str, Any] = {
             "order_id": order_id,
             "symbol": symbol,
@@ -285,6 +396,12 @@ class OrderExecutor:
             "execution": flow,
             "execution_status": execution_status,
             "created_at": now_ms,
+            # Persist commission config snapshot for the order (immutable at open)
+            **({"commission_rate": commission_rate} if commission_rate is not None else {}),
+            **({"commission_type": commission_type} if commission_type is not None else {}),
+            **({"commission_value_type": commission_value_type} if commission_value_type is not None else {}),
+            **({"group_margin": group_margin_cfg} if group_margin_cfg is not None else {}),
+            **({"commission_entry": commission_entry} if commission_entry is not None else {}),
         }
         if pricing_meta.get("pricing"):
             price_info = pricing_meta["pricing"]
@@ -349,6 +466,11 @@ class OrderExecutor:
                     "spread_pip": spread_pip_val if spread_pip_val is not None else None,
                     "contract_size": contract_size if contract_size is not None else None,
                     "profit": profit_currency,
+                    # Commission config snapshot and group-level margin config
+                    "commission_rate": commission_rate,
+                    "commission_type": commission_type,
+                    "commission_value_type": commission_value_type,
+                    "group_margin": group_margin_cfg,
                     # Order metadata
                     "execution": flow,
                     "execution_status": execution_status,
@@ -365,6 +487,8 @@ class OrderExecutor:
                     **({"margin": float(margin_usd)} if flow == "local" else {}),
                     **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
                     "contract_value": float(contract_value) if contract_value is not None else None,
+                    # Commission entry only for local immediate execution
+                    **({"commission_entry": commission_entry} if commission_entry is not None else {}),
                 }
 
                 # Merge any pricing metadata we already computed
@@ -416,6 +540,7 @@ class OrderExecutor:
             "used_margin_executed": float(executed_margin),
             "used_margin_all": float(total_margin_with_queued),
             "contract_value": float(contract_value) if contract_value is not None else None,
+            **({"commission_entry": commission_entry} if commission_entry is not None else {}),
         }
         if provider_send_payload:
             # Return payload to API layer for background dispatch
