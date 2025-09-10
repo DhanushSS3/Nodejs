@@ -32,6 +32,7 @@ LEN_HDR = 4
 
 # After imports and logger setup: Node internal lookup config and helper
 INTERNAL_PROVIDER_URL = os.getenv("INTERNAL_PROVIDER_URL", "http://127.0.0.1:3000/api/internal/provider")
+INTERNAL_PROVIDER_SECRET = os.getenv("INTERNAL_PROVIDER_SECRET", "")
 
 
 async def _node_lookup_any_id(any_id: str) -> Optional[Dict[str, Any]]:
@@ -41,10 +42,11 @@ async def _node_lookup_any_id(any_id: str) -> Optional[Dict[str, Any]]:
     Returns payload dict or None on failure.
     """
     timeout = aiohttp.ClientTimeout(total=3.0)
+    headers = {"X-Internal-Auth": INTERNAL_PROVIDER_SECRET} if INTERNAL_PROVIDER_SECRET else {}
     url = f"{INTERNAL_PROVIDER_URL}/orders/lookup/{any_id}"
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
