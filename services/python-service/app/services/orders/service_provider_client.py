@@ -138,3 +138,29 @@ async def send_provider_order(payload: Dict[str, Any]) -> Tuple[bool, str]:
         except Exception as e2:
             logger.error("send_provider_order fallback error: %s", e2)
             return False, "error"
+
+
+async def send_provider_order_direct_with_timeout(payload: Dict[str, Any], timeout_sec: float = 5.0) -> Tuple[bool, str]:
+    """
+    Attempt to send directly via UDS or TCP within a total timeout window.
+    Skips the persistent connection manager to ensure we only report success
+    when a direct send has been performed in this call.
+
+    Returns (ok, via) where via is one of 'uds', 'tcp', 'none', 'timeout', or 'error'.
+    """
+    async def _do_send() -> Tuple[bool, str]:
+        ok, via = await _try_send_uds(payload)
+        if ok:
+            return True, via
+        ok2, via2 = await _try_send_tcp(payload)
+        if ok2:
+            return True, via2
+        return False, "none"
+
+    try:
+        return await asyncio.wait_for(_do_send(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        return False, "timeout"
+    except Exception as e:
+        logger.error("send_provider_order_direct_with_timeout error: %s", e)
+        return False, "error"

@@ -136,9 +136,11 @@ async function placeInstantOrder(req, res) {
 
       // Update DB as REJECTED with reason
       try {
+        const reasonStr = normalizeStr(detail?.detail?.reason || detail?.reason || 'execution_failed');
         const rejectStatus = {
           order_status: 'REJECTED',
-          status: normalizeStr(detail?.detail?.reason || detail?.reason || 'execution_failed')
+          status: reasonStr,
+          close_message: reasonStr,
         };
         if (initialOrder) {
           await initialOrder.update(rejectStatus);

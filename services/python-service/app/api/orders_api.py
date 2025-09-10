@@ -3,7 +3,10 @@ from typing import Dict, Any
 import logging
 
 from ..services.orders.order_execution_service import OrderExecutor
-from ..services.orders.service_provider_client import send_provider_order
+from ..services.orders.service_provider_client import send_provider_order_direct_with_timeout
+from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result
+from ..services.portfolio.user_margin_service import compute_user_total_margin
+from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
 from .schemas.orders import InstantOrderRequest, InstantOrderResponse
 
@@ -41,13 +44,88 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
             # Otherwise server error
             raise HTTPException(status_code=500, detail=result)
 
-        # If provider flow, schedule async send after successful persistence
+        # If provider flow, attempt direct send with 5s timeout. If it fails, auto-reject.
         provider_payload = result.get("provider_send_payload")
         if provider_payload:
+            order_id = str(provider_payload.get("order_id"))
+            user_id = str(provider_payload.get("user_id"))
+            user_type = str(provider_payload.get("user_type"))
+            symbol = str(provider_payload.get("symbol") or "").upper()
             try:
-                background_tasks.add_task(send_provider_order, provider_payload)
+                ok, via = await send_provider_order_direct_with_timeout(provider_payload, timeout_sec=5.0)
             except Exception as e:
-                logger.error(f"Failed to schedule provider send for order {provider_payload.get('order_id')}: {e}")
+                logger.error(f"Direct provider send exception for {order_id}: {e}")
+                ok, via = False, "error"
+
+            if not ok:
+                # Auto-reject: delete Redis keys, recompute margins, cleanup symbol holders
+                try:
+                    hash_tag = f"{user_type}:{user_id}"
+                    order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                    order_data_key = f"order_data:{order_id}"
+                    portfolio_key = f"user_portfolio:{{{hash_tag}}}"
+                    index_key = f"user_orders_index:{{{hash_tag}}}"
+
+                    # Remove from index and delete order keys
+                    pipe = redis_cluster.pipeline()
+                    pipe.srem(index_key, order_id)
+                    pipe.delete(order_key)
+                    pipe.delete(order_data_key)
+                    await pipe.execute()
+
+                    # Recompute margins without this order
+                    orders = await fetch_user_orders(user_type, user_id)
+                    filtered_orders = [od for od in orders if str(od.get("order_id")) != order_id]
+                    executed_margin, total_margin, _ = await compute_user_total_margin(
+                        user_type=user_type,
+                        user_id=user_id,
+                        orders=filtered_orders,
+                        prices_cache=None,
+                        strict=False,
+                        include_queued=True,
+                    )
+                    margin_updates = {}
+                    if executed_margin is not None:
+                        margin_updates["used_margin_executed"] = str(float(executed_margin))
+                        margin_updates["used_margin"] = str(float(executed_margin))  # legacy
+                    if total_margin is not None:
+                        margin_updates["used_margin_all"] = str(float(total_margin))
+                    if margin_updates:
+                        await redis_cluster.hset(portfolio_key, mapping=margin_updates)
+
+                    # Symbol holders cleanup if no more orders for the same symbol
+                    if symbol:
+                        any_same_symbol = any(str(od.get("symbol", "")).upper() == symbol for od in filtered_orders)
+                        if not any_same_symbol:
+                            sym_set = f"symbol_holders:{symbol}:{user_type}"
+                            await redis_cluster.srem(sym_set, hash_tag)
+                except Exception as rej_err:
+                    logger.error(f"Auto-reject cleanup failed for order {order_id}: {rej_err}")
+
+                # Overwrite idempotency to failure to avoid stale success on replay
+                try:
+                    idem_key = provider_payload.get("idempotency_key")
+                    if idem_key:
+                        idem_redis_key = f"idempotency:{user_type}:{user_id}:{idem_key}"
+                        await save_idempotency_result(idem_redis_key, {
+                            "ok": False,
+                            "reason": "provider_send_failed",
+                            "order_id": order_id,
+                            "user_id": user_id,
+                            "user_type": user_type,
+                        })
+                except Exception as idem_err:
+                    logger.warning(f"Failed to overwrite idempotency result for {order_id}: {idem_err}")
+
+                # Return error so Node will update SQL status and close_message
+                reason = "provider_send_timeout" if via == "timeout" else ("provider_unreachable" if via in ("none", "error") else f"provider_via_{via}_failed")
+                raise HTTPException(status_code=503, detail={
+                    "ok": False,
+                    "reason": reason,
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "user_type": user_type,
+                })
 
         return {
             "success": True,
