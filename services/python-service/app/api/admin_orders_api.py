@@ -75,24 +75,14 @@ async def reject_queued_order(
                 message=f"Order {request.order_id} is not in QUEUED status (current: {order_status}/{execution_status})"
             )
         
-        # Update order status to REJECTED
-        rejection_fields = {
-            "order_status": "REJECTED",
-            "execution_status": "REJECTED",
-            "reserved_margin": "",
-            "margin": "",
-            "rejection_reason": request.reason,
-            "rejected_by": "superadmin",
-        }
-        
-        # Update both order keys
+        # Delete order keys and remove from index
+        # This reduces memory and removes order from active reads immediately
         pipe = redis_cluster.pipeline()
-        pipe.hset(order_key, mapping=rejection_fields)
-        pipe.hset(order_data_key, mapping=rejection_fields)
-        
-        # Remove from open orders index
+        # Remove from open orders index first so subsequent reads won't include it
         pipe.srem(index_key, request.order_id)
-        
+        # Delete user holding and canonical order data
+        pipe.delete(order_key)
+        pipe.delete(order_data_key)
         await pipe.execute()
         
         # Recompute user margins excluding this order
@@ -119,7 +109,7 @@ async def reject_queued_order(
         if margin_updates:
             await redis_cluster.hset(portfolio_key, mapping=margin_updates)
         
-        # Check if user has any other orders for this symbol
+        # Remove from symbol holders set if no more holdings on this symbol
         symbol = order_data.get("symbol", "").upper()
         if symbol:
             any_same_symbol = any(
@@ -127,7 +117,6 @@ async def reject_queued_order(
                 for od in filtered_orders
             )
             if not any_same_symbol:
-                # Remove user from symbol holders
                 sym_set = f"symbol_holders:{symbol}:{request.user_type}"
                 await redis_cluster.srem(sym_set, hash_tag)
         

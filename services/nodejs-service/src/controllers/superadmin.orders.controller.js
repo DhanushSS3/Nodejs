@@ -2,6 +2,9 @@ const axios = require('axios');
 const OrdersIndexRebuildService = require('../services/orders.index.rebuild.service');
 const OrdersBackfillService = require('../services/orders.backfill.service');
 const { redisCluster } = require('../../config/redis');
+const LiveUserOrder = require('../models/liveUserOrder.model');
+const DemoUserOrder = require('../models/demoUserOrder.model');
+const logger = require('../services/logger.service');
 
 function ok(res, data, message = 'OK') {
   return res.status(200).json({ success: true, message, data });
@@ -31,6 +34,22 @@ async function rejectQueued(req, res) {
       { timeout: 15000, headers: { Authorization: req.headers['authorization'] || '' } }
     );
     const data = pyResp?.data || { success: true };
+
+    // Best-effort DB update: mark order as REJECTED and set close_message
+    try {
+      const Model = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+      const closeMessage = reason || 'Manual rejection by admin';
+      const [affected] = await Model.update(
+        { order_status: 'REJECTED', close_message: closeMessage },
+        { where: { order_id } }
+      );
+      if (!affected) {
+        logger.warn('DB update for rejected order affected 0 rows', { order_id, user_type, user_id });
+      }
+    } catch (dbErr) {
+      logger.error('Failed to update DB after queued order rejection', { error: dbErr.message, order_id, user_type, user_id });
+    }
+
     return ok(res, data?.data || data, data?.message || 'Queued order rejected');
   } catch (err) {
     const status = err?.response?.status || 500;
