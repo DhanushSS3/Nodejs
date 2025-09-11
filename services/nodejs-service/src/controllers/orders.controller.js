@@ -5,6 +5,8 @@ const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
+const { redisCluster } = require('../../config/redis');
+const groupsCache = require('../services/groups.cache.service');
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -331,3 +333,228 @@ async function placeInstantOrder(req, res) {
 }
 
 module.exports = { placeInstantOrder };
+
+async function _getCanonicalOrder(order_id) {
+  try {
+    const key = `order_data:${String(order_id)}`;
+    const od = await redisCluster.hgetall(key);
+    if (od && Object.keys(od).length > 0) return od;
+  } catch (e) {
+    logger.warn('Failed to fetch canonical order from Redis', { order_id, error: e.message });
+  }
+  return null;
+}
+
+function _isMarketOpenByType(typeVal) {
+  // type==4 => crypto (24/7)
+  try {
+    const t = parseInt(typeVal);
+    if (t === 4) return true;
+  } catch (_) {}
+  const day = new Date().getUTCDay(); // 0 Sunday, 6 Saturday
+  if (day === 0 || day === 6) return false;
+  return true;
+}
+
+async function closeOrder(req, res) {
+  const operationId = `close_order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for close order' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const req_user_id = normalizeStr(body.user_id);
+    const req_user_type = normalizeStr(body.user_type).toLowerCase();
+    const provided_close_price = toNumber(body.close_price);
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: 'order_id is required' });
+    }
+    if (!req_user_type || !['live', 'demo'].includes(req_user_type)) {
+      return res.status(400).json({ success: false, message: 'user_type must be live or demo' });
+    }
+    if (!req_user_id) {
+      return res.status(400).json({ success: false, message: 'user_id is required' });
+    }
+    if (tokenUserId && normalizeStr(req_user_id) !== normalizeStr(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
+    }
+    if (!Number.isNaN(provided_close_price) && !(provided_close_price > 0)) {
+      return res.status(400).json({ success: false, message: 'close_price must be greater than 0 when provided' });
+    }
+
+    // Load canonical order
+    const canonical = await _getCanonicalOrder(order_id);
+    let sqlRow = null;
+    if (!canonical) {
+      // Fallback to SQL
+      const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+      sqlRow = await OrderModel.findOne({ where: { order_id } });
+      if (!sqlRow) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+      // Basic ownership check with SQL row
+      if (normalizeStr(sqlRow.order_user_id) !== normalizeStr(req_user_id)) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      // Must be currently OPEN
+      const stRow = (sqlRow.order_status || '').toString().toUpperCase();
+      if (stRow && stRow !== 'OPEN') {
+        return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${stRow})` });
+      }
+      // Trading hours based on symbol and default group if canonical missing
+      try {
+        const sym = normalizeStr(sqlRow.symbol || sqlRow.order_company_name).toUpperCase();
+        const gf = await groupsCache.getGroupFields('Standard', sym, ['type']);
+        const gType = gf && gf.type != null ? gf.type : null;
+        if (!_isMarketOpenByType(gType)) {
+          return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+        }
+      } catch (e) {
+        logger.warn('GroupsCache trading-hours check failed (SQL fallback)', { error: e.message });
+      }
+    } else {
+      // Ownership check using canonical
+      if (normalizeStr(canonical.user_id) !== normalizeStr(req_user_id) || normalizeStr(canonical.user_type).toLowerCase() !== req_user_type) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      // Must be currently OPEN
+      const st = (canonical.status || canonical.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') {
+        return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+      }
+      // Trading hours check (if non-crypto, block weekends)
+      const groupName = normalizeStr(canonical.group || 'Standard');
+      const symbol = normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase();
+      let gType = null;
+      try {
+        const gf = await groupsCache.getGroupFields(groupName, symbol, ['type']);
+        gType = gf && gf.type != null ? gf.type : null;
+      } catch (e) {
+        logger.warn('GroupsCache getGroupFields failed for close check', { error: e.message, groupName, symbol });
+      }
+      if (!_isMarketOpenByType(gType)) {
+        return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+      }
+    }
+
+    // Read triggers from canonical to decide cancel ids
+    const symbol = (canonical && canonical.symbol)
+      ? normalizeStr(canonical.symbol).toUpperCase()
+      : (sqlRow ? normalizeStr(sqlRow.symbol || sqlRow.order_company_name).toUpperCase() : normalizeStr(body.symbol).toUpperCase());
+    const order_type = (canonical && canonical.order_type)
+      ? normalizeStr(canonical.order_type).toUpperCase()
+      : (sqlRow ? normalizeStr(sqlRow.order_type).toUpperCase() : normalizeStr(body.order_type).toUpperCase());
+    const willCancelTP = canonical
+      ? (canonical.take_profit != null && Number(canonical.take_profit) > 0)
+      : (sqlRow ? (sqlRow.take_profit != null && Number(sqlRow.take_profit) > 0) : false);
+    const willCancelSL = canonical
+      ? (canonical.stop_loss != null && Number(canonical.stop_loss) > 0)
+      : (sqlRow ? (sqlRow.stop_loss != null && Number(sqlRow.stop_loss) > 0) : false);
+
+    // Generate lifecycle ids
+    const close_id = await idGenerator.generateCloseOrderId();
+    const takeprofit_cancel_id = willCancelTP ? await idGenerator.generateTakeProfitCancelId() : undefined;
+    const stoploss_cancel_id = willCancelSL ? await idGenerator.generateStopLossCancelId() : undefined;
+
+    // Persist lifecycle ids into SQL row for traceability
+    try {
+      const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+      // Reuse fetched sqlRow if available
+      const rowToUpdate = sqlRow || await OrderModel.findOne({ where: { order_id } });
+      if (rowToUpdate) {
+        const idUpdates = { close_id };
+        if (takeprofit_cancel_id) idUpdates.takeprofit_cancel_id = takeprofit_cancel_id;
+        if (stoploss_cancel_id) idUpdates.stoploss_cancel_id = stoploss_cancel_id;
+        await rowToUpdate.update(idUpdates);
+      }
+    } catch (e) {
+      logger.warn('Failed to persist lifecycle ids before close', { order_id, error: e.message });
+    }
+
+    // Build payload to Python
+    const pyPayload = {
+      symbol,
+      order_type,
+      user_id: req_user_id,
+      user_type: req_user_type,
+      order_id,
+      status: 'CLOSED',
+      order_status: 'CLOSED',
+      close_id,
+    };
+    if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
+    if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
+    if (!Number.isNaN(provided_close_price) && provided_close_price > 0) pyPayload.close_price = provided_close_price;
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    let pyResp;
+    try {
+      pyResp = await axios.post(`${baseUrl}/api/orders/close`, pyPayload, { timeout: 20000 });
+    } catch (err) {
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      return res.status(statusCode).json({ success: false, order_id, reason: detail?.detail?.reason || detail?.reason || 'close_failed', error: detail?.detail || detail });
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    const flow = result.flow; // 'local' or 'provider'
+
+    // If local flow, finalize DB immediately
+    if (flow === 'local') {
+      try {
+        const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+        const row = await OrderModel.findOne({ where: { order_id } });
+        if (row) {
+          const updateFields = {
+            order_status: 'CLOSED',
+          };
+          if (result.close_price != null) updateFields.close_price = String(result.close_price);
+          if (result.net_profit != null) updateFields.net_profit = String(result.net_profit);
+          if (result.swap != null) updateFields.swap = String(result.swap);
+          if (result.total_commission != null) updateFields.commission = String(result.total_commission);
+          await row.update(updateFields);
+        }
+      } catch (e) {
+        logger.error('Failed to update SQL row after local close', { order_id, error: e.message });
+      }
+
+      // Update used margin mirror in SQL and emit portfolio events
+      try {
+        if (typeof result.used_margin_executed === 'number') {
+          await updateUserUsedMargin({ userType: req_user_type, userId: parseInt(req_user_id, 10), usedMargin: result.used_margin_executed });
+          try {
+            portfolioEvents.emitUserUpdate(req_user_type, req_user_id, { type: 'user_margin_update', used_margin_usd: result.used_margin_executed });
+          } catch (_) {}
+        }
+        try {
+          portfolioEvents.emitUserUpdate(req_user_type, req_user_id, { type: 'order_update', order_id, update: { order_status: 'CLOSED' } });
+        } catch (_) {}
+      } catch (mErr) {
+        logger.error('Failed to persist/emit margin updates after local close', { order_id, error: mErr.message });
+      }
+    } else {
+      // provider flow: DB will be updated by worker_close via RabbitMQ; we already persisted lifecycle IDs
+    }
+
+    return res.status(200).json({ success: true, data: result, order_id });
+  } catch (error) {
+    logger.error('closeOrder internal error', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+module.exports = { placeInstantOrder, closeOrder };

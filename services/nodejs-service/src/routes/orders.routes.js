@@ -93,4 +93,50 @@ const ordersController = require('../controllers/orders.controller');
  */
 router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrder);
 
+// POST /api/orders/close
+/**
+ * @swagger
+ * /api/orders/close:
+ *   post:
+ *     summary: Close an existing order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - user_id
+ *               - user_type
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *               user_id:
+ *                 type: string
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *               close_price:
+ *                 type: number
+ *                 description: Optional price hint (must be > 0 if provided)
+ *     responses:
+ *       200:
+ *         description: Close request processed
+ *       400:
+ *         description: Invalid payload
+ *       403:
+ *         description: Forbidden (JWT/user checks or market closed)
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (order not OPEN)
+ *       503:
+ *         description: Provider rejected/timeout
+ */
+router.post('/close', authenticateJWT, ordersController.closeOrder);
+
 module.exports = router;

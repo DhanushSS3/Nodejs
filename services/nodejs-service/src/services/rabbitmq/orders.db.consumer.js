@@ -16,7 +16,23 @@ function getOrderModel(userType) {
 }
 
 async function applyDbUpdate(msg) {
-  const { type, order_id, user_id, user_type, order_status, order_price, margin, commission, used_margin_usd } = msg || {};
+  const {
+    type,
+    order_id,
+    user_id,
+    user_type,
+    order_status,
+    order_price,
+    margin,
+    commission,
+    used_margin_usd,
+    // Close-specific new fields
+    close_price,
+    net_profit,
+    swap,
+    used_margin_executed,
+    used_margin_all,
+  } = msg || {};
   if (!order_id || !user_id || !user_type) {
     throw new Error('Missing required fields in DB update message');
   }
@@ -32,6 +48,11 @@ async function applyDbUpdate(msg) {
     margin,
     commission,
     used_margin_usd,
+    close_price,
+    net_profit,
+    swap,
+    used_margin_executed,
+    used_margin_all,
   });
 
   // Attempt to find existing row first
@@ -93,6 +114,16 @@ async function applyDbUpdate(msg) {
     if (commission != null && Number.isFinite(Number(commission))) {
       updateFields.commission = Number(commission).toFixed(8);
     }
+    // Close-specific fields
+    if (close_price != null && Number.isFinite(Number(close_price))) {
+      updateFields.close_price = Number(close_price).toFixed(8);
+    }
+    if (net_profit != null && Number.isFinite(Number(net_profit))) {
+      updateFields.net_profit = Number(net_profit).toFixed(8);
+    }
+    if (swap != null && Number.isFinite(Number(swap))) {
+      updateFields.swap = Number(swap).toFixed(8);
+    }
 
     if (Object.keys(updateFields).length > 0) {
       const before = {
@@ -107,6 +138,9 @@ async function applyDbUpdate(msg) {
         commission: row.commission != null ? row.commission.toString() : null,
         order_price: row.order_price != null ? row.order_price.toString() : null,
         order_status: row.order_status,
+        close_price: row.close_price != null ? row.close_price.toString() : null,
+        net_profit: row.net_profit != null ? row.net_profit.toString() : null,
+        swap: row.swap != null ? row.swap.toString() : null,
       };
       logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
       // Emit event for this user's portfolio stream
@@ -123,9 +157,10 @@ async function applyDbUpdate(msg) {
   }
 
   // Update user's used margin in SQL, if provided
-  if (used_margin_usd != null) {
+  const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
+  if (mirrorUsedMargin != null) {
     try {
-      await updateUserUsedMargin({ userType: String(user_type), userId: parseInt(String(user_id), 10), usedMargin: used_margin_usd });
+      await updateUserUsedMargin({ userType: String(user_type), userId: parseInt(String(user_id), 10), usedMargin: mirrorUsedMargin });
     } catch (e) {
       logger.error('Failed to persist used margin in SQL', { error: e.message, user_id, user_type });
       // Do not fail the message solely due to mirror write; treat as non-fatal
@@ -134,7 +169,7 @@ async function applyDbUpdate(msg) {
     try {
       portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
         type: 'user_margin_update',
-        used_margin_usd,
+        used_margin_usd: mirrorUsedMargin,
       });
     } catch (e) {
       logger.warn('Failed to emit portfolio event after user margin update', { error: e.message });
