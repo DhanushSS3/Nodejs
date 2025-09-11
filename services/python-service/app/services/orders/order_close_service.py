@@ -131,13 +131,29 @@ class OrderCloser:
             if close_price is None:
                 return {"ok": False, "reason": "missing_market_price"}
 
+            # Half-spread adjustment for local close
+            try:
+                spread = _safe_float(g.get("spread"))
+                spread_pip = _safe_float(g.get("spread_pip"))
+                half_spread = float((spread or 0.0) * (spread_pip or 0.0) / 2.0)
+            except Exception:
+                half_spread = 0.0
+            try:
+                cp = float(close_price)
+            except Exception:
+                cp = 0.0
+            if order_type == "BUY":
+                close_price_adj = cp - float(half_spread)
+            else:
+                close_price_adj = cp + float(half_spread)
+
             # Commission exit
             commission_exit = compute_exit_commission(
                 commission_rate=commission_rate,
                 commission_type=commission_type,
                 commission_value_type=commission_value_type,
                 quantity=qty,
-                close_price=float(close_price),
+                close_price=float(close_price_adj),
                 contract_size=contract_size,
             )
             # Commission entry if present in order hash
@@ -146,9 +162,9 @@ class OrderCloser:
 
             # Profit in native currency
             if order_type == "BUY":
-                pnl_native = (float(close_price) - float(entry_price)) * float(qty) * float(contract_size or 0.0)
+                pnl_native = (float(close_price_adj) - float(entry_price)) * float(qty) * float(contract_size or 0.0)
             else:
-                pnl_native = (float(entry_price) - float(close_price)) * float(qty) * float(contract_size or 0.0)
+                pnl_native = (float(entry_price) - float(close_price_adj)) * float(qty) * float(contract_size or 0.0)
 
             # Convert to USD when needed
             prices_cache: Dict[str, Dict[str, float]] = {}
@@ -171,7 +187,7 @@ class OrderCloser:
                 "order_id": order_id,
                 "symbol": symbol,
                 "order_type": order_type,
-                "close_price": float(close_price),
+                "close_price": float(close_price_adj),
                 "commission_entry": float(commission_entry or 0.0),
                 "commission_exit": float(commission_exit or 0.0),
                 "total_commission": float(total_commission),
@@ -457,21 +473,37 @@ class OrderCloser:
         commission_type = int(ctype_raw) if ctype_raw is not None else None
         commission_value_type = int(vtype_raw) if vtype_raw is not None else None
 
+        # Apply half-spread adjustment for provider-confirmed close price
+        try:
+            spread = _safe_float(g.get("spread"))
+            spread_pip = _safe_float(g.get("spread_pip"))
+            half_spread = float((spread or 0.0) * (spread_pip or 0.0) / 2.0)
+        except Exception:
+            half_spread = 0.0
+        try:
+            cp = float(close_price or 0.0)
+        except Exception:
+            cp = 0.0
+        if order_type == "BUY":
+            close_price_adj = cp - float(half_spread)
+        else:
+            close_price_adj = cp + float(half_spread)
+
         commission_exit = compute_exit_commission(
             commission_rate=commission_rate,
             commission_type=commission_type,
             commission_value_type=commission_value_type,
             quantity=qty,
-            close_price=float(close_price or 0.0),
+            close_price=float(close_price_adj),
             contract_size=contract_size,
         )
         commission_entry = _safe_float(order_hash.get("commission_entry")) or 0.0
         total_commission = float((commission_entry or 0.0) + (commission_exit or 0.0))
 
         if order_type == "BUY":
-            pnl_native = (float(close_price or 0.0) - float(entry_price)) * float(qty) * float(contract_size or 0.0)
+            pnl_native = (float(close_price_adj) - float(entry_price)) * float(qty) * float(contract_size or 0.0)
         else:
-            pnl_native = (float(entry_price) - float(close_price or 0.0)) * float(qty) * float(contract_size or 0.0)
+            pnl_native = (float(entry_price) - float(close_price_adj)) * float(qty) * float(contract_size or 0.0)
 
         profit_usd = pnl_native
         if profit_currency and str(profit_currency).upper() not in ("USD", "USDT"):
@@ -490,7 +522,7 @@ class OrderCloser:
             "order_id": order_id,
             "symbol": symbol,
             "order_type": order_type,
-            "close_price": float(close_price or 0.0),
+            "close_price": float(close_price_adj),
             "commission_entry": float(commission_entry or 0.0),
             "commission_exit": float(commission_exit or 0.0),
             "total_commission": float(total_commission),

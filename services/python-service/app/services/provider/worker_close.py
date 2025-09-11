@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 import orjson
 import aio_pika
+import aiohttp
 
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_close_service import OrderCloser
@@ -17,6 +18,10 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
 CLOSE_QUEUE = os.getenv("ORDER_WORKER_CLOSE_QUEUE", "order_worker_close_queue")
 DB_UPDATE_QUEUE = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+
+# Internal provider lookup (Node) for enriching lifecycle->canonical and order_data
+INTERNAL_PROVIDER_URL = os.getenv("INTERNAL_PROVIDER_URL", "http://127.0.0.1:3000/api/internal/provider")
+INTERNAL_PROVIDER_SECRET = os.getenv("INTERNAL_PROVIDER_SECRET", "")
 
 
 # ------------- Concurrency: Lightweight Redis lock -------------
@@ -126,7 +131,14 @@ class CloseWorker:
                 await self._ack(message)
                 return
 
-            # Acquire per-user lock to avoid race on used_margin recompute
+            # Ensure we have enough context to finalize: backfill order_data and user info from Node if needed
+            try:
+                await self._ensure_order_context(payload, er)
+            except Exception:
+                # Best-effort; continue
+                pass
+
+            # Acquire per-user lock to avoid race on used_margin recompute (after enrichment)
             lock_key = f"lock:user_margin:{payload.get('user_type')}:{payload.get('user_id')}"
             token = f"{os.getpid()}-{id(message)}"
             got_lock = await acquire_lock(lock_key, token, ttl_sec=8)
@@ -149,8 +161,21 @@ class CloseWorker:
                     close_price=close_price,
                 )
                 if not result.get("ok"):
-                    logger.error("[CLOSE:finalize_failed] order_id=%s reason=%s", order_id_dbg, result.get("reason"))
-                    await self._nack(message, requeue=True)
+                    reason = str(result.get("reason"))
+                    logger.error("[CLOSE:finalize_failed] order_id=%s reason=%s", order_id_dbg, reason)
+                    # Bounded retries to avoid infinite loop on unrecoverable context
+                    try:
+                        rkey = f"close_finalize_retries:{payload.get('order_id')}"
+                        cnt = await redis_cluster.incr(rkey)
+                        # expire retry counter in 10 minutes to avoid leaks
+                        await redis_cluster.expire(rkey, 600)
+                    except Exception:
+                        cnt = 1
+                    if cnt <= 3 and reason.startswith("cleanup_failed:") is False:
+                        await self._nack(message, requeue=True)
+                    else:
+                        logger.warning("[CLOSE:dropping] order_id=%s after %s retries due to %s", order_id_dbg, cnt, reason)
+                        await self._ack(message)
                     return
 
                 # Log calculated close data
@@ -210,6 +235,102 @@ class CloseWorker:
         except Exception as e:
             logger.exception("CloseWorker handle error: %s", e)
             await self._nack(message, requeue=True)
+
+    async def _ensure_order_context(self, payload: dict, er: dict) -> None:
+        """
+        Best-effort enrichment: resolve canonical order, user info and order_data fields by calling Node internal lookup
+        and populate Redis order_data + global lookups. This helps finalize_close when Redis is missing context.
+        """
+        any_id = (
+            str(payload.get("close_id") or "")
+            or str(er.get("exec_id") or "")
+            or str(payload.get("order_id") or "")
+        )
+        if not any_id:
+            return
+        data = await self._node_lookup_any_id(any_id)
+        if not data:
+            return
+        order = data.get("order") or {}
+        user = data.get("user") or {}
+        gcfg = data.get("group_config") or {}
+        can_id = str(order.get("order_id") or payload.get("order_id") or "")
+        if not can_id:
+            return
+        # Backfill order_data canonical hash
+        od_update = {}
+        if order.get("symbol"):
+            od_update["symbol"] = str(order.get("symbol")).upper()
+        if order.get("order_type"):
+            od_update["order_type"] = str(order.get("order_type")).upper()
+        if order.get("order_price") is not None:
+            od_update["order_price"] = str(order.get("order_price"))
+        if order.get("order_quantity") is not None:
+            od_update["order_quantity"] = str(order.get("order_quantity"))
+        if user.get("group"):
+            od_update["group"] = str(user.get("group"))
+        # Group config enrichments
+        for k_src, k_dst in (
+            ("type", "type"),
+            ("contract_size", "contract_size"),
+            ("profit", "profit"),
+            ("spread", "spread"),
+            ("spread_pip", "spread_pip"),
+            ("commission_rate", "commission_rate"),
+            ("commission_type", "commission_type"),
+            ("commission_value_type", "commission_value_type"),
+            ("group_margin", "group_margin"),
+            ("commision", "commission_rate"),
+            ("commision_type", "commission_type"),
+            ("commision_value_type", "commission_value_type"),
+        ):
+            if gcfg.get(k_src) is not None:
+                od_update[k_dst] = str(gcfg.get(k_src))
+        if od_update:
+            try:
+                await redis_cluster.hset(f"order_data:{can_id}", mapping=od_update)
+            except Exception:
+                pass
+        # Ensure global lookups for lifecycle ids map to canonical id
+        ids_to_map = [
+            order.get("order_id"),
+            order.get("close_id"),
+            order.get("cancel_id"),
+            order.get("modify_id"),
+            order.get("takeprofit_id"),
+            order.get("stoploss_id"),
+            order.get("takeprofit_cancel_id"),
+            order.get("stoploss_cancel_id"),
+        ]
+        try:
+            pipe = redis_cluster.pipeline()
+            for _id in ids_to_map:
+                if _id:
+                    pipe.set(f"global_order_lookup:{_id}", can_id)
+            await pipe.execute()
+        except Exception:
+            pass
+        # Enrich payload with user info if missing
+        if not payload.get("user_id") and user.get("id") is not None:
+            payload["user_id"] = str(user.get("id"))
+        if not payload.get("user_type") and user.get("user_type"):
+            payload["user_type"] = str(user.get("user_type")).lower()
+        if not payload.get("symbol") and order.get("symbol"):
+            payload["symbol"] = str(order.get("symbol")).upper()
+
+    async def _node_lookup_any_id(self, any_id: str) -> Optional[dict]:
+        timeout = aiohttp.ClientTimeout(total=3.0)
+        headers = {"X-Internal-Auth": INTERNAL_PROVIDER_SECRET} if INTERNAL_PROVIDER_SECRET else {}
+        url = f"{INTERNAL_PROVIDER_URL}/orders/lookup/{any_id}"
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    return data.get("data") or None
+        except Exception:
+            return None
 
     async def run(self):
         await self.connect()
