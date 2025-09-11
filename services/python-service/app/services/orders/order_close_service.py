@@ -441,7 +441,11 @@ class OrderCloser:
             logger.error("cleanup_after_close error for %s:%s order=%s: %s", user_type, user_id, order_id, e)
             return {"ok": False, "reason": "cleanup_exception"}
 
-    async def finalize_close(self, *, user_type: str, user_id: str, order_id: str, close_price: Optional[float] = None) -> Dict[str, Any]:
+    async def finalize_close(self, *, user_type: str, user_id: str, order_id: str, close_price: Optional[float] = None,
+                             fallback_symbol: Optional[str] = None,
+                             fallback_order_type: Optional[str] = None,
+                             fallback_entry_price: Optional[float] = None,
+                             fallback_qty: Optional[float] = None) -> Dict[str, Any]:
         """
         Finalize a close after provider EXECUTED report. Computes commissions, net profit, removes keys, and recomputes margins.
         """
@@ -453,11 +457,18 @@ class OrderCloser:
             # Fallback to canonical for metadata
             order_hash = await redis_cluster.hgetall(f"order_data:{order_id}") or {}
 
-        symbol = (order_hash.get("symbol") or "").upper()
-        order_type = (order_hash.get("order_type") or "").upper()
-        qty = _safe_float(order_hash.get("order_quantity")) or 0.0
-        entry_price = _safe_float(order_hash.get("order_price"))
-        if qty <= 0 or entry_price is None:
+        # Resolve fields from Redis first; if missing, use provided fallbacks from dispatcher payload
+        symbol = ((order_hash.get("symbol") or fallback_symbol) or "").upper()
+        order_type = ((order_hash.get("order_type") or fallback_order_type) or "").upper()
+        qty_val = _safe_float(order_hash.get("order_quantity"))
+        if qty_val is None:
+            qty_val = _safe_float(fallback_qty)
+        qty = float(qty_val or 0.0)
+        entry_price_val = _safe_float(order_hash.get("order_price"))
+        if entry_price_val is None:
+            entry_price_val = _safe_float(fallback_entry_price)
+        entry_price = entry_price_val
+        if qty <= 0 or entry_price is None or not symbol or not order_type:
             return {"ok": False, "reason": "missing_order_context"}
         if close_price is None:
             close_price = await _get_market_close_price(symbol, order_type)

@@ -131,6 +131,26 @@ class CloseWorker:
                 await self._ack(message)
                 return
 
+            # Per-order idempotency: skip if already finalized
+            try:
+                if await redis_cluster.get(f"close_finalized:{payload.get('order_id')}"):
+                    logger.info("[CLOSE:skip:idempotent] order_id=%s already finalized", order_id_dbg)
+                    await self._ack(message)
+                    return
+            except Exception:
+                pass
+
+            # Per-order processing guard to avoid duplicate concurrent processing
+            processing_key = f"close_processing:{payload.get('order_id')}"
+            try:
+                got_processing = await redis_cluster.set(processing_key, "1", ex=15, nx=True)
+            except Exception:
+                got_processing = True  # if Redis failed, proceed best-effort
+            if not got_processing:
+                logger.warning("[CLOSE:processing_exists] order_id=%s; ACK duplicate", order_id_dbg)
+                await self._ack(message)
+                return
+
             # Ensure we have enough context to finalize: backfill order_data and user info from Node if needed
             try:
                 await self._ensure_order_context(payload, er)
@@ -144,6 +164,10 @@ class CloseWorker:
             got_lock = await acquire_lock(lock_key, token, ttl_sec=8)
             if not got_lock:
                 logger.warning("Could not acquire lock %s; NACK and requeue", lock_key)
+                try:
+                    await redis_cluster.delete(processing_key)
+                except Exception:
+                    pass
                 await self._nack(message, requeue=True)
                 return
 
@@ -159,6 +183,10 @@ class CloseWorker:
                     user_id=str(payload.get("user_id")),
                     order_id=str(payload.get("order_id")),
                     close_price=close_price,
+                    fallback_symbol=str(payload.get("symbol") or ""),
+                    fallback_order_type=str(payload.get("order_type") or ""),
+                    fallback_entry_price=payload.get("order_price"),
+                    fallback_qty=payload.get("order_quantity"),
                 )
                 if not result.get("ok"):
                     reason = str(result.get("reason"))
@@ -172,6 +200,10 @@ class CloseWorker:
                     except Exception:
                         cnt = 1
                     if cnt <= 3 and reason.startswith("cleanup_failed:") is False:
+                        try:
+                            await redis_cluster.delete(processing_key)
+                        except Exception:
+                            pass
                         await self._nack(message, requeue=True)
                     else:
                         logger.warning("[CLOSE:dropping] order_id=%s after %s retries due to %s", order_id_dbg, cnt, reason)
@@ -226,10 +258,19 @@ class CloseWorker:
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
+                    # Mark finalized idempotency key to drop future duplicates
+                    try:
+                        await redis_cluster.setex(f"close_finalized:{payload.get('order_id')}", 7 * 24 * 3600, "1")
+                    except Exception:
+                        pass
                 except Exception:
                     logger.exception("Failed to publish DB update message for close")
             finally:
                 await release_lock(lock_key, token)
+                try:
+                    await redis_cluster.delete(processing_key)
+                except Exception:
+                    pass
 
             await self._ack(message)
         except Exception as e:
