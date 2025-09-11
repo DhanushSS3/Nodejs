@@ -76,3 +76,55 @@ class FinalizeCloseRequest(BaseModel):
     user_type: UserType = Field(..., description="User type: live or demo")
     order_id: str = Field(..., description="Canonical order id to finalize close for")
     close_price: float | None = Field(None, description="Executed close price (avgpx) from execution report; if omitted, service will fetch from market")
+
+
+class StopLossSetRequest(BaseModel):
+    order_id: str = Field(..., description="Canonical order id")
+    user_id: str = Field(..., description="User identifier")
+    user_type: UserType = Field(..., description="User type: live or demo")
+    symbol: str = Field(..., description="Trading symbol, e.g., EURUSD")
+    order_type: OrderType = Field(..., description="BUY or SELL")
+    stop_loss: float = Field(..., gt=0, description="Stop loss price from frontend (spread-included)")
+    order_quantity: float | None = Field(None, description="Optional order quantity for provider payload")
+    order_status: str | None = Field(None, description="Optional order_status passthrough (OPEN)")
+    status: str | None = Field(None, description="Optional UI status passthrough")
+    stoploss_id: str | None = Field(None, description="Lifecycle stoploss id (provider flow)")
+
+    @field_validator("symbol")
+    def symbol_upper_sl(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("symbol cannot be empty")
+        return v.upper()
+
+
+class StopLossSetResponse(BaseModel):
+    success: bool
+    message: str
+    data: dict
+
+
+class TakeProfitSetRequest(BaseModel):
+    order_id: str = Field(..., description="Canonical order id")
+    user_id: str = Field(..., description="User identifier")
+    user_type: UserType = Field(..., description="User type: live or demo")
+    symbol: str = Field(..., description="Trading symbol, e.g., EURUSD")
+    order_type: OrderType = Field(..., description="BUY or SELL")
+    take_profit: float = Field(..., gt=0, description="Take profit price from frontend (spread-included)")
+    order_quantity: float | None = Field(None, description="Optional order quantity for provider payload")
+    order_status: str | None = Field(None, description="Optional order_status passthrough (OPEN)")
+    status: str | None = Field(None, description="Optional UI status passthrough")
+    takeprofit_id: str | None = Field(None, description="Lifecycle takeprofit id (provider flow)")
+
+    @field_validator("symbol")
+    def symbol_upper_tp(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("symbol cannot be empty")
+        return v.upper()
+
+
+class TakeProfitSetResponse(BaseModel):
+    success: bool
+    message: str
+    data: dict

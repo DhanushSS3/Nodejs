@@ -4,12 +4,24 @@ import logging
 
 from ..services.orders.order_execution_service import OrderExecutor
 from ..services.orders.order_close_service import OrderCloser
+from ..services.orders.stoploss_service import StopLossService
+from ..services.orders.takeprofit_service import TakeProfitService
 from ..services.orders.service_provider_client import send_provider_order
 from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
-from .schemas.orders import InstantOrderRequest, InstantOrderResponse, CloseOrderRequest, CloseOrderResponse, FinalizeCloseRequest
+from .schemas.orders import (
+    InstantOrderRequest,
+    InstantOrderResponse,
+    CloseOrderRequest,
+    CloseOrderResponse,
+    FinalizeCloseRequest,
+    StopLossSetRequest,
+    StopLossSetResponse,
+    TakeProfitSetRequest,
+    TakeProfitSetResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +29,8 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 _executor = OrderExecutor()
 _closer = OrderCloser()
+_sl_service = StopLossService()
+_tp_service = TakeProfitService()
 
 
 @router.post("/instant/execute", response_model=InstantOrderResponse)

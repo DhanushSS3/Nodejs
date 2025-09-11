@@ -126,6 +126,10 @@ class Dispatcher:
                     target_queue = CLOSE_QUEUE
                 elif redis_status == "CLOSED" and ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
+                elif redis_status == "STOPLOSS" and ord_status == "PENDING":
+                    target_queue = SL_QUEUE
+                elif redis_status == "TAKEPROFIT" and ord_status == "PENDING":
+                    target_queue = TP_QUEUE
                 else:
                     logger.info(
                         "Unmapped routing state; DLQ. redis_status=%s ord_status=%s order_id=%s",

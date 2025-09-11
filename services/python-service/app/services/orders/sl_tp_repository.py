@@ -58,7 +58,9 @@ async def upsert_order_triggers(*,
                                 user_type: str,
                                 user_id: str,
                                 stop_loss: Optional[float] = None,
-                                take_profit: Optional[float] = None) -> bool:
+                                take_profit: Optional[float] = None,
+                                score_stop_loss: Optional[float] = None,
+                                score_take_profit: Optional[float] = None) -> bool:
     """
     Store triggers in Redis for monitoring. Member=order_id, score=trigger price.
     - Sorted sets per symbol+side for SL and TP: ensures O(logN) insert/remove and efficient range scans.
@@ -77,16 +79,30 @@ async def upsert_order_triggers(*,
             "user_id": str(user_id),
         }
         if stop_loss is not None:
-            mapping["stop_loss"] = str(float(stop_loss))
+            mapping["stop_loss"] = str(float(stop_loss))  # legacy
+            if score_stop_loss is not None:
+                mapping["stop_loss_user"] = str(float(stop_loss))
+                mapping["stop_loss_compare"] = str(float(score_stop_loss))
         if take_profit is not None:
-            mapping["take_profit"] = str(float(take_profit))
+            mapping["take_profit"] = str(float(take_profit))  # legacy
+            if score_take_profit is not None:
+                mapping["take_profit_user"] = str(float(take_profit))
+                mapping["take_profit_compare"] = str(float(score_take_profit))
         pipe = redis_cluster.pipeline()
         pipe.hset(_order_triggers_key(order_id), mapping=mapping)
         if stop_loss is not None:
-            pipe.zadd(_sl_key(symbol, side), {order_id: float(stop_loss)})
+            sl_score = float(score_stop_loss if score_stop_loss is not None else stop_loss)
+            pipe.zadd(_sl_key(symbol, side), {order_id: sl_score})
         if take_profit is not None:
-            pipe.zadd(_tp_key(symbol, side), {order_id: float(take_profit)})
+            tp_score = float(score_take_profit if score_take_profit is not None else take_profit)
+            pipe.zadd(_tp_key(symbol, side), {order_id: tp_score})
         await pipe.execute()
+        # Track active symbols for monitoring loop
+        try:
+            if stop_loss is not None or take_profit is not None:
+                await redis_cluster.sadd("trigger_active_symbols", symbol)
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error("upsert_order_triggers failed for %s: %s", order_id, e)
