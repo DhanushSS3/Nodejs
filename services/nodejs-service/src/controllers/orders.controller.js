@@ -7,6 +7,8 @@ const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const groupsCache = require('../services/groups.cache.service');
+const LiveUser = require('../models/liveUser.model');
+const DemoUser = require('../models/demoUser.model');
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -380,6 +382,8 @@ async function closeOrder(req, res) {
     const req_user_id = normalizeStr(body.user_id);
     const req_user_type = normalizeStr(body.user_type).toLowerCase();
     const provided_close_price = toNumber(body.close_price);
+    const incomingStatus = normalizeStr(body.status || 'CLOSED');
+    const incomingOrderStatus = normalizeStr(body.order_status || 'CLOSED');
     if (!order_id) {
       return res.status(400).json({ success: false, message: 'order_id is required' });
     }
@@ -431,8 +435,9 @@ async function closeOrder(req, res) {
       if (normalizeStr(canonical.user_id) !== normalizeStr(req_user_id) || normalizeStr(canonical.user_type).toLowerCase() !== req_user_type) {
         return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       }
-      // Must be currently OPEN
-      const st = (canonical.status || canonical.order_status || '').toString().toUpperCase();
+      // Must be currently OPEN (engine/UI state). Do NOT use canonical.status here
+      // because provider close flow may set status=CLOSED pre-ack for routing.
+      const st = (canonical.order_status || '').toString().toUpperCase();
       if (st && st !== 'OPEN') {
         return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
       }
@@ -470,7 +475,7 @@ async function closeOrder(req, res) {
     const takeprofit_cancel_id = willCancelTP ? await idGenerator.generateTakeProfitCancelId() : undefined;
     const stoploss_cancel_id = willCancelSL ? await idGenerator.generateStopLossCancelId() : undefined;
 
-    // Persist lifecycle ids into SQL row for traceability
+    // Persist lifecycle ids into SQL row for traceability, and store incoming status field
     try {
       const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
       // Reuse fetched sqlRow if available
@@ -479,6 +484,7 @@ async function closeOrder(req, res) {
         const idUpdates = { close_id };
         if (takeprofit_cancel_id) idUpdates.takeprofit_cancel_id = takeprofit_cancel_id;
         if (stoploss_cancel_id) idUpdates.stoploss_cancel_id = stoploss_cancel_id;
+        idUpdates.status = incomingStatus; // persist whatever frontend sent as status
         await rowToUpdate.update(idUpdates);
       }
     } catch (e) {
@@ -492,13 +498,14 @@ async function closeOrder(req, res) {
       user_id: req_user_id,
       user_type: req_user_type,
       order_id,
-      status: 'CLOSED',
-      order_status: 'CLOSED',
+      status: incomingStatus,
+      order_status: incomingOrderStatus,
       close_id,
     };
     if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
     if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
     if (!Number.isNaN(provided_close_price) && provided_close_price > 0) pyPayload.close_price = provided_close_price;
+    if (body.idempotency_key) pyPayload.idempotency_key = normalizeStr(body.idempotency_key);
 
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
@@ -526,6 +533,8 @@ async function closeOrder(req, res) {
           if (result.net_profit != null) updateFields.net_profit = String(result.net_profit);
           if (result.swap != null) updateFields.swap = String(result.swap);
           if (result.total_commission != null) updateFields.commission = String(result.total_commission);
+          // Also persist incoming status string for historical trace
+          updateFields.status = incomingStatus;
           await row.update(updateFields);
         }
       } catch (e) {
@@ -545,6 +554,16 @@ async function closeOrder(req, res) {
         } catch (_) {}
       } catch (mErr) {
         logger.error('Failed to persist/emit margin updates after local close', { order_id, error: mErr.message });
+      }
+
+      // Increment user's aggregate net_profit with this close P/L
+      try {
+        if (typeof result.net_profit === 'number') {
+          const UserModel = req_user_type === 'live' ? LiveUser : DemoUser;
+          await UserModel.increment({ net_profit: result.net_profit }, { where: { id: parseInt(req_user_id, 10) } });
+        }
+      } catch (e) {
+        logger.error('Failed to increment user net_profit after local close', { user_id: req_user_id, error: e.message });
       }
     } else {
       // provider flow: DB will be updated by worker_close via RabbitMQ; we already persisted lifecycle IDs

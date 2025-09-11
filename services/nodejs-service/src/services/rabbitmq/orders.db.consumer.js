@@ -2,6 +2,8 @@ const amqp = require('amqplib');
 const logger = require('../logger.service');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
+const LiveUser = require('../../models/liveUser.model');
+const DemoUser = require('../../models/demoUser.model');
 const { updateUserUsedMargin } = require('../user.margin.service');
 // Redis cluster (used to fetch canonical order data if SQL row missing)
 const { redisCluster } = require('../../../config/redis');
@@ -99,6 +101,25 @@ async function applyDbUpdate(msg) {
     } catch (e) {
       logger.error('Failed to backfill SQL order from Redis canonical', { order_id, error: e.message });
     }
+  }
+
+  // Increment user's aggregate net_profit for close confirmations (idempotent per order_id)
+  try {
+    if (type === 'ORDER_CLOSE_CONFIRMED' && net_profit != null && Number.isFinite(Number(net_profit))) {
+      const key = `close_np_applied:${String(order_id)}`;
+      // NX ensure we only apply once; expire after 7 days as a safety window
+      const setRes = await redisCluster.set(key, '1', 'EX', 7 * 24 * 3600, 'NX');
+      if (setRes) {
+        const np = Number(net_profit);
+        const UserModel = String(user_type) === 'live' ? LiveUser : DemoUser;
+        await UserModel.increment({ net_profit: np }, { where: { id: parseInt(String(user_id), 10) } });
+        logger.info('Applied user net_profit increment from close', { user_id: String(user_id), user_type: String(user_type), order_id: String(order_id), net_profit: np });
+      } else {
+        logger.info('Skip user net_profit increment; already applied for order', { order_id: String(order_id) });
+      }
+    }
+  } catch (e) {
+    logger.error('Failed to increment user net_profit from DB consumer', { error: e.message, order_id: String(order_id) });
   }
 
   // If still no row, nothing else we can do; avoid throwing to prevent poison messages

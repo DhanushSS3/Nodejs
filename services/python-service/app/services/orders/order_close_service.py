@@ -262,6 +262,7 @@ class OrderCloser:
 
         provider_close = {
             "order_id": order_id,
+            "close_id": payload.get("close_id"),
             "symbol": symbol,
             "order_type": order_type,
             "close_price": close_price,
@@ -286,7 +287,18 @@ class OrderCloser:
         if not okc:
             return {"ok": False, "reason": f"provider_close_send_failed:{via_c}"}
 
-        # Wait for provider EXECUTED/REJECTED for close_id (preferred) or order_id
+        # If there were NO cancel steps, return immediately without waiting for provider ack
+        if len(cancel_steps) == 0:
+            return {
+                "ok": True,
+                "flow": flow,
+                "order_id": order_id,
+                "provider_close_sent": True,
+                "status": "CLOSED",
+                "note": "Close sent to provider; ack and finalization will be processed asynchronously",
+            }
+
+        # Otherwise (had cancels), wait for provider EXECUTED/REJECTED for close_id (preferred) or order_id
         close_any_ids: List[str] = []
         if payload.get("close_id"):
             close_any_ids.append(str(payload.get("close_id")))

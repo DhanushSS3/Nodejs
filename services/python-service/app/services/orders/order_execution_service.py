@@ -369,6 +369,7 @@ class OrderExecutor:
                 "user_id": user_id,
                 "user_type": user_type,
                 "symbol": symbol,
+                "status": "OPEN",
                 "order_type": order_type,
                 "order_quantity": order_qty,
                 "order_price": exec_price,
