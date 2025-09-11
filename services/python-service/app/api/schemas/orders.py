@@ -42,3 +42,37 @@ class InstantOrderResponse(BaseModel):
     success: bool
     message: str
     data: dict
+
+
+class CloseOrderRequest(BaseModel):
+    symbol: str = Field(..., description="Trading symbol, e.g., EURUSD")
+    order_type: OrderType = Field(..., description="BUY or SELL")
+    user_id: str = Field(..., description="User identifier")
+    user_type: UserType = Field(..., description="User type: live or demo")
+    order_id: str = Field(..., description="Canonical order id to close")
+    status: str = Field("CLOSED", description="Frontend/UI status, must be CLOSED")
+    order_status: str = Field("CLOSED", description="Engine order_status, must be CLOSED")
+    close_id: str | None = Field(None, description="Lifecycle close id (provider flow requires this)")
+    stoploss_cancel_id: str | None = Field(None, description="Lifecycle cancel id for stoploss (provider flow)")
+    takeprofit_cancel_id: str | None = Field(None, description="Lifecycle cancel id for takeprofit (provider flow)")
+    close_price: float | None = Field(None, description="Optional proposed close price; local flow will fetch from market")
+
+    @field_validator("symbol")
+    def symbol_upper(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("symbol cannot be empty")
+        return v.upper()
+
+
+class CloseOrderResponse(BaseModel):
+    success: bool
+    message: str
+    data: dict
+
+
+class FinalizeCloseRequest(BaseModel):
+    user_id: str = Field(..., description="User identifier")
+    user_type: UserType = Field(..., description="User type: live or demo")
+    order_id: str = Field(..., description="Canonical order id to finalize close for")
+    close_price: float | None = Field(None, description="Executed close price (avgpx) from execution report; if omitted, service will fetch from market")

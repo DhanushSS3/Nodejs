@@ -3,18 +3,20 @@ from typing import Dict, Any
 import logging
 
 from ..services.orders.order_execution_service import OrderExecutor
+from ..services.orders.order_close_service import OrderCloser
 from ..services.orders.service_provider_client import send_provider_order
 from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
-from .schemas.orders import InstantOrderRequest, InstantOrderResponse
+from .schemas.orders import InstantOrderRequest, InstantOrderResponse, CloseOrderRequest, CloseOrderResponse, FinalizeCloseRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
 _executor = OrderExecutor()
+_closer = OrderCloser()
 
 
 @router.post("/instant/execute", response_model=InstantOrderResponse)
@@ -139,6 +141,64 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
         raise
     except Exception as e:
         logger.error(f"instant_execute_order error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/close", response_model=CloseOrderResponse)
+async def close_order_endpoint(payload: CloseOrderRequest):
+    """
+    Close an existing order. Supports local (demo/Rock) and provider flows.
+    For provider flow, cancels SL/TP first (if provided cancel ids), waits for CANCELLED acks, then sends close.
+    """
+    try:
+        result = await _closer.close_order(payload.model_dump(mode="json"))
+        if not result.get("ok"):
+            reason = result.get("reason", "close_failed")
+            # Validation errors
+            if reason in ("missing_fields", "invalid_order_type", "invalid_close_status", "missing_or_invalid_quantity", "missing_entry_price"):
+                raise HTTPException(status_code=400, detail=result)
+            if reason.startswith("provider_send_failed") or reason.startswith("provider_close_send_failed") or reason.startswith("cancel_ack_timeout") or reason.startswith("cancel_request_rejected") or reason.startswith("close_request_rejected") or reason.startswith("close_ack_timeout"):
+                raise HTTPException(status_code=503, detail=result)
+            if reason.startswith("cleanup_failed"):
+                raise HTTPException(status_code=500, detail=result)
+            raise HTTPException(status_code=500, detail=result)
+
+        return {
+            "success": True,
+            "message": "Close processed",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"close_order_endpoint error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/close/finalize", response_model=CloseOrderResponse)
+async def finalize_close_endpoint(payload: FinalizeCloseRequest):
+    """
+    Finalize a close after provider EXECUTED report.
+    Node should call this when it confirms ord_status=EXECUTED for the close request.
+    """
+    try:
+        result = await _closer.finalize_close(
+            user_type=str(payload.user_type.value if hasattr(payload.user_type, 'value') else payload.user_type),
+            user_id=str(payload.user_id),
+            order_id=str(payload.order_id),
+            close_price=float(payload.close_price) if payload.close_price is not None else None,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=500, detail=result)
+        return {
+            "success": True,
+            "message": "Close finalized",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"finalize_close_endpoint error: {e}")
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 

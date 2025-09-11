@@ -232,6 +232,26 @@ class ProviderConnectionManager:
                 except Exception:
                     report = None
                 if report is not None:
+                    # Persist a short-lived ack in Redis for lifecycle-level awaits (cancel/close ids)
+                    try:
+                        ack_ids = set()
+                        oid = report.get("order_id")
+                        if oid:
+                            ack_ids.add(str(oid))
+                        exec_id = report.get("exec_id")
+                        if exec_id:
+                            ack_ids.add(str(exec_id))
+                        if ack_ids:
+                            pipe = redis_cluster.pipeline()
+                            for _id in ack_ids:
+                                try:
+                                    pipe.setex(f"provider:ack:{_id}", 60, orjson.dumps(report))
+                                except Exception:
+                                    pass
+                            await pipe.execute()
+                    except Exception:
+                        # best-effort only
+                        pass
                     # Enrich with group/symbol spread data before publish; add DB fallback via Node
                     try:
                         lifecycle_id = report.get("order_id") or report.get("exec_id")
