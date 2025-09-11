@@ -53,17 +53,18 @@ class RedisUserCacheService {
   }
 
   /**
-   * Generate Redis key for user
+   * Generate Redis key for user config (hash-tagged primary)
+   * Pattern: user:{userType:userId}:config
    */
   getUserKey(userType, userId) {
-    return `user:${userType}:${userId}:config`;
+    return `user:{${userType}:${userId}}:config`;
   }
 
   /**
-   * Generate hash-tagged Redis key for user to ensure same cluster slot
+   * Backward-compat alias to getUserKey (hash-tagged)
    */
   getTaggedUserKey(userType, userId) {
-    return `user:{${userType}:${userId}}:config`;
+    return this.getUserKey(userType, userId);
   }
 
   /**
@@ -121,19 +122,37 @@ class RedisUserCacheService {
     try {
       logger.info('Starting cache population...');
       
-      // Clear existing cache - handle Redis cluster CROSSSLOT limitation
-      const pattern = 'user:*:*:config';
-      const keys = await this.redis.keys(pattern);
-      if (keys.length > 0) {
-        // Delete keys one by one to avoid CROSSSLOT errors in Redis cluster
-        for (const key of keys) {
-          try {
-            await this.redis.del(key);
-          } catch (delError) {
-            logger.warn(`Failed to delete key ${key}:`, delError.message);
+      // Clear existing cache across ALL cluster masters (both legacy and tagged patterns)
+      const patterns = ['user:*:*:config', 'user:{*}:config'];
+      let cleared = 0;
+      try {
+        const masters = this.redis.nodes('master');
+        for (const node of masters) {
+          for (const pat of patterns) {
+            let nodeKeys = [];
+            try {
+              nodeKeys = await node.keys(pat);
+            } catch (e) {
+              // Fallback to SCAN if KEYS not available
+              let cursor = '0';
+              do {
+                const res = await node.scan(cursor, 'MATCH', pat, 'COUNT', 500);
+                cursor = res[0];
+                nodeKeys.push(...(res[1] || []));
+              } while (cursor !== '0');
+            }
+            for (const k of nodeKeys) {
+              try { await node.del(k); cleared += 1; } catch (delError) {
+                logger.warn(`Failed to delete key ${k}:`, delError.message);
+              }
+            }
           }
         }
-        logger.info(`Cleared ${keys.length} existing cache entries`);
+        if (cleared > 0) {
+          logger.info(`Cleared ${cleared} existing cache entries`);
+        }
+      } catch (clearErr) {
+        logger.warn('Failed to clear existing user config cache across cluster:', clearErr.message);
       }
 
       // Cache live users
@@ -148,10 +167,8 @@ class RedisUserCacheService {
 
       for (const user of liveUsers) {
         const key = this.getUserKey('live', user.id);
-        const taggedKey = this.getTaggedUserKey('live', user.id);
         const userData = this.extractLiveUserFields(user);
         await this.redis.hset(key, userData);
-        await this.redis.hset(taggedKey, userData);
       }
 
       // Cache demo users
@@ -164,10 +181,8 @@ class RedisUserCacheService {
 
       for (const user of demoUsers) {
         const key = this.getUserKey('demo', user.id);
-        const taggedKey = this.getTaggedUserKey('demo', user.id);
         const userData = this.extractDemoUserFields(user);
         await this.redis.hset(key, userData);
-        await this.redis.hset(taggedKey, userData);
       }
 
       logger.info(`Cache populated: ${liveUsers.length} live users, ${demoUsers.length} demo users`);
@@ -184,9 +199,10 @@ class RedisUserCacheService {
     try {
       const key = this.getUserKey(userType, userId);
       let userData = await this.redis.hgetall(key);
+      // Optional fallback to legacy key during transition (should be empty after flush)
       if (!userData || Object.keys(userData).length === 0) {
-        const taggedKey = this.getTaggedUserKey(userType, userId);
-        userData = await this.redis.hgetall(taggedKey);
+        const legacyKey = `user:${userType}:${userId}:config`;
+        userData = await this.redis.hgetall(legacyKey);
       }
       
       if (Object.keys(userData).length === 0) {
@@ -223,7 +239,6 @@ class RedisUserCacheService {
   async updateUser(userType, userId, updatedFields) {
     try {
       const key = this.getUserKey(userType, userId);
-      const taggedKey = this.getTaggedUserKey(userType, userId);
       
       // Add timestamp
       const fieldsWithTimestamp = {
@@ -232,7 +247,6 @@ class RedisUserCacheService {
       };
 
       await this.redis.hset(key, fieldsWithTimestamp);
-      await this.redis.hset(taggedKey, fieldsWithTimestamp);
       logger.info(`Updated cache for user ${userType}:${userId}`);
     } catch (error) {
       logger.error(`Error updating user ${userType}:${userId} in cache:`, error);
@@ -246,9 +260,7 @@ class RedisUserCacheService {
   async removeUser(userType, userId) {
     try {
       const key = this.getUserKey(userType, userId);
-      const taggedKey = this.getTaggedUserKey(userType, userId);
       await this.redis.del(key);
-      await this.redis.del(taggedKey);
       logger.info(`Removed user ${userType}:${userId} from cache`);
     } catch (error) {
       logger.error(`Error removing user ${userType}:${userId} from cache:`, error);
@@ -294,16 +306,23 @@ class RedisUserCacheService {
    */
   async getUsersByCountry(userType, countryId) {
     try {
-      const pattern = `user:${userType}:*:config`;
-      
-      // Use SCAN instead of KEYS for better performance in Redis cluster
+      // Hash-tagged pattern
+      const pattern = `user:{${userType}:*}:config`;
+      // Scan across all cluster masters
       const keys = [];
-      let cursor = '0';
-      do {
-        const result = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
-        cursor = result[0];
-        keys.push(...result[1]);
-      } while (cursor !== '0');
+      try {
+        const masters = this.redis.nodes('master');
+        for (const node of masters) {
+          let cursor = '0';
+          do {
+            const result = await node.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+            cursor = result[0];
+            keys.push(...(result[1] || []));
+          } while (cursor !== '0');
+        }
+      } catch (scanErr) {
+        logger.warn(`Failed cluster scan for pattern ${pattern}:`, scanErr.message);
+      }
 
       const users = [];
       for (const key of keys) {
@@ -335,33 +354,38 @@ class RedisUserCacheService {
    */
   async getCacheStats() {
     try {
-      const livePattern = 'user:live:*:config';
-      const demoPattern = 'user:demo:*:config';
+      const livePattern = 'user:{live:*}:config';
+      const demoPattern = 'user:{demo:*}:config';
       
-      // Use SCAN instead of KEYS for Redis cluster compatibility
-      const liveKeys = [];
-      const demoKeys = [];
-      
-      // Scan for live users
-      let cursor = '0';
-      do {
-        const result = await this.redis.scan(cursor, 'MATCH', livePattern, 'COUNT', 100);
-        cursor = result[0];
-        liveKeys.push(...result[1]);
-      } while (cursor !== '0');
-      
-      // Scan for demo users
-      cursor = '0';
-      do {
-        const result = await this.redis.scan(cursor, 'MATCH', demoPattern, 'COUNT', 100);
-        cursor = result[0];
-        demoKeys.push(...result[1]);
-      } while (cursor !== '0');
+      // Scan across all cluster masters for both patterns
+      let liveCount = 0;
+      let demoCount = 0;
+      try {
+        const masters = this.redis.nodes('master');
+        for (const node of masters) {
+          // live
+          let cursor = '0';
+          do {
+            const res = await node.scan(cursor, 'MATCH', livePattern, 'COUNT', 200);
+            cursor = res[0];
+            liveCount += (res[1] || []).length;
+          } while (cursor !== '0');
+          // demo
+          cursor = '0';
+          do {
+            const res = await node.scan(cursor, 'MATCH', demoPattern, 'COUNT', 200);
+            cursor = res[0];
+            demoCount += (res[1] || []).length;
+          } while (cursor !== '0');
+        }
+      } catch (scanErr) {
+        logger.warn('Cluster scan failed while computing cache stats:', scanErr.message);
+      }
 
       return {
-        live_users: liveKeys.length,
-        demo_users: demoKeys.length,
-        total_users: liveKeys.length + demoKeys.length,
+        live_users: liveCount,
+        demo_users: demoCount,
+        total_users: liveCount + demoCount,
         is_initialized: this.isInitialized
       };
     } catch (error) {

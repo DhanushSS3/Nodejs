@@ -20,6 +20,7 @@ from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.symbol_margin_aggregator import compute_symbol_margin
 from app.services.portfolio.conversion_utils import convert_to_usd as portfolio_convert_to_usd
 from app.services.portfolio.user_margin_service import compute_user_total_margin
+from app.services.orders.order_repository import fetch_user_config as repo_fetch_user_config
 
 # Env-driven strict mode
 STRICT_MODE = os.getenv("PORTFOLIO_STRICT_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -299,42 +300,33 @@ class PortfolioCalculatorListener:
 
     async def _fetch_user_config(self, user_type: str, user_id: str) -> Dict:
         """
-        Fetch user's config without silent defaults.
-        Key: user:{{user_type:user_id}}:config (Hash)
-        Returns dict with parsed values: {'balance': Optional[float], 'leverage': Optional[float], 'group': str}
-        - balance: None if missing/unparsable
-        - leverage: float (>0) if parsable and positive, else 0.0
-        - group: defaults to 'Standard' if missing
+        Fetch user's config via repository to centralize key handling (hash-tagged first, legacy fallback).
+        Returns dict: {'balance': Optional[float], 'leverage': float, 'group': str}
         """
-        key = f"user:{{{user_type}:{user_id}}}:config"
         try:
-            data = await redis_cluster.hgetall(key)
+            cfg = await repo_fetch_user_config(user_type, user_id)
         except Exception as e:
-            self.logger.error(f"Error fetching user config for {user_type}:{user_id}: {e}")
-            data = {}
+            self.logger.error(f"Error fetching user config via repository for {user_type}:{user_id}: {e}")
+            cfg = {}
 
-        balance: Optional[float]
-        leverage: float = 0.0
-        group = (data.get('group') or 'Standard') if data else 'Standard'
-
-        # Parse balance
-        if data and ('wallet_balance' in data):
-            try:
-                balance = float(data.get('wallet_balance'))
-            except (TypeError, ValueError):
-                balance = None
-        else:
+        # Map repository fields to calculator expectations
+        balance: Optional[float] = None
+        try:
+            if cfg and (cfg.get('wallet_balance') is not None):
+                balance = float(cfg.get('wallet_balance'))
+        except (TypeError, ValueError):
             balance = None
 
-        # Parse leverage
-        if data and ('leverage' in data):
-            try:
-                lev = float(data.get('leverage'))
+        leverage: float = 0.0
+        try:
+            if cfg and (cfg.get('leverage') is not None):
+                lev = float(cfg.get('leverage'))
                 if lev > 0:
                     leverage = lev
-            except (TypeError, ValueError):
-                leverage = 0.0
+        except (TypeError, ValueError):
+            leverage = 0.0
 
+        group = (cfg.get('group') or 'Standard') if cfg else 'Standard'
         return {'balance': balance, 'leverage': leverage, 'group': group}
 
     async def _validate_user_inputs(self, user_cfg: Dict, orders: List[Dict], prices: Dict, group_data: Dict) -> Tuple[List[str], Dict[str, str], List[str]]:

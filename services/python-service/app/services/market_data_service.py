@@ -122,8 +122,9 @@ class MarketDataService:
     
     async def _validate_and_parse_partial_price(self, symbol: str, price_data: Dict[str, str], timestamp: int) -> Optional[tuple]:
         """
-        Validate and parse individual symbol partial price data
-        Handles cases where only 'buy' or 'sell' is provided
+        Parse individual symbol partial price data (no bid/ask relational validation)
+        Handles cases where only 'buy' or 'sell' is provided. Any provided side is accepted
+        and written as-is after float parsing.
         
         Args:
             symbol: Trading symbol (e.g., 'EURUSD')
@@ -137,58 +138,33 @@ class MarketDataService:
             # Extract price data (partial updates allowed)
             buy_str = price_data.get('buy')
             sell_str = price_data.get('sell')
-            
-            if not buy_str and not sell_str:
-                logger.info(f"No price data provided for {symbol}")
+
+            if buy_str is None and sell_str is None:
+                logger.debug(f"No price data provided for {symbol}")
                 return None
-            
+
             update_fields = {}
-            
-            # Parse buy price if provided
-            if buy_str:
+
+            # Parse buy price if provided (buy -> bid)
+            if buy_str is not None:
                 try:
-                    bid_price = float(buy_str)  # buy -> bid (what market pays when user sells)
-                    if bid_price <= 0:
-                        logger.info(f"Invalid buy price for {symbol}: {bid_price}")
-                        return None
-                    update_fields['bid'] = bid_price
+                    update_fields['bid'] = float(buy_str)
                 except (ValueError, TypeError) as e:
-                    logger.info(f"Failed to parse buy price for {symbol}: {e}")
-                    return None
-            
-            # Parse sell price if provided
-            if sell_str:
+                    logger.debug(f"Failed to parse buy price for {symbol}: {e}")
+
+            # Parse sell price if provided (sell -> ask)
+            if sell_str is not None:
                 try:
-                    ask_price = float(sell_str)  # sell -> ask (what market asks when user buys)
-                    if ask_price <= 0:
-                        logger.info(f"Invalid sell price for {symbol}: {ask_price}")
-                        return None
-                    update_fields['ask'] = ask_price
+                    update_fields['ask'] = float(sell_str)
                 except (ValueError, TypeError) as e:
-                    logger.info(f"Failed to parse sell price for {symbol}: {e}")
-                    return None
-            
-            # If both prices are provided, validate bid <= ask
-            if 'bid' in update_fields and 'ask' in update_fields:
-                if update_fields['bid'] > update_fields['ask']:
-                    logger.debug(f"Bid > Ask for {symbol}: bid={update_fields['bid']}, ask={update_fields['ask']}")
-                    return None
-            
-            # If only one price is provided, we need to check against existing price in Redis
-            elif len(update_fields) == 1:
-                existing_price = await self._get_existing_price_for_validation(symbol)
-                if existing_price:
-                    if 'bid' in update_fields and 'ask' in existing_price:
-                        if update_fields['bid'] > existing_price['ask']:
-                            logger.info(f"New bid > existing ask for {symbol}: bid={update_fields['bid']}, existing_ask={existing_price['ask']}")
-                            return None
-                    elif 'ask' in update_fields and 'bid' in existing_price:
-                        if existing_price['bid'] > update_fields['ask']:
-                            logger.info(f"Existing bid > new ask for {symbol}: existing_bid={existing_price['bid']}, ask={update_fields['ask']}")
-                            return None
-            
+                    logger.debug(f"Failed to parse sell price for {symbol}: {e}")
+
+            # If neither side parsed successfully, skip
+            if not update_fields:
+                return None
+
             return (symbol, update_fields, timestamp)
-            
+
         except Exception as e:
             logger.error(f"Unexpected error processing partial price for {symbol}: {e}")
             return None

@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from typing import Optional, Dict
 from app.config.redis_config import redis_cluster
 
@@ -34,7 +35,7 @@ async def convert_to_usd(
         if not from_currency:
             return None if strict else amount
         fc = str(from_currency).upper()
-        if fc == "USD":
+        if fc in ("USD", "USDT"):
             return float(amount)
 
         cache = prices_cache or {}
@@ -58,7 +59,7 @@ async def convert_to_usd(
                 rate = ask
                 invert = True
 
-        # 2) Fallback to Redis
+        # 2) Fallback to Redis per-symbol hashes
         if rate == 0.0:
             # Try direct first
             data = await redis_cluster.hmget(f"market:{direct}", ["ask"])  # expect [ask]
@@ -75,8 +76,36 @@ async def convert_to_usd(
                         rate = ask2
                         invert = True
 
+        # 3) Fallback to global snapshot hash market:prices (JSON values)
+        if rate == 0.0:
+            try:
+                js = await redis_cluster.hget("market:prices", direct)
+                if js:
+                    try:
+                        obj = json.loads(js)
+                        ask = _safe_float((obj or {}).get("ask"))
+                        if ask and ask > 0:
+                            rate = ask
+                            invert = False
+                    except Exception:
+                        pass
+                if rate == 0.0:
+                    js2 = await redis_cluster.hget("market:prices", inverse)
+                    if js2:
+                        try:
+                            obj2 = json.loads(js2)
+                            ask2 = _safe_float((obj2 or {}).get("ask"))
+                            if ask2 and ask2 > 0:
+                                rate = ask2
+                                invert = True
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.warning(f"market:prices fallback failed for {fc}->USD: {e}")
+
         if rate == 0.0:
             if strict:
+                logger.warning(f"Conversion rate not found for {fc}->USD (no {direct} or {inverse}); strict=True returning None")
                 return None
             logger.warning(f"Conversion rate not found for {fc}->USD; returning amount unchanged (non-strict)")
             return float(amount)

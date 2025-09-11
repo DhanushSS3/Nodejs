@@ -67,6 +67,7 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     tagged_key = f"user:{{{user_type}:{user_id}}}:config"
     legacy_key = f"user:{user_type}:{user_id}:config"
     data: Dict[str, Any] = {}
+    used_legacy = False
     # Attempt tagged key first
     try:
         data = await redis_cluster.hgetall(tagged_key)
@@ -77,9 +78,18 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     if not data:
         try:
             data = await redis_cluster.hgetall(legacy_key)
+            if data:
+                used_legacy = True
         except Exception as e:
             logger.error("fetch_user_config legacy hgetall failed for %s:%s: %s", user_type, user_id, e)
             data = {}
+
+    # If we used legacy, backfill into tagged to stabilize future reads
+    if used_legacy and data:
+        try:
+            await redis_cluster.hset(tagged_key, mapping=data)
+        except Exception as be:
+            logger.warning("fetch_user_config backfill to tagged failed for %s:%s: %s", user_type, user_id, be)
 
     # Normalize types safely
     def _f(v):

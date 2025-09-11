@@ -15370,3 +15370,203 @@
 {"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:32:51.102Z"}
 {"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:32:56.322Z"}
 {"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:32:57.994Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-10T12:33:54.956Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-10T12:33:54.960Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-10T12:33:55.373Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-10T12:33:55.853Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-10T12:33:56.321Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-10T12:33:56.826Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-10T12:33:57.234Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-10T12:33:57.686Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-10T12:33:58.076Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-10T12:33:58.472Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-10T12:33:58.846Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-10T12:33:59.256Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-10T12:33:59.657Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-10T12:34:00.105Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-10T12:34:00.451Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-10T12:34:00.946Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-10T12:34:01.359Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-10T12:34:01.765Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-10T12:34:01.869Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 6912ms","timestamp":"2025-09-10T12:34:01.869Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-10T12:34:01.876Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:34:24.566Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:34:53.210Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:35:53.205Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:35:55.144Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:41:04.465Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /instant/place: jwt expired","timestamp":"2025-09-10T12:48:38.708Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:48:55.865Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:00.879Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:03.271Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:05.700Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:08.055Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:10.809Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:14.200Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:16.756Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:29.700Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:31.239Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:33.156Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:35.175Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:37.155Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:39.362Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:41.275Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:43.390Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:45.841Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:47.802Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:49.928Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:52.050Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:54.162Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:56.035Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:49:57.894Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:01.616Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:03.638Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:05.545Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:07.414Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:09.629Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:21.870Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:23.537Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:25.578Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:27.390Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:29.205Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:30.928Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:32.690Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:34.503Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:36.112Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:37.654Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:39.273Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:40.664Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:41.999Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:43.331Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:44.809Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:46.199Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:47.540Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:48.880Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:50.230Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:51.597Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:53.009Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:54.272Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:55.577Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:50:57.038Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:01.734Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:03.596Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:05.206Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:07.303Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:08.594Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:09.927Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:12.024Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:13.389Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:14.397Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:15.603Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:16.860Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:18.168Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:19.810Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:23.567Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:27.572Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:28.979Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:30.546Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:31.877Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:33.224Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:34.436Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:35.635Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:36.817Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:37.902Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:38.925Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:40.004Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:41.102Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:42.202Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:43.644Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:44.507Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:45.949Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:47.086Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:48.342Z"}
+{"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-10T12:51:49.582Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-11T04:35:04.109Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-11T04:35:04.126Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-11T04:35:04.418Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-11T04:35:04.624Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-11T04:35:04.892Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-11T04:35:05.219Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-11T04:35:05.526Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-11T04:35:05.738Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-11T04:35:05.941Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-11T04:35:06.184Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-11T04:35:06.533Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-11T04:35:06.795Z"}
+{"level":"info","message":"Groups sync already in progress by another instance","timestamp":"2025-09-11T04:36:16.609Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-11T04:40:10.936Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-11T04:40:10.980Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-11T04:40:11.004Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-11T04:40:11.006Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-11T04:40:11.006Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-11T04:40:11.006Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1000,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-09-11T04:40:11.015Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-11T04:40:11.016Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-11T04:40:11.021Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:IND50\",\"groups:{Standard}:XAUCNH\",\"groups:{Standard}:USDCNH\"]...","timestamp":"2025-09-11T04:40:11.022Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-11T04:40:11.341Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-11T04:40:11.341Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-11T04:40:11.351Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-11T04:40:11.351Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-11T04:40:11.351Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-11T04:40:11.351Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1000,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-09-11T04:40:11.360Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-11T04:40:11.360Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-11T04:40:11.367Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:IND50\",\"groups:{Standard}:XAUCNH\",\"groups:{Standard}:USDCNH\"]...","timestamp":"2025-09-11T04:40:11.367Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-11T04:40:11.628Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-11T04:40:11.628Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T04:40:22.339Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-11T04:50:32.796Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-11T04:50:32.812Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-11T04:50:33.171Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-11T04:50:33.500Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-11T04:50:33.877Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-11T04:50:34.193Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-11T04:50:34.477Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-11T04:50:34.789Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-11T04:50:35.106Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-11T04:50:35.450Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-11T04:50:35.776Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-11T04:50:36.081Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-11T04:50:36.359Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-11T04:50:36.672Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-11T04:50:36.979Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-11T04:50:37.272Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-11T04:50:37.599Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-11T04:50:37.899Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-11T04:50:37.987Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 5190ms","timestamp":"2025-09-11T04:50:37.987Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-11T04:50:37.995Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-11T05:04:16.004Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-11T05:04:16.029Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-11T05:04:16.046Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-11T05:04:16.050Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-11T05:04:16.050Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-11T05:04:16.050Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-11T04:50:37.996Z\",\"total_synced\":1627,\"sync_duration_ms\":5190,\"sync_version\":\"1.0\"}","timestamp":"2025-09-11T05:04:16.066Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-11T05:04:16.067Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-11T05:04:16.074Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:IND50\",\"groups:{Standard}:CADHKD\",\"groups:{Standard}:GASOLINE\"]...","timestamp":"2025-09-11T05:04:16.075Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-11T05:04:16.375Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-11T05:04:16.375Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-11T05:04:16.391Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-11T05:04:16.391Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-11T05:04:16.392Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-11T05:04:16.392Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-11T04:50:37.996Z\",\"total_synced\":1627,\"sync_duration_ms\":5190,\"sync_version\":\"1.0\"}","timestamp":"2025-09-11T05:04:16.404Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-11T05:04:16.404Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-11T05:04:16.409Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:IND50\",\"groups:{Standard}:CADHKD\",\"groups:{Standard}:GASOLINE\"]...","timestamp":"2025-09-11T05:04:16.410Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-11T05:04:16.710Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-11T05:04:16.710Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:04:22.270Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:04:29.745Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:04:38.179Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:04:48.612Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:05:49.301Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:05:59.727Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:06:03.494Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:06:05.014Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-11T05:06:06.322Z"}
