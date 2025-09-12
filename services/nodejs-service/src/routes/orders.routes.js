@@ -140,9 +140,167 @@ router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrde
 router.post('/close', authenticateJWT, ordersController.closeOrder);
 
 // POST /api/orders/stoploss/add
+/**
+ * @swagger
+ * /api/orders/stoploss/add:
+ *   post:
+ *     summary: Add/Set a Stop Loss for an existing OPEN order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - user_id
+ *               - user_type
+ *               - symbol
+ *               - order_type
+ *               - stop_loss
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *                 example: "ord_20250905_008"
+ *               user_id:
+ *                 type: string
+ *                 example: "5"
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *                 example: "live"
+ *               symbol:
+ *                 type: string
+ *                 example: "EURUSD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY, SELL]
+ *                 example: "BUY"
+ *               stop_loss:
+ *                 type: number
+ *                 example: 1.08325
+ *               order_status:
+ *                 type: string
+ *                 description: Internal lifecycle status. Must be OPEN.
+ *                 example: "OPEN"
+ *               status:
+ *                 type: string
+ *                 description: External engine status passthrough (used for provider routing)
+ *                 example: "STOPLOSS"
+ *     responses:
+ *       200:
+ *         description: Stoploss accepted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 order_id:
+ *                   type: string
+ *                 stoploss_id:
+ *                   type: string
+ *                   description: Lifecycle ID generated for stoploss request
+ *                 data:
+ *                   type: object
+ *                   description: Python service response
+ *       400:
+ *         description: Invalid payload or price constraints violated
+ *       403:
+ *         description: Forbidden (JWT/user checks)
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (order is not OPEN)
+ *       503:
+ *         description: Provider rejected/timeout
+ */
 router.post('/stoploss/add', authenticateJWT, ordersController.addStopLoss);
 
 // POST /api/orders/takeprofit/add
+/**
+ * @swagger
+ * /api/orders/takeprofit/add:
+ *   post:
+ *     summary: Add/Set a Take Profit for an existing OPEN order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - user_id
+ *               - user_type
+ *               - symbol
+ *               - order_type
+ *               - take_profit
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *                 example: "ord_20250905_008"
+ *               user_id:
+ *                 type: string
+ *                 example: "5"
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *                 example: "live"
+ *               symbol:
+ *                 type: string
+ *                 example: "EURUSD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY, SELL]
+ *                 example: "BUY"
+ *               take_profit:
+ *                 type: number
+ *                 example: 1.09675
+ *               order_status:
+ *                 type: string
+ *                 description: Internal lifecycle status. Must be OPEN.
+ *                 example: "OPEN"
+ *               status:
+ *                 type: string
+ *                 description: External engine status passthrough (used for provider routing)
+ *                 example: "TAKEPROFIT"
+ *     responses:
+ *       200:
+ *         description: Takeprofit accepted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 order_id:
+ *                   type: string
+ *                 takeprofit_id:
+ *                   type: string
+ *                   description: Lifecycle ID generated for takeprofit request
+ *                 data:
+ *                   type: object
+ *                   description: Python service response
+ *       400:
+ *         description: Invalid payload or price constraints violated
+ *       403:
+ *         description: Forbidden (JWT/user checks)
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (order is not OPEN)
+ *       503:
+ *         description: Provider rejected/timeout
+ */
 router.post('/takeprofit/add', authenticateJWT, ordersController.addTakeProfit);
 
 module.exports = router;

@@ -157,19 +157,53 @@ class TakeProfitService:
         except Exception:
             pass
 
+        # Compose provider payload as requested
+        order_status_in = str(payload.get("order_status") or "OPEN")
+        qty = _safe_float(payload.get("order_quantity"))
+        entry_price = _safe_float(payload.get("order_price"))
+        # Try to fetch missing fields from Redis canonical
+        if qty is None or entry_price is None:
+            try:
+                od = await redis_cluster.hgetall(f"order_data:{order_id}")
+                if qty is None:
+                    qty = _safe_float(od.get("order_quantity"))
+                if entry_price is None:
+                    entry_price = _safe_float(od.get("order_price"))
+                cv_existing = _safe_float(od.get("contract_value")) if od else None
+            except Exception:
+                cv_existing = None
+        else:
+            cv_existing = None
+        # Compute contract_value if missing
+        try:
+            if cv_existing is not None:
+                contract_value = float(cv_existing)
+            else:
+                gdata = await fetch_group_data(symbol, group)
+                contract_size = _safe_float(gdata.get("contract_size")) or 1.0
+                if qty is not None and entry_price is not None:
+                    contract_value = float(contract_size * qty * entry_price)
+                else:
+                    contract_value = None
+        except Exception:
+            contract_value = None
+
         provider_payload = {
             "order_id": order_id,
-            "take_profit": provider_tp,
-            "status": "TAKEPROFIT",
             "symbol": symbol,
+            "order_status": order_status_in,
+            "status": "TAKEPROFIT",
             "order_type": side,
+            "takeprofit": provider_tp,
             "type": "order",
         }
+        if contract_value is not None:
+            provider_payload["contract_value"] = contract_value
+        if qty is not None:
+            provider_payload["order_quantity"] = qty
         # Optional passthroughs
         if payload.get("takeprofit_id"):
             provider_payload["takeprofit_id"] = str(payload.get("takeprofit_id"))
-        if payload.get("order_quantity") is not None:
-            provider_payload["order_quantity"] = _safe_float(payload.get("order_quantity"))
 
         ok, via = await send_provider_order(provider_payload)
         if not ok:
