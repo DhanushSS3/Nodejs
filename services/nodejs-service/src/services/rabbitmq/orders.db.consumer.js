@@ -34,6 +34,9 @@ async function applyDbUpdate(msg) {
     swap,
     used_margin_executed,
     used_margin_all,
+    // Trigger fields
+    stop_loss,
+    take_profit,
   } = msg || {};
   if (!order_id || !user_id || !user_type) {
     throw new Error('Missing required fields in DB update message');
@@ -55,6 +58,8 @@ async function applyDbUpdate(msg) {
     swap,
     used_margin_executed,
     used_margin_all,
+    stop_loss,
+    take_profit,
   });
 
   // Attempt to find existing row first
@@ -135,6 +140,13 @@ async function applyDbUpdate(msg) {
     if (commission != null && Number.isFinite(Number(commission))) {
       updateFields.commission = Number(commission).toFixed(8);
     }
+    // Trigger fields
+    if (stop_loss != null && Number.isFinite(Number(stop_loss))) {
+      updateFields.stop_loss = Number(stop_loss).toFixed(8);
+    }
+    if (take_profit != null && Number.isFinite(Number(take_profit))) {
+      updateFields.take_profit = Number(take_profit).toFixed(8);
+    }
     // Close-specific fields
     if (close_price != null && Number.isFinite(Number(close_price))) {
       updateFields.close_price = Number(close_price).toFixed(8);
@@ -152,6 +164,8 @@ async function applyDbUpdate(msg) {
         commission: row.commission != null ? row.commission.toString() : null,
         order_price: row.order_price != null ? row.order_price.toString() : null,
         order_status: row.order_status,
+        stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
+        take_profit: row.take_profit != null ? row.take_profit.toString() : null,
       };
       await row.update(updateFields);
       const after = {
@@ -162,6 +176,8 @@ async function applyDbUpdate(msg) {
         close_price: row.close_price != null ? row.close_price.toString() : null,
         net_profit: row.net_profit != null ? row.net_profit.toString() : null,
         swap: row.swap != null ? row.swap.toString() : null,
+        stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
+        take_profit: row.take_profit != null ? row.take_profit.toString() : null,
       };
       logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
       // Emit event for this user's portfolio stream

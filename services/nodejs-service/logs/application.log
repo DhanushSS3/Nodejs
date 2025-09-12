@@ -15757,3 +15757,24 @@
 {"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-11T11:19:50.461Z"}
 {"level":"info","message":"Authentication successful for user 9 on POST /instant/place","timestamp":"2025-09-11T11:20:06.377Z"}
 {"level":"info","message":"Authentication successful for user 9 on POST /close","timestamp":"2025-09-11T11:20:33.249Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-12T04:33:36.746Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-12T04:33:36.754Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-12T04:33:37.084Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-12T04:33:37.485Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-12T04:33:37.805Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-12T04:33:38.152Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-12T04:33:38.476Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-12T04:33:38.727Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-12T04:33:38.995Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-12T04:33:39.255Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-12T04:33:39.516Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-12T04:33:39.804Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-12T04:33:40.053Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-12T04:33:40.324Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-12T04:33:40.681Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-12T04:33:41.097Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-12T04:33:41.363Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-12T04:33:41.703Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-12T04:33:41.796Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 5048ms","timestamp":"2025-09-12T04:33:41.796Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-12T04:33:41.801Z"}

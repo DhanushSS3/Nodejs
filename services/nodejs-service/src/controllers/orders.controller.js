@@ -576,4 +576,236 @@ async function closeOrder(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, closeOrder };
+async function addStopLoss(req, res) {
+  const operationId = `add_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    // Basic auth checks
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const user_id = normalizeStr(body.user_id);
+    const user_type = normalizeStr(body.user_type).toLowerCase();
+    const symbolReq = normalizeStr(body.symbol).toUpperCase();
+    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const stop_loss = toNumber(body.stop_loss);
+    const status = normalizeStr(body.status || 'STOPLOSS');
+    const order_status_in = normalizeStr(body.order_status || 'OPEN');
+
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+      return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
+    }
+    if (!(stop_loss > 0)) {
+      return res.status(400).json({ success: false, message: 'stop_loss must be > 0' });
+    }
+    if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
+    }
+
+    // Load canonical order; fallback to SQL
+    const canonical = await _getCanonicalOrder(order_id);
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    let row = null;
+    if (!canonical) {
+      row = await OrderModel.findOne({ where: { order_id } });
+      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
+      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      const st = (row.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    } else {
+      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      const st = (canonical.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    }
+
+    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+    const entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
+    const order_quantity_num = toNumber(canonical ? canonical.order_quantity : row.order_quantity);
+
+    if (!(entry_price_num > 0)) {
+      return res.status(400).json({ success: false, message: 'Invalid entry price' });
+    }
+    // Price logic: SL for BUY must be < entry; for SELL must be > entry
+    if (order_type === 'BUY' && !(stop_loss < entry_price_num)) {
+      return res.status(400).json({ success: false, message: 'For BUY, stop_loss must be less than entry price' });
+    }
+    if (order_type === 'SELL' && !(stop_loss > entry_price_num)) {
+      return res.status(400).json({ success: false, message: 'For SELL, stop_loss must be greater than entry price' });
+    }
+
+    // Generate lifecycle id and persist to SQL for traceability
+    const stoploss_id = await idGenerator.generateStopLossId();
+    try {
+      const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
+      if (toUpdate) {
+        await toUpdate.update({ stoploss_id, status });
+      }
+    } catch (e) {
+      logger.warn('Failed to persist stoploss_id before send', { order_id, error: e.message });
+    }
+
+    // Build payload to Python
+    const pyPayload = {
+      order_id,
+      symbol,
+      user_id,
+      user_type,
+      order_type,
+      order_price: entry_price_num,
+      stoploss_id,
+      stop_loss,
+      status: 'STOPLOSS',
+    };
+    if (order_quantity_num > 0) pyPayload.order_quantity = order_quantity_num;
+    if (order_status_in) pyPayload.order_status = order_status_in;
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    let pyResp;
+    try {
+      pyResp = await axios.post(`${baseUrl}/api/orders/stoploss/add`, pyPayload, { timeout: 15000 });
+    } catch (err) {
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      return res.status(statusCode).json({ success: false, order_id, reason: detail?.detail?.reason || detail?.reason || 'stoploss_failed', error: detail?.detail || detail });
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    return res.status(200).json({ success: true, data: result, order_id, stoploss_id });
+  } catch (error) {
+    logger.error('addStopLoss internal error', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+async function addTakeProfit(req, res) {
+  const operationId = `add_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const user_id = normalizeStr(body.user_id);
+    const user_type = normalizeStr(body.user_type).toLowerCase();
+    const symbolReq = normalizeStr(body.symbol).toUpperCase();
+    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const take_profit = toNumber(body.take_profit);
+    const status = normalizeStr(body.status || 'TAKEPROFIT');
+    const order_status_in = normalizeStr(body.order_status || 'OPEN');
+
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+      return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
+    }
+    if (!(take_profit > 0)) {
+      return res.status(400).json({ success: false, message: 'take_profit must be > 0' });
+    }
+    if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
+    }
+
+    const canonical = await _getCanonicalOrder(order_id);
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    let row = null;
+    if (!canonical) {
+      row = await OrderModel.findOne({ where: { order_id } });
+      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
+      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      const st = (row.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    } else {
+      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      const st = (canonical.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    }
+
+    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+    const entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
+    const order_quantity_num = toNumber(canonical ? canonical.order_quantity : row.order_quantity);
+
+    if (!(entry_price_num > 0)) {
+      return res.status(400).json({ success: false, message: 'Invalid entry price' });
+    }
+    // Price logic: TP for BUY must be > entry; for SELL must be < entry
+    if (order_type === 'BUY' && !(take_profit > entry_price_num)) {
+      return res.status(400).json({ success: false, message: 'For BUY, take_profit must be greater than entry price' });
+    }
+    if (order_type === 'SELL' && !(take_profit < entry_price_num)) {
+      return res.status(400).json({ success: false, message: 'For SELL, take_profit must be less than entry price' });
+    }
+
+    const takeprofit_id = await idGenerator.generateTakeProfitId();
+    try {
+      const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
+      if (toUpdate) {
+        await toUpdate.update({ takeprofit_id, status });
+      }
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit_id before send', { order_id, error: e.message });
+    }
+
+    const pyPayload = {
+      order_id,
+      symbol,
+      user_id,
+      user_type,
+      order_type,
+      order_price: entry_price_num,
+      takeprofit_id,
+      take_profit,
+      status: 'TAKEPROFIT',
+    };
+    if (order_quantity_num > 0) pyPayload.order_quantity = order_quantity_num;
+    if (order_status_in) pyPayload.order_status = order_status_in;
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    let pyResp;
+    try {
+      pyResp = await axios.post(`${baseUrl}/api/orders/takeprofit/add`, pyPayload, { timeout: 15000 });
+    } catch (err) {
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      return res.status(statusCode).json({ success: false, order_id, reason: detail?.detail?.reason || detail?.reason || 'takeprofit_failed', error: detail?.detail || detail });
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    return res.status(200).json({ success: true, data: result, order_id, takeprofit_id });
+  } catch (error) {
+    logger.error('addTakeProfit internal error', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+module.exports = { placeInstantOrder, closeOrder, addStopLoss, addTakeProfit };

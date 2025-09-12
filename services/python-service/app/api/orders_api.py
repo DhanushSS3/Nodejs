@@ -189,6 +189,64 @@ async def close_order_endpoint(payload: CloseOrderRequest):
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 
+@router.post("/stoploss/add", response_model=StopLossSetResponse)
+async def stoploss_add_endpoint(payload: StopLossSetRequest):
+    """
+    Set a stoploss for an existing order.
+    Local flow: store in Redis triggers with half-spread adjusted score and publish DB update intent.
+    Provider flow: adjust price before sending to provider and return immediately; confirmation handled asynchronously.
+    """
+    try:
+        result = await _sl_service.add_stoploss(payload.model_dump(mode="json"))
+        if not result.get("ok"):
+            reason = result.get("reason", "stoploss_failed")
+            if reason in ("missing_fields", "invalid_order_type", "invalid_stop_loss", "unsupported_flow"):
+                raise HTTPException(status_code=400, detail=result)
+            if reason.startswith("provider_send_failed"):
+                raise HTTPException(status_code=503, detail=result)
+            raise HTTPException(status_code=500, detail=result)
+
+        return {
+            "success": True,
+            "message": "Stoploss processed",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"stoploss_add_endpoint error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/takeprofit/add", response_model=TakeProfitSetResponse)
+async def takeprofit_add_endpoint(payload: TakeProfitSetRequest):
+    """
+    Set a takeprofit for an existing order.
+    Local flow: store in Redis triggers with half-spread adjusted score and publish DB update intent.
+    Provider flow: adjust price before sending to provider and return immediately; confirmation handled asynchronously.
+    """
+    try:
+        result = await _tp_service.add_takeprofit(payload.model_dump(mode="json"))
+        if not result.get("ok"):
+            reason = result.get("reason", "takeprofit_failed")
+            if reason in ("missing_fields", "invalid_order_type", "invalid_take_profit", "unsupported_flow"):
+                raise HTTPException(status_code=400, detail=result)
+            if reason.startswith("provider_send_failed"):
+                raise HTTPException(status_code=503, detail=result)
+            raise HTTPException(status_code=500, detail=result)
+
+        return {
+            "success": True,
+            "message": "Takeprofit processed",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"takeprofit_add_endpoint error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
 @router.post("/close/finalize", response_model=CloseOrderResponse)
 async def finalize_close_endpoint(payload: FinalizeCloseRequest):
     """

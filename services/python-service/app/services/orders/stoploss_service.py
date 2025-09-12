@@ -1,0 +1,185 @@
+import logging
+from typing import Any, Dict, Optional
+
+from app.config.redis_config import redis_cluster
+from app.services.orders.order_repository import fetch_user_config, fetch_group_data
+from app.services.orders.sl_tp_repository import upsert_order_triggers
+from app.services.orders.service_provider_client import send_provider_order
+from app.services.orders.order_registry import add_lifecycle_id
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_float(v) -> Optional[float]:
+    try:
+        if v is None:
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _compute_half_spread(symbol: str, group: str) -> float:
+    try:
+        g = await fetch_group_data(symbol, group)
+        spread = _safe_float(g.get("spread"))
+        spread_pip = _safe_float(g.get("spread_pip"))
+        if spread is None or spread_pip is None:
+            return 0.0
+        return float(spread * spread_pip / 2.0)
+    except Exception as e:
+        logger.warning("half_spread compute failed for %s/%s: %s", group, symbol, e)
+        return 0.0
+
+
+class StopLossService:
+    async def add_stoploss(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        missing = [k for k in ("order_id", "user_id", "user_type", "symbol", "order_type", "stop_loss") if k not in payload]
+        if missing:
+            return {"ok": False, "reason": "missing_fields", "fields": missing}
+
+        order_id = str(payload["order_id"])
+        user_id = str(payload["user_id"])
+        user_type = str(payload["user_type"]).lower()
+        symbol = str(payload["symbol"]).upper()
+        side = str(payload["order_type"]).upper()
+        if side not in ("BUY", "SELL"):
+            return {"ok": False, "reason": "invalid_order_type"}
+        sl_raw = _safe_float(payload.get("stop_loss"))
+        if sl_raw is None or sl_raw <= 0:
+            return {"ok": False, "reason": "invalid_stop_loss"}
+
+        # Determine flow
+        cfg = await fetch_user_config(user_type, user_id)
+        group = cfg.get("group") or "Standard"
+        sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
+            flow = "local"
+        elif user_type == "live" and sending_orders == "barclays":
+            flow = "provider"
+        else:
+            return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
+
+        half_spread = await _compute_half_spread(symbol, group)
+
+        if flow == "local":
+            # Adjust score for monitoring against market prices
+            if side == "BUY":
+                score_sl = float(sl_raw + half_spread)  # compare against BID: trigger when bid <= score
+            else:
+                score_sl = float(sl_raw - half_spread)  # compare against ASK: trigger when ask >= score
+
+            ok = await upsert_order_triggers(
+                order_id=order_id,
+                symbol=symbol,
+                side=side,
+                user_type=user_type,
+                user_id=user_id,
+                stop_loss=float(sl_raw),
+                take_profit=None,
+                score_stop_loss=score_sl,
+                score_take_profit=None,
+            )
+            if not ok:
+                return {"ok": False, "reason": "upsert_triggers_failed"}
+
+            # Persist for DB update backfill
+            try:
+                await redis_cluster.hset(f"order_data:{order_id}", mapping={
+                    "symbol": symbol,
+                    "order_type": side,
+                    "user_type": user_type,
+                    "user_id": user_id,
+                    "stop_loss": str(sl_raw),
+                })
+            except Exception:
+                pass
+
+            # Publish DB update intent
+            try:
+                db_msg = {
+                    "type": "ORDER_STOPLOSS_SET",
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "user_type": user_type,
+                    "stop_loss": float(sl_raw),
+                }
+                import aio_pika  # type: ignore
+                RABBITMQ_URL = __import__('os').getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
+                ORDER_DB_UPDATE_QUEUE = __import__('os').getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+                conn = await aio_pika.connect_robust(RABBITMQ_URL)
+                try:
+                    ch = await conn.channel()
+                    await ch.declare_queue(ORDER_DB_UPDATE_QUEUE, durable=True)
+                    msg = aio_pika.Message(body=__import__('orjson').dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
+                    await ch.default_exchange.publish(msg, routing_key=ORDER_DB_UPDATE_QUEUE)
+                finally:
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("Failed to publish DB update for stoploss set: %s", e)
+
+            return {
+                "ok": True,
+                "flow": flow,
+                "order_id": order_id,
+                "symbol": symbol,
+                "order_type": side,
+                "stop_loss": float(sl_raw),
+                "score_stop_loss": float(score_sl),
+            }
+
+        # Provider flow
+        # Adjust before sending per requirements
+        if side == "BUY":
+            provider_sl = float(sl_raw + half_spread)
+        else:
+            provider_sl = float(sl_raw - half_spread)
+
+        # Persist lifecycle id mapping if provided
+        if payload.get("stoploss_id"):
+            try:
+                await add_lifecycle_id(order_id, str(payload.get("stoploss_id")), "stoploss_id")
+            except Exception as e:
+                logger.warning("add_lifecycle_id stoploss_id failed: %s", e)
+
+        # Mark status=STOPLOSS in Redis for routing
+        try:
+            order_data_key = f"order_data:{order_id}"
+            hash_tag = f"{user_type}:{user_id}"
+            order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+            pipe = redis_cluster.pipeline()
+            pipe.hset(order_data_key, mapping={"status": "STOPLOSS", "symbol": symbol, "order_type": side})
+            pipe.hset(order_key, mapping={"status": "STOPLOSS"})
+            await pipe.execute()
+        except Exception:
+            pass
+
+        provider_payload = {
+            "order_id": order_id,
+            "stoploss": provider_sl,
+            "status": "STOPLOSS",
+            "symbol": symbol,
+            "order_type": side,
+            "type": "order",
+        }
+        if payload.get("stoploss_id"):
+            provider_payload["stoploss_id"] = str(payload.get("stoploss_id"))
+        if payload.get("order_quantity") is not None:
+            provider_payload["order_quantity"] = _safe_float(payload.get("order_quantity"))
+
+        ok, via = await send_provider_order(provider_payload)
+        if not ok:
+            return {"ok": False, "reason": f"provider_send_failed:{via}"}
+
+        return {
+            "ok": True,
+            "flow": flow,
+            "order_id": order_id,
+            "symbol": symbol,
+            "order_type": side,
+            "stop_loss_sent": provider_sl,
+            "note": "Stoploss sent to provider; confirmation handled asynchronously",
+        }

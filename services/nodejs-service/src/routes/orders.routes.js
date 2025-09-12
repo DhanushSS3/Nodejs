@@ -139,4 +139,10 @@ router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrde
  */
 router.post('/close', authenticateJWT, ordersController.closeOrder);
 
+// POST /api/orders/stoploss/add
+router.post('/stoploss/add', authenticateJWT, ordersController.addStopLoss);
+
+// POST /api/orders/takeprofit/add
+router.post('/takeprofit/add', authenticateJWT, ordersController.addTakeProfit);
+
 module.exports = router;
