@@ -130,6 +130,9 @@ class Dispatcher:
                     target_queue = SL_QUEUE
                 elif redis_status == "TAKEPROFIT" and ord_status == "PENDING":
                     target_queue = TP_QUEUE
+                # Close on provider EXECUTED for trigger-related statuses
+                elif redis_status in ("STOPLOSS", "TAKEPROFIT", "STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL") and ord_status == "EXECUTED":
+                    target_queue = CLOSE_QUEUE
                 else:
                     logger.info(
                         "Unmapped routing state; DLQ. redis_status=%s ord_status=%s order_id=%s",

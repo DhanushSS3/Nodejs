@@ -240,6 +240,17 @@ class CloseWorker:
 
                 # Publish DB update intent
                 try:
+                    # Prefer provider's original lifecycle id (from ER raw payload) to infer close reason on Node
+                    trigger_lifecycle_id = None
+                    try:
+                        trigger_lifecycle_id = (
+                            (er.get("raw") or {}).get("order_id")
+                            or er.get("exec_id")
+                        )
+                        if trigger_lifecycle_id is not None:
+                            trigger_lifecycle_id = str(trigger_lifecycle_id)
+                    except Exception:
+                        trigger_lifecycle_id = None
                     db_msg = {
                         "type": "ORDER_CLOSE_CONFIRMED",
                         "order_id": str(payload.get("order_id")),
@@ -255,6 +266,7 @@ class CloseWorker:
                         "swap": result.get("swap"),
                         "used_margin_executed": result.get("used_margin_executed"),
                         "used_margin_all": result.get("used_margin_all"),
+                        "trigger_lifecycle_id": trigger_lifecycle_id,
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)

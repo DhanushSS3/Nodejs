@@ -34,6 +34,8 @@ async function applyDbUpdate(msg) {
     swap,
     used_margin_executed,
     used_margin_all,
+    // For mapping close_message based on which lifecycle id triggered close
+    trigger_lifecycle_id,
     // Trigger fields
     stop_loss,
     take_profit,
@@ -58,6 +60,7 @@ async function applyDbUpdate(msg) {
     swap,
     used_margin_executed,
     used_margin_all,
+    trigger_lifecycle_id,
     stop_loss,
     take_profit,
   });
@@ -156,6 +159,40 @@ async function applyDbUpdate(msg) {
     }
     if (swap != null && Number.isFinite(Number(swap))) {
       updateFields.swap = Number(swap).toFixed(8);
+    }
+
+    // Close message mapping based on which lifecycle id triggered the close
+    if (type === 'ORDER_CLOSE_CONFIRMED') {
+      try {
+        let slId = row.stoploss_id || null;
+        let tpId = row.takeprofit_id || null;
+        let clsId = row.close_id || null;
+        // Fallback to Redis canonical if SQL row lacks these ids
+        if (!slId || !tpId || !clsId) {
+          try {
+            const canonical = await redisCluster.hgetall(`order_data:${String(order_id)}`);
+            if (canonical) {
+              if (!slId && canonical.stoploss_id) slId = String(canonical.stoploss_id);
+              if (!tpId && canonical.takeprofit_id) tpId = String(canonical.takeprofit_id);
+              if (!clsId && canonical.close_id) clsId = String(canonical.close_id);
+            }
+          } catch (e) {
+            // best effort only
+          }
+        }
+        let closeMsg = null;
+        if (trigger_lifecycle_id) {
+          const trig = String(trigger_lifecycle_id);
+          if (slId && trig === String(slId)) closeMsg = 'stoploss_triggered';
+          else if (tpId && trig === String(tpId)) closeMsg = 'takeprofit_triggered';
+          else if (clsId && trig === String(clsId)) closeMsg = 'close';
+        }
+        if (closeMsg) {
+          updateFields.close_message = closeMsg;
+        }
+      } catch (e) {
+        logger.warn('Failed to set close_message from trigger_lifecycle_id', { error: e.message, order_id: String(order_id) });
+      }
     }
 
     if (Object.keys(updateFields).length > 0) {
