@@ -107,3 +107,62 @@ async def upsert_order_triggers(*,
     except Exception as e:
         logger.error("upsert_order_triggers failed for %s: %s", order_id, e)
         return False
+
+
+async def remove_stoploss_trigger(order_id: str) -> bool:
+    """
+    Remove only the stoploss parts of the trigger state for the given order.
+    Does not remove the takeprofit trigger if present.
+    """
+    try:
+        key = _order_triggers_key(order_id)
+        doc = await redis_cluster.hgetall(key)
+        if not doc:
+            return True
+        symbol = str(doc.get("symbol") or "").upper()
+        side = str(doc.get("order_type") or doc.get("side") or "").upper()
+        pipe = redis_cluster.pipeline()
+        if symbol and side in ("BUY", "SELL"):
+            pipe.zrem(_sl_key(symbol, side), order_id)
+        # Remove only SL fields from hash
+        try:
+            pipe.hdel(key, "stop_loss", "stop_loss_user", "stop_loss_compare")
+        except Exception:
+            # Some Redis clients require multiple calls; fallback
+            pipe.hdel(key, "stop_loss")
+            pipe.hdel(key, "stop_loss_user")
+            pipe.hdel(key, "stop_loss_compare")
+        await pipe.execute()
+        return True
+    except Exception as e:
+        logger.error("remove_stoploss_trigger failed for %s: %s", order_id, e)
+        return False
+
+
+async def remove_takeprofit_trigger(order_id: str) -> bool:
+    """
+    Remove only the takeprofit parts of the trigger state for the given order.
+    Does not remove the stoploss trigger if present.
+    """
+    try:
+        key = _order_triggers_key(order_id)
+        doc = await redis_cluster.hgetall(key)
+        if not doc:
+            return True
+        symbol = str(doc.get("symbol") or "").upper()
+        side = str(doc.get("order_type") or doc.get("side") or "").upper()
+        pipe = redis_cluster.pipeline()
+        if symbol and side in ("BUY", "SELL"):
+            pipe.zrem(_tp_key(symbol, side), order_id)
+        # Remove only TP fields from hash
+        try:
+            pipe.hdel(key, "take_profit", "take_profit_user", "take_profit_compare")
+        except Exception:
+            pipe.hdel(key, "take_profit")
+            pipe.hdel(key, "take_profit_user")
+            pipe.hdel(key, "take_profit_compare")
+        await pipe.execute()
+        return True
+    except Exception as e:
+        logger.error("remove_takeprofit_trigger failed for %s: %s", order_id, e)
+        return False

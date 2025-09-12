@@ -22,7 +22,7 @@ async function generateOrderId() {
     try { await redisCluster.expire(key, 3 * 24 * 60 * 60); } catch (e) {}
   }
   const seqStr = pad(seq, 3);
-  return `ord_${dateStr}_${seqStr}`;
+  return `order_${dateStr}_${seqStr}`;
 }
 
 // Generate Stop Loss ID with Redis-backed atomic counter to avoid collisions across workers
@@ -30,7 +30,7 @@ async function generateStopLossId() {
   const key = 'sl_seq';
   const seq = await redisCluster.incr(key);
   const seqStr = pad(seq, 9); // at least 9 digits; may grow beyond as seq increases
-  return `SL${seqStr}`;
+  return `SL_${seqStr}`;
 }
 
 // Generate Take Profit ID with Redis-backed atomic counter to avoid collisions across workers

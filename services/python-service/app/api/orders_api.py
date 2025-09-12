@@ -21,6 +21,8 @@ from .schemas.orders import (
     StopLossSetResponse,
     TakeProfitSetRequest,
     TakeProfitSetResponse,
+    StopLossCancelRequest,
+    TakeProfitCancelRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,6 +157,62 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
         raise
     except Exception as e:
         logger.error(f"instant_execute_order error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/stoploss/cancel")
+async def stoploss_cancel_endpoint(payload: StopLossCancelRequest):
+    """
+    Cancel an existing stoploss trigger.
+    Local flow: remove from Redis triggers and publish DB update intent.
+    Provider flow: send cancel to provider, wait for CANCELLED ack, then update Redis and publish DB update.
+    """
+    try:
+        result = await _sl_service.cancel_stoploss(payload.model_dump(mode="json"))
+        if not result.get("ok"):
+            reason = result.get("reason", "stoploss_cancel_failed")
+            if reason in ("missing_fields", "invalid_order_type", "unsupported_flow"):
+                raise HTTPException(status_code=400, detail=result)
+            if reason.startswith("provider_send_failed") or reason.startswith("cancel_ack_timeout") or reason.startswith("cancel_request_rejected"):
+                raise HTTPException(status_code=503, detail=result)
+            raise HTTPException(status_code=500, detail=result)
+        return {
+            "success": True,
+            "message": "Stoploss cancel processed",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"stoploss_cancel_endpoint error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/takeprofit/cancel")
+async def takeprofit_cancel_endpoint(payload: TakeProfitCancelRequest):
+    """
+    Cancel an existing takeprofit trigger.
+    Local flow: remove from Redis triggers and publish DB update intent.
+    Provider flow: send cancel to provider, wait for CANCELLED ack, then update Redis and publish DB update.
+    """
+    try:
+        result = await _tp_service.cancel_takeprofit(payload.model_dump(mode="json"))
+        if not result.get("ok"):
+            reason = result.get("reason", "takeprofit_cancel_failed")
+            if reason in ("missing_fields", "invalid_order_type", "unsupported_flow"):
+                raise HTTPException(status_code=400, detail=result)
+            if reason.startswith("provider_send_failed") or reason.startswith("cancel_ack_timeout") or reason.startswith("cancel_request_rejected"):
+                raise HTTPException(status_code=503, detail=result)
+            raise HTTPException(status_code=500, detail=result)
+        return {
+            "success": True,
+            "message": "Takeprofit cancel processed",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"takeprofit_cancel_endpoint error: {e}")
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 

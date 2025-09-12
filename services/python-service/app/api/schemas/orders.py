@@ -128,3 +128,41 @@ class TakeProfitSetResponse(BaseModel):
     success: bool
     message: str
     data: dict
+
+
+class StopLossCancelRequest(BaseModel):
+    order_id: str
+    user_id: str
+    user_type: UserType
+    symbol: str
+    order_type: OrderType
+    order_status: str | None = Field('OPEN', description="Must be OPEN to cancel")
+    status: str | None = Field('STOPLOSS-CANCEL', description="UI status passthrough")
+    stoploss_id: str = Field(..., description="Original lifecycle stoploss id")
+    stoploss_cancel_id: str | None = Field(None, description="Lifecycle cancel id (provider flow)")
+
+    @field_validator("symbol")
+    def symbol_upper_sl_cancel(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("symbol cannot be empty")
+        return v.upper()
+
+
+class TakeProfitCancelRequest(BaseModel):
+    order_id: str
+    user_id: str
+    user_type: UserType
+    symbol: str
+    order_type: OrderType
+    order_status: str | None = Field('OPEN', description="Must be OPEN to cancel")
+    status: str | None = Field('TAKEPROFIT-CANCEL', description="UI status passthrough")
+    takeprofit_id: str = Field(..., description="Original lifecycle takeprofit id")
+    takeprofit_cancel_id: str | None = Field(None, description="Lifecycle cancel id (provider flow)")
+
+    @field_validator("symbol")
+    def symbol_upper_tp_cancel(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("symbol cannot be empty")
+        return v.upper()

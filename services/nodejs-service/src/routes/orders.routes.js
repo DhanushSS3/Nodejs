@@ -303,4 +303,120 @@ router.post('/stoploss/add', authenticateJWT, ordersController.addStopLoss);
  */
 router.post('/takeprofit/add', authenticateJWT, ordersController.addTakeProfit);
 
+// POST /api/orders/stoploss/cancel
+/**
+ * @swagger
+ * /api/orders/stoploss/cancel:
+ *   post:
+ *     summary: Cancel Stop Loss for an OPEN order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - user_id
+ *               - user_type
+ *               - symbol
+ *               - order_type
+ *               - stoploss_id
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *               user_id:
+ *                 type: string
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *               symbol:
+ *                 type: string
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY, SELL]
+ *               order_status:
+ *                 type: string
+ *                 example: OPEN
+ *               status:
+ *                 type: string
+ *                 example: STOPLOSS-CANCEL
+ *               stoploss_id:
+ *                 type: string
+ *                 description: Original lifecycle stoploss id
+ *     responses:
+ *       200:
+ *         description: Cancel request accepted
+ *       400:
+ *         description: Invalid payload
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (no active SL or order not OPEN)
+ */
+router.post('/stoploss/cancel', authenticateJWT, ordersController.cancelStopLoss);
+
+// POST /api/orders/takeprofit/cancel
+/**
+ * @swagger
+ * /api/orders/takeprofit/cancel:
+ *   post:
+ *     summary: Cancel Take Profit for an OPEN order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - user_id
+ *               - user_type
+ *               - symbol
+ *               - order_type
+ *               - takeprofit_id
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *               user_id:
+ *                 type: string
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *               symbol:
+ *                 type: string
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY, SELL]
+ *               order_status:
+ *                 type: string
+ *                 example: OPEN
+ *               status:
+ *                 type: string
+ *                 example: TAKEPROFIT-CANCEL
+ *               takeprofit_id:
+ *                 type: string
+ *                 description: Original lifecycle takeprofit id
+ *     responses:
+ *       200:
+ *         description: Cancel request accepted
+ *       400:
+ *         description: Invalid payload
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (no active TP or order not OPEN)
+ */
+router.post('/takeprofit/cancel', authenticateJWT, ordersController.cancelTakeProfit);
+
 module.exports = router;

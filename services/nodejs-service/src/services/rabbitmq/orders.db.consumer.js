@@ -197,6 +197,13 @@ async function applyDbUpdate(msg) {
     if (take_profit != null && Number.isFinite(Number(take_profit))) {
       updateFields.take_profit = Number(take_profit).toFixed(8);
     }
+    // Cancel trigger messages: explicitly nullify columns
+    if (type === 'ORDER_STOPLOSS_CANCEL') {
+      updateFields.stop_loss = null;
+    }
+    if (type === 'ORDER_TAKEPROFIT_CANCEL') {
+      updateFields.take_profit = null;
+    }
     // Close-specific fields
     if (close_price != null && Number.isFinite(Number(close_price))) {
       updateFields.close_price = Number(close_price).toFixed(8);

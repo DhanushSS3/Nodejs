@@ -917,4 +917,312 @@ async function addTakeProfit(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, closeOrder, addStopLoss, addTakeProfit };
+async function cancelStopLoss(req, res) {
+  const operationId = `cancel_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const user_id = normalizeStr(body.user_id);
+    const user_type = normalizeStr(body.user_type).toLowerCase();
+    const symbolReq = normalizeStr(body.symbol).toUpperCase();
+    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const statusIn = normalizeStr(body.status || 'STOPLOSS-CANCEL');
+    const order_status_in = normalizeStr(body.order_status || 'OPEN');
+    const stoploss_id = normalizeStr(body.stoploss_id);
+
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+      return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
+    }
+    if (!stoploss_id) {
+      return res.status(400).json({ success: false, message: 'stoploss_id is required' });
+    }
+    if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
+    }
+
+    // Avoid cancel while close is processing or already finalized
+    try {
+      const proc = await redisCluster.get(`close_processing:${order_id}`);
+      const fin = await redisCluster.get(`close_finalized:${order_id}`);
+      if (proc || fin) {
+        return res.status(409).json({ success: false, message: 'Order is closing/closed; cannot cancel stoploss' });
+      }
+    } catch (_) {}
+
+    // Load canonical order; fallback to SQL
+    const canonical = await _getCanonicalOrder(order_id);
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    let row = null;
+    if (!canonical) {
+      row = await OrderModel.findOne({ where: { order_id } });
+      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
+      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      const st = (row.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    } else {
+      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      const st = (canonical.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    }
+
+    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+
+    // Validate an active SL exists (DB or Redis triggers)
+    let hasSL = false;
+    if (row && row.stop_loss != null) {
+      hasSL = true;
+    } else {
+      try {
+        const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
+        if (trig && (trig.stop_loss || trig.stop_loss_compare || trig.stop_loss_user)) hasSL = true;
+      } catch (_) {}
+    }
+    if (!hasSL) {
+      return res.status(409).json({ success: false, message: 'No active stoploss to cancel' });
+    }
+
+    // Verify stoploss_id matches stored mapping when available
+    try {
+      const expected = row?.stoploss_id || (await redisCluster.hget(`order_data:${order_id}`, 'stoploss_id'));
+      if (expected && normalizeStr(expected) !== normalizeStr(stoploss_id)) {
+        return res.status(403).json({ success: false, message: 'stoploss_id does not match this order' });
+      }
+    } catch (_) {}
+
+    // Generate cancel id and persist to SQL
+    const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
+    try {
+      const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
+      if (toUpdate) {
+        await toUpdate.update({ stoploss_cancel_id, status: statusIn });
+      }
+    } catch (e) {
+      logger.warn('Failed to persist stoploss_cancel_id before send', { order_id, error: e.message });
+    }
+
+    // Build payload to Python
+    const pyPayload = {
+      order_id,
+      symbol,
+      user_id,
+      user_type,
+      order_type,
+      status: 'STOPLOSS-CANCEL',
+      order_status: order_status_in,
+      stoploss_id,
+      stoploss_cancel_id,
+    };
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    let pyResp;
+    try {
+      pyResp = await axios.post(`${baseUrl}/api/orders/stoploss/cancel`, pyPayload, { timeout: 15000 });
+    } catch (err) {
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      return res.status(statusCode).json({ success: false, order_id, reason: detail?.detail?.reason || detail?.reason || 'stoploss_cancel_failed', error: detail?.detail || detail });
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+
+    // Local flow: immediately nullify SQL and notify WS
+    try {
+      if (result && String(result.flow).toLowerCase() === 'local') {
+        const OrderModelNow = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+        try {
+          const rowNow = await OrderModelNow.findOne({ where: { order_id } });
+          if (rowNow) {
+            await rowNow.update({ stop_loss: null });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for stoploss cancel (local flow)', { order_id, error: e.message });
+        }
+        try {
+          portfolioEvents.emitUserUpdate(user_type, user_id, { type: 'order_update', order_id, update: { stop_loss: null }, reason: 'local_stoploss_cancel' });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after local stoploss cancel', { order_id, error: e.message });
+        }
+      }
+    } catch (_) {}
+
+    return res.status(200).json({ success: true, data: result, order_id, stoploss_cancel_id });
+  } catch (error) {
+    logger.error('cancelStopLoss internal error', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+async function cancelTakeProfit(req, res) {
+  const operationId = `cancel_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const user_id = normalizeStr(body.user_id);
+    const user_type = normalizeStr(body.user_type).toLowerCase();
+    const symbolReq = normalizeStr(body.symbol).toUpperCase();
+    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const statusIn = normalizeStr(body.status || 'TAKEPROFIT-CANCEL');
+    const order_status_in = normalizeStr(body.order_status || 'OPEN');
+    const takeprofit_id = normalizeStr(body.takeprofit_id);
+
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+      return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
+    }
+    if (!takeprofit_id) {
+      return res.status(400).json({ success: false, message: 'takeprofit_id is required' });
+    }
+    if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
+    }
+
+    // Avoid cancel while close is processing or already finalized
+    try {
+      const proc = await redisCluster.get(`close_processing:${order_id}`);
+      const fin = await redisCluster.get(`close_finalized:${order_id}`);
+      if (proc || fin) {
+        return res.status(409).json({ success: false, message: 'Order is closing/closed; cannot cancel takeprofit' });
+      }
+    } catch (_) {}
+
+    // Load canonical order; fallback to SQL
+    const canonical = await _getCanonicalOrder(order_id);
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    let row = null;
+    if (!canonical) {
+      row = await OrderModel.findOne({ where: { order_id } });
+      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
+      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      const st = (row.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    } else {
+      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      const st = (canonical.order_status || '').toString().toUpperCase();
+      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    }
+
+    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+
+    // Validate an active TP exists (DB or Redis triggers)
+    let hasTP = false;
+    if (row && row.take_profit != null) {
+      hasTP = true;
+    } else {
+      try {
+        const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
+        if (trig && (trig.take_profit || trig.take_profit_compare || trig.take_profit_user)) hasTP = true;
+      } catch (_) {}
+    }
+    if (!hasTP) {
+      return res.status(409).json({ success: false, message: 'No active takeprofit to cancel' });
+    }
+
+    // Verify takeprofit_id matches stored mapping when available
+    try {
+      const expected = row?.takeprofit_id || (await redisCluster.hget(`order_data:${order_id}`, 'takeprofit_id'));
+      if (expected && normalizeStr(expected) !== normalizeStr(takeprofit_id)) {
+        return res.status(403).json({ success: false, message: 'takeprofit_id does not match this order' });
+      }
+    } catch (_) {}
+
+    // Generate cancel id and persist to SQL
+    const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
+    try {
+      const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
+      if (toUpdate) {
+        await toUpdate.update({ takeprofit_cancel_id, status: statusIn });
+      }
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit_cancel_id before send', { order_id, error: e.message });
+    }
+
+    // Build payload to Python
+    const pyPayload = {
+      order_id,
+      symbol,
+      user_id,
+      user_type,
+      order_type,
+      status: 'TAKEPROFIT-CANCEL',
+      order_status: order_status_in,
+      takeprofit_id,
+      takeprofit_cancel_id,
+    };
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    let pyResp;
+    try {
+      pyResp = await axios.post(`${baseUrl}/api/orders/takeprofit/cancel`, pyPayload, { timeout: 15000 });
+    } catch (err) {
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      return res.status(statusCode).json({ success: false, order_id, reason: detail?.detail?.reason || detail?.reason || 'takeprofit_cancel_failed', error: detail?.detail || detail });
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+
+    // Local flow: immediately nullify SQL and notify WS
+    try {
+      if (result && String(result.flow).toLowerCase() === 'local') {
+        const OrderModelNow = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+        try {
+          const rowNow = await OrderModelNow.findOne({ where: { order_id } });
+          if (rowNow) {
+            await rowNow.update({ take_profit: null });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for takeprofit cancel (local flow)', { order_id, error: e.message });
+        }
+        try {
+          portfolioEvents.emitUserUpdate(user_type, user_id, { type: 'order_update', order_id, update: { take_profit: null }, reason: 'local_takeprofit_cancel' });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after local takeprofit cancel', { order_id, error: e.message });
+        }
+      }
+    } catch (_) {}
+
+    return res.status(200).json({ success: true, data: result, order_id, takeprofit_cancel_id });
+  } catch (error) {
+    logger.error('cancelTakeProfit internal error', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+module.exports = { placeInstantOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit };

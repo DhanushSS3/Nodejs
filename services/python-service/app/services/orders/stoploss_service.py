@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_repository import fetch_user_config, fetch_group_data
-from app.services.orders.sl_tp_repository import upsert_order_triggers
+from app.services.orders.sl_tp_repository import upsert_order_triggers, remove_stoploss_trigger
 from app.services.orders.service_provider_client import send_provider_order
 from app.services.orders.order_registry import add_lifecycle_id
 
@@ -227,3 +227,194 @@ class StopLossService:
             "stop_loss_sent": provider_sl,
             "note": "Stoploss sent to provider; confirmation handled asynchronously",
         }
+
+    async def cancel_stoploss(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        missing = [k for k in ("order_id", "user_id", "user_type", "symbol", "order_type", "stoploss_id") if k not in payload]
+        if missing:
+            return {"ok": False, "reason": "missing_fields", "fields": missing}
+
+        order_id = str(payload["order_id"]).strip()
+        user_id = str(payload["user_id"]).strip()
+        user_type = str(payload["user_type"]).lower().strip()
+        symbol = str(payload["symbol"]).upper().strip()
+        side = str(payload["order_type"]).upper().strip()
+        if side not in ("BUY", "SELL"):
+            return {"ok": False, "reason": "invalid_order_type"}
+
+        # Determine flow
+        cfg = await fetch_user_config(user_type, user_id)
+        group = cfg.get("group") or "Standard"
+        sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
+            flow = "local"
+        elif user_type == "live" and sending_orders == "barclays":
+            flow = "provider"
+        else:
+            return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
+
+        # Local flow: remove from local triggers and Redis canonical, publish DB cancel intent
+        if flow == "local":
+            try:
+                await remove_stoploss_trigger(order_id)
+            except Exception:
+                pass
+            try:
+                # Remove from order_data and user_holdings
+                order_data_key = f"order_data:{order_id}"
+                hash_tag = f"{user_type}:{user_id}"
+                order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                pipe = redis_cluster.pipeline()
+                pipe.hdel(order_data_key, "stop_loss")
+                pipe.hdel(order_key, "stop_loss")
+                # Ensure status remains OPEN for routing
+                pipe.hset(order_data_key, mapping={"status": "OPEN", "symbol": symbol, "order_type": side})
+                pipe.hset(order_key, mapping={"status": "OPEN"})
+                await pipe.execute()
+            except Exception:
+                pass
+
+            # Publish DB update intent (set stop_loss to NULL)
+            try:
+                import aio_pika  # type: ignore
+                RABBITMQ_URL = __import__('os').getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
+                ORDER_DB_UPDATE_QUEUE = __import__('os').getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+                db_msg = {
+                    "type": "ORDER_STOPLOSS_CANCEL",
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "user_type": user_type,
+                }
+                conn = await aio_pika.connect_robust(RABBITMQ_URL)
+                try:
+                    ch = await conn.channel()
+                    await ch.declare_queue(ORDER_DB_UPDATE_QUEUE, durable=True)
+                    msg = aio_pika.Message(body=__import__('orjson').dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
+                    await ch.default_exchange.publish(msg, routing_key=ORDER_DB_UPDATE_QUEUE)
+                finally:
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("Failed to publish DB update for stoploss cancel: %s", e)
+
+            return {
+                "ok": True,
+                "flow": flow,
+                "order_id": order_id,
+                "symbol": symbol,
+                "order_type": side,
+                "note": "Stoploss cancelled locally",
+            }
+
+        # Provider flow
+        # Persist lifecycle id mapping if provided
+        stoploss_cancel_id = str(payload.get("stoploss_cancel_id") or "").strip()
+        if stoploss_cancel_id:
+            try:
+                await add_lifecycle_id(order_id, stoploss_cancel_id, "stoploss_cancel_id")
+            except Exception as e:
+                logger.warning("add_lifecycle_id stoploss_cancel_id failed: %s", e)
+
+        # Compose provider cancel payload
+        provider_payload = {
+            "order_id": order_id,
+            "symbol": symbol,
+            "order_type": side,
+            "status": "STOPLOSS-CANCEL",
+            "type": "order",
+        }
+        if stoploss_cancel_id:
+            provider_payload["stop_loss_cancel_id"] = stoploss_cancel_id
+
+        ok, via = await send_provider_order(provider_payload)
+        if not ok:
+            return {"ok": False, "reason": f"provider_send_failed:{via}"}
+
+        # Wait for CANCELLED ack on cancel id if provided; else fallback to order_id
+        any_id = stoploss_cancel_id or order_id
+        ord_status = await _wait_for_provider_ack(any_id, expected_statuses=("CANCELLED", "REJECTED"), timeout_ms=6000)
+        if ord_status is None:
+            return {"ok": False, "reason": "cancel_ack_timeout:STOPLOSS-CANCEL"}
+        if ord_status == "REJECTED":
+            return {"ok": False, "reason": "cancel_request_rejected:STOPLOSS-CANCEL"}
+
+        # Clear Redis state and publish DB update intent
+        try:
+            await remove_stoploss_trigger(order_id)
+        except Exception:
+            pass
+        try:
+            order_data_key = f"order_data:{order_id}"
+            hash_tag = f"{user_type}:{user_id}"
+            order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+            pipe = redis_cluster.pipeline()
+            pipe.hdel(order_data_key, "stop_loss")
+            pipe.hdel(order_key, "stop_loss")
+            pipe.hset(order_data_key, mapping={"status": "OPEN", "symbol": symbol, "order_type": side})
+            pipe.hset(order_key, mapping={"status": "OPEN"})
+            await pipe.execute()
+        except Exception:
+            pass
+
+        # Publish DB update intent
+        try:
+            import aio_pika  # type: ignore
+            RABBITMQ_URL = __import__('os').getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
+            ORDER_DB_UPDATE_QUEUE = __import__('os').getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+            db_msg = {
+                "type": "ORDER_STOPLOSS_CANCEL",
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_type": user_type,
+            }
+            conn = await aio_pika.connect_robust(RABBITMQ_URL)
+            try:
+                ch = await conn.channel()
+                await ch.declare_queue(ORDER_DB_UPDATE_QUEUE, durable=True)
+                msg = aio_pika.Message(body=__import__('orjson').dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
+                await ch.default_exchange.publish(msg, routing_key=ORDER_DB_UPDATE_QUEUE)
+            finally:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("Failed to publish DB update for stoploss cancel (provider): %s", e)
+
+        return {
+            "ok": True,
+            "flow": flow,
+            "order_id": order_id,
+            "symbol": symbol,
+            "order_type": side,
+            "provider_cancel_sent": True,
+            "provider_cancelled": True,
+            "status": "OPEN",
+        }
+
+
+async def _wait_for_provider_ack(any_id: str, expected_statuses=("CANCELLED",), timeout_ms: int = 6000) -> Optional[str]:
+    import time, orjson  # local import to avoid circulars in some environments
+    deadline = time.time() + (timeout_ms / 1000.0)
+    key = f"provider:ack:{any_id}"
+    expect = {str(s).upper() for s in (expected_statuses or [])}
+    while time.time() < deadline:
+        try:
+            raw = await redis_cluster.get(key)
+            if raw:
+                try:
+                    data = orjson.loads(raw)
+                except Exception:
+                    data = None
+                ord_status = str((data or {}).get("ord_status") or "").upper()
+                if ord_status in expect:
+                    return ord_status
+        except Exception:
+            pass
+        try:
+            import asyncio
+            await asyncio.sleep(0.1)
+        except Exception:
+            time.sleep(0.1)
+    return None
