@@ -9,6 +9,8 @@ const { updateUserUsedMargin } = require('../user.margin.service');
 const { redisCluster } = require('../../../config/redis');
 // Event bus for portfolio updates
 const portfolioEvents = require('../events/portfolio.events');
+// Wallet payout service
+const { applyOrderClosePayout } = require('../order.payout.service');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -109,6 +111,51 @@ async function applyDbUpdate(msg) {
     } catch (e) {
       logger.error('Failed to backfill SQL order from Redis canonical', { order_id, error: e.message });
     }
+  }
+
+  // Wallet payout and transaction records (idempotent per order)
+  try {
+    if (type === 'ORDER_CLOSE_CONFIRMED') {
+      const payoutKey = `close_payout_applied:${String(order_id)}`;
+      const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+      if (nx) {
+        const OrderModelP = getOrderModel(String(user_type));
+        let rowP = row;
+        if (!rowP) {
+          try { rowP = await OrderModelP.findOne({ where: { order_id: String(order_id) } }); } catch (_) {}
+        }
+        const orderPk = rowP?.id ?? null;
+        const symbolP = rowP?.symbol ?? undefined;
+        const orderTypeP = rowP?.order_type ?? undefined;
+
+        await applyOrderClosePayout({
+          userType: String(user_type),
+          userId: parseInt(String(user_id), 10),
+          orderPk,
+          orderIdStr: String(order_id),
+          netProfit: Number(net_profit) || 0,
+          commission: Number(commission) || 0,
+          profitUsd: Number(msg.profit_usd) || 0,
+          swap: Number(swap) || 0,
+          symbol: symbolP ? String(symbolP).toUpperCase() : undefined,
+          orderType: orderTypeP ? String(orderTypeP).toUpperCase() : undefined,
+        });
+
+        // Trigger a WS snapshot refresh for wallet balance
+        try {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'wallet_balance_update',
+            order_id: String(order_id),
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS after payout', { error: e.message, order_id: String(order_id) });
+        }
+      } else {
+        logger.info('Skip payout; already applied for order', { order_id: String(order_id) });
+      }
+    }
+  } catch (e) {
+    logger.error('Failed to apply payout on close', { error: e.message, order_id: String(order_id) });
   }
 
   // Increment user's aggregate net_profit for close confirmations (idempotent per order_id)

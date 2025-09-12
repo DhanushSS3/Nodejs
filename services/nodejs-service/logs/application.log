@@ -16200,3 +16200,237 @@
 {"level":"info","message":"Authentication successful for user 7 on POST /instant/place","timestamp":"2025-09-12T07:29:43.211Z"}
 {"level":"info","message":"Authentication successful for user 7 on POST /takeprofit/add","timestamp":"2025-09-12T07:30:14.749Z"}
 {"level":"info","message":"Authentication successful for user 7 on POST /stoploss/add","timestamp":"2025-09-12T07:30:29.094Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-12T08:16:56.624Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-12T08:16:56.628Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-12T08:16:56.850Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-12T08:16:57.123Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-12T08:16:57.471Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-12T08:16:57.826Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-12T08:16:58.337Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-12T08:16:58.805Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-12T08:16:59.091Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-12T08:16:59.385Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-12T08:16:59.945Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-12T08:17:00.500Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-12T08:17:00.838Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-12T08:17:01.098Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-12T08:17:01.349Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-12T08:17:01.837Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-12T08:17:02.163Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-12T08:17:02.639Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-12T08:17:02.784Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 6159ms","timestamp":"2025-09-12T08:17:02.784Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-12T08:17:02.794Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /me","timestamp":"2025-09-12T08:18:30.992Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /me","timestamp":"2025-09-12T08:18:31.016Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /my-group","timestamp":"2025-09-12T08:18:31.035Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T08:18:31.036Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T08:18:31.037Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T08:18:31.037Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T08:17:02.795Z\",\"total_synced\":1627,\"sync_duration_ms\":6159,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T08:18:31.085Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T08:18:31.087Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T08:18:31.103Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T08:18:31.103Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T08:18:31.425Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T08:18:31.425Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /my-group","timestamp":"2025-09-12T08:18:31.448Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T08:18:31.448Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T08:18:31.448Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T08:18:31.448Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T08:17:02.795Z\",\"total_synced\":1627,\"sync_duration_ms\":6159,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T08:18:31.462Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T08:18:31.462Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T08:18:31.467Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T08:18:31.467Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T08:18:31.784Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T08:18:31.784Z"}
+{"level":"info","message":"Authentication successful for user 7 on POST /instant/place","timestamp":"2025-09-12T08:19:25.303Z"}
+{"level":"info","message":"Authentication successful for user 7 on POST /takeprofit/add","timestamp":"2025-09-12T08:19:42.896Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /logout: jwt expired","timestamp":"2025-09-12T08:49:14.967Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-12T08:49:25.915Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-12T08:49:25.939Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-12T08:49:25.960Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T08:49:25.963Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-12T08:49:25.964Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-12T08:49:25.964Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T08:17:02.795Z\",\"total_synced\":1627,\"sync_duration_ms\":6159,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T08:49:25.996Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-12T08:49:25.998Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-12T08:49:26.011Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:AUDCAD\",\"groups:{Standard}:EURPLN\",\"groups:{Standard}:TRYJPY\"]...","timestamp":"2025-09-12T08:49:26.012Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-12T08:49:26.601Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-12T08:49:26.601Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-12T08:49:26.613Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T08:49:26.614Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-12T08:49:26.614Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-12T08:49:26.614Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T08:17:02.795Z\",\"total_synced\":1627,\"sync_duration_ms\":6159,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T08:49:26.642Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-12T08:49:26.643Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-12T08:49:26.652Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:AUDCAD\",\"groups:{Standard}:EURPLN\",\"groups:{Standard}:TRYJPY\"]...","timestamp":"2025-09-12T08:49:26.653Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-12T08:49:27.175Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-12T08:49:27.175Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-12T08:49:37.497Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-12T08:51:05.713Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-12T08:52:08.792Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-12T09:09:20.638Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-12T09:09:20.646Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-12T09:09:20.916Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-12T09:09:21.190Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-12T09:09:21.445Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-12T09:09:21.713Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-12T09:09:21.989Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-12T09:09:22.299Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-12T09:09:22.614Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-12T09:09:22.917Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-12T09:09:23.223Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-12T09:09:23.494Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-12T09:09:23.812Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-12T09:09:24.084Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-12T09:09:24.379Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-12T09:09:24.659Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-12T09:09:24.945Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-12T09:09:25.161Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-12T09:09:25.221Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 4582ms","timestamp":"2025-09-12T09:09:25.221Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-12T09:09:25.228Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /instant/place: jwt expired","timestamp":"2025-09-12T09:10:49.281Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-12T09:11:00.300Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /me","timestamp":"2025-09-12T09:11:00.312Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-12T09:11:00.323Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:11:00.325Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-12T09:11:00.325Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-12T09:11:00.325Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:09:25.228Z\",\"total_synced\":1627,\"sync_duration_ms\":4582,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:11:00.341Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-12T09:11:00.341Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-12T09:11:00.348Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:AUDCAD\",\"groups:{Standard}:EURPLN\",\"groups:{Standard}:TRYJPY\"]...","timestamp":"2025-09-12T09:11:00.348Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-12T09:11:00.661Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-12T09:11:00.662Z"}
+{"level":"info","message":"Authentication successful for user 6 on GET /my-group","timestamp":"2025-09-12T09:11:00.668Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:11:00.668Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-09-12T09:11:00.668Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-09-12T09:11:00.668Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:09:25.228Z\",\"total_synced\":1627,\"sync_duration_ms\":4582,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:11:00.676Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-09-12T09:11:00.676Z"}
+{"level":"info","message":"Found 174 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-09-12T09:11:00.680Z"}
+{"level":"info","message":"Processing 174 keys: [\"groups:{Standard}:AUDCAD\",\"groups:{Standard}:EURPLN\",\"groups:{Standard}:TRYJPY\"]...","timestamp":"2025-09-12T09:11:00.680Z"}
+{"level":"info","message":"Successfully retrieved 174 groups for pattern: groups:{Standard}:*","timestamp":"2025-09-12T09:11:00.973Z"}
+{"level":"info","message":"[USER] Found 174 groups for Standard","timestamp":"2025-09-12T09:11:00.973Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-12T09:11:15.944Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-12T09:15:32.560Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-12T09:16:34.963Z"}
+{"level":"info","message":"Authentication successful for user 6 on POST /logout","timestamp":"2025-09-12T09:17:07.220Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /me","timestamp":"2025-09-12T09:17:14.980Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /me","timestamp":"2025-09-12T09:17:14.988Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /my-group","timestamp":"2025-09-12T09:17:14.998Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:17:14.999Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:17:14.999Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:17:14.999Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:09:25.228Z\",\"total_synced\":1627,\"sync_duration_ms\":4582,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:17:15.009Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:17:15.009Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:15.017Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:17:15.017Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:15.182Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:17:15.183Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /my-group","timestamp":"2025-09-12T09:17:15.188Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:17:15.188Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:17:15.188Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:17:15.188Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:09:25.228Z\",\"total_synced\":1627,\"sync_duration_ms\":4582,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:17:15.196Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:17:15.196Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:15.200Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:17:15.200Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:15.310Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:17:15.310Z"}
+{"level":"info","message":"Authentication successful for user 8 on POST /instant/place","timestamp":"2025-09-12T09:17:20.405Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /me","timestamp":"2025-09-12T09:17:38.032Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /me","timestamp":"2025-09-12T09:17:38.083Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /my-group","timestamp":"2025-09-12T09:17:38.117Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:17:38.118Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:17:38.118Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:17:38.120Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:09:25.228Z\",\"total_synced\":1627,\"sync_duration_ms\":4582,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:17:38.157Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:17:38.157Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:38.208Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:17:38.208Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:38.583Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:17:38.583Z"}
+{"level":"info","message":"Authentication successful for user 8 on GET /my-group","timestamp":"2025-09-12T09:17:38.592Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:17:38.592Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:17:38.593Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:17:38.593Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:09:25.228Z\",\"total_synced\":1627,\"sync_duration_ms\":4582,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:17:38.618Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:17:38.618Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:38.640Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:17:38.640Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:17:39.080Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:17:39.080Z"}
+{"level":"info","message":"Authentication successful for user 8 on POST /instant/place","timestamp":"2025-09-12T09:17:58.029Z"}
+{"level":"info","message":"Authentication successful for user 8 on POST /instant/place","timestamp":"2025-09-12T09:18:08.965Z"}
+{"level":"info","message":"Authentication successful for user 8 on POST /instant/place","timestamp":"2025-09-12T09:18:14.045Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-12T09:23:38.380Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-12T09:23:38.390Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-12T09:23:38.752Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-12T09:23:39.190Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-12T09:23:39.545Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-12T09:23:39.990Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-12T09:23:40.365Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-12T09:23:40.744Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-12T09:23:41.281Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-12T09:23:41.617Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-12T09:23:42.008Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-12T09:23:42.467Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-12T09:23:42.816Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-12T09:23:43.242Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-12T09:23:43.656Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-12T09:23:44.080Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-12T09:23:44.510Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-12T09:23:44.805Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-12T09:23:44.896Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 6514ms","timestamp":"2025-09-12T09:23:44.896Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-12T09:23:44.902Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /me","timestamp":"2025-09-12T09:26:20.776Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /me","timestamp":"2025-09-12T09:26:20.795Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /my-group","timestamp":"2025-09-12T09:26:20.808Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:26:20.809Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:26:20.809Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:26:20.809Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:23:44.902Z\",\"total_synced\":1627,\"sync_duration_ms\":6514,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:26:20.817Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:26:20.818Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:20.821Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:26:20.822Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:20.929Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:26:20.929Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /my-group","timestamp":"2025-09-12T09:26:20.936Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:26:20.936Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:26:20.936Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:26:20.936Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:23:44.902Z\",\"total_synced\":1627,\"sync_duration_ms\":6514,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:26:20.946Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:26:20.946Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:20.951Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:26:20.952Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:21.158Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:26:21.158Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /me","timestamp":"2025-09-12T09:26:22.662Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /me","timestamp":"2025-09-12T09:26:22.673Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /my-group","timestamp":"2025-09-12T09:26:22.681Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:26:22.681Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:26:22.682Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:26:22.682Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:23:44.902Z\",\"total_synced\":1627,\"sync_duration_ms\":6514,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:26:22.693Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:26:22.694Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:22.702Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:26:22.702Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:22.865Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:26:22.865Z"}
+{"level":"info","message":"Authentication successful for user 7 on GET /my-group","timestamp":"2025-09-12T09:26:22.871Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-12T09:26:22.872Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Group B\"","timestamp":"2025-09-12T09:26:22.872Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Group B\"","timestamp":"2025-09-12T09:26:22.872Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1627,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-12T09:23:44.902Z\",\"total_synced\":1627,\"sync_duration_ms\":6514,\"sync_version\":\"1.0\"}","timestamp":"2025-09-12T09:26:22.879Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Group B}:* for group: Group B","timestamp":"2025-09-12T09:26:22.879Z"}
+{"level":"info","message":"Found 79 total keys matching pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:22.884Z"}
+{"level":"info","message":"Processing 79 keys: [\"groups:{Group B}:AUDSGD\",\"groups:{Group B}:USDJPY\",\"groups:{Group B}:USDCNH\"]...","timestamp":"2025-09-12T09:26:22.884Z"}
+{"level":"info","message":"Successfully retrieved 79 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-12T09:26:22.997Z"}
+{"level":"info","message":"[USER] Found 79 groups for Group B","timestamp":"2025-09-12T09:26:22.997Z"}
+{"level":"info","message":"Authentication successful for user 7 on POST /instant/place","timestamp":"2025-09-12T09:26:36.788Z"}
+{"level":"info","message":"Authentication successful for user 7 on POST /close","timestamp":"2025-09-12T09:26:54.049Z"}

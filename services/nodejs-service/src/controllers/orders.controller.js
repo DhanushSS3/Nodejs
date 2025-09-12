@@ -9,6 +9,7 @@ const { redisCluster } = require('../../config/redis');
 const groupsCache = require('../services/groups.cache.service');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
+const { applyOrderClosePayout } = require('../services/order.payout.service');
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -536,6 +537,32 @@ async function closeOrder(req, res) {
           // Also persist incoming status string for historical trace
           updateFields.status = incomingStatus;
           await row.update(updateFields);
+
+          // Apply wallet payout + user transactions (idempotent)
+          try {
+            const payoutKey = `close_payout_applied:${String(order_id)}`;
+            const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+            if (nx) {
+              await applyOrderClosePayout({
+                userType: req_user_type,
+                userId: parseInt(req_user_id, 10),
+                orderPk: row?.id ?? null,
+                orderIdStr: String(order_id),
+                netProfit: Number(result.net_profit) || 0,
+                commission: Number(result.total_commission) || 0,
+                profitUsd: Number(result.profit_usd) || 0,
+                swap: Number(result.swap) || 0,
+                symbol,
+                orderType: order_type,
+              });
+              try {
+                portfolioEvents.emitUserUpdate(req_user_type, req_user_id, { type: 'wallet_balance_update', order_id });
+              } catch (_) {}
+            }
+          } catch (e) {
+            logger.warn('Failed to apply wallet payout on local close', { error: e.message, order_id });
+          }
+
         }
       } catch (e) {
         logger.error('Failed to update SQL row after local close', { order_id, error: e.message });
