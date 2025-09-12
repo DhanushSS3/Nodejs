@@ -636,8 +636,23 @@ async function addStopLoss(req, res) {
 
     const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
     const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
-    const entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
+    let entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
     const order_quantity_num = toNumber(canonical ? canonical.order_quantity : row.order_quantity);
+
+    // Fallback: try user_holdings if canonical/SQL missing entry price
+    if (!(entry_price_num > 0)) {
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const hkey = `user_holdings:{${tag}}:${order_id}`;
+        const hold = await redisCluster.hgetall(hkey);
+        const ep2 = toNumber(hold?.order_price);
+        if (ep2 > 0) {
+          entry_price_num = ep2;
+        }
+      } catch (e) {
+        logger.warn('Fallback to user_holdings for entry price failed (SL)', { order_id, error: e.message });
+      }
+    }
 
     if (!(entry_price_num > 0)) {
       return res.status(400).json({ success: false, message: 'Invalid entry price' });
@@ -687,6 +702,32 @@ async function addStopLoss(req, res) {
     }
 
     const result = pyResp.data?.data || pyResp.data || {};
+
+    // For local flow: persist to SQL immediately and notify websocket
+    try {
+      if (result && String(result.flow).toLowerCase() === 'local') {
+        const OrderModelNow = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+        try {
+          const rowNow = await OrderModelNow.findOne({ where: { order_id } });
+          if (rowNow) {
+            await rowNow.update({ stop_loss: String(stop_loss) });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for stoploss (local flow)', { order_id, error: e.message });
+        }
+        try {
+          portfolioEvents.emitUserUpdate(user_type, user_id, {
+            type: 'order_update',
+            order_id,
+            update: { stop_loss: String(stop_loss) },
+            reason: 'local_stoploss_set',
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after local stoploss set', { order_id, error: e.message });
+        }
+      }
+    } catch (_) {}
+
     return res.status(200).json({ success: true, data: result, order_id, stoploss_id });
   } catch (error) {
     logger.error('addStopLoss internal error', { error: error.message });
@@ -752,8 +793,23 @@ async function addTakeProfit(req, res) {
 
     const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
     const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
-    const entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
+    let entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
     const order_quantity_num = toNumber(canonical ? canonical.order_quantity : row.order_quantity);
+
+    // Fallback: try user_holdings if canonical/SQL missing entry price
+    if (!(entry_price_num > 0)) {
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const hkey = `user_holdings:{${tag}}:${order_id}`;
+        const hold = await redisCluster.hgetall(hkey);
+        const ep2 = toNumber(hold?.order_price);
+        if (ep2 > 0) {
+          entry_price_num = ep2;
+        }
+      } catch (e) {
+        logger.warn('Fallback to user_holdings for entry price failed (TP)', { order_id, error: e.message });
+      }
+    }
 
     if (!(entry_price_num > 0)) {
       return res.status(400).json({ success: false, message: 'Invalid entry price' });
@@ -801,6 +857,32 @@ async function addTakeProfit(req, res) {
     }
 
     const result = pyResp.data?.data || pyResp.data || {};
+
+    // For local flow: persist to SQL immediately and notify websocket
+    try {
+      if (result && String(result.flow).toLowerCase() === 'local') {
+        const OrderModelNow = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+        try {
+          const rowNow = await OrderModelNow.findOne({ where: { order_id } });
+          if (rowNow) {
+            await rowNow.update({ take_profit: String(take_profit) });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for takeprofit (local flow)', { order_id, error: e.message });
+        }
+        try {
+          portfolioEvents.emitUserUpdate(user_type, user_id, {
+            type: 'order_update',
+            order_id,
+            update: { take_profit: String(take_profit) },
+            reason: 'local_takeprofit_set',
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after local takeprofit set', { order_id, error: e.message });
+        }
+      }
+    } catch (_) {}
+
     return res.status(200).json({ success: true, data: result, order_id, takeprofit_id });
   } catch (error) {
     logger.error('addTakeProfit internal error', { error: error.message });

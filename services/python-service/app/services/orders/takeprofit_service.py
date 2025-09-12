@@ -95,6 +95,16 @@ class TakeProfitService:
             except Exception:
                 pass
 
+            # Also update user_holdings for immediate WS snapshot visibility
+            try:
+                hash_tag = f"{user_type}:{user_id}"
+                order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                await redis_cluster.hset(order_key, mapping={
+                    "take_profit": str(tp_raw),
+                })
+            except Exception:
+                pass
+
             # Publish DB update intent
             try:
                 db_msg = {
