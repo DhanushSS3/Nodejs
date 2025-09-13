@@ -7,6 +7,7 @@ const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const groupsCache = require('../services/groups.cache.service');
+const redisUserCache = require('../services/redis.user.cache.service');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
 const { applyOrderClosePayout } = require('../services/order.payout.service');
@@ -944,13 +945,9 @@ async function cancelStopLoss(req, res) {
     const order_typeReq = normalizeStr(body.order_type).toUpperCase();
     const statusIn = normalizeStr(body.status || 'STOPLOSS-CANCEL');
     const order_status_in = normalizeStr(body.order_status || 'OPEN');
-    const stoploss_id = normalizeStr(body.stoploss_id);
 
     if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
-    }
-    if (!stoploss_id) {
-      return res.status(400).json({ success: false, message: 'stoploss_id is required' });
     }
     if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
       return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
@@ -1000,13 +997,32 @@ async function cancelStopLoss(req, res) {
       return res.status(409).json({ success: false, message: 'No active stoploss to cancel' });
     }
 
-    // Verify stoploss_id matches stored mapping when available
+    // Determine sending flow to decide provider vs local behavior
+    let sendingOrders = 'rock';
     try {
-      const expected = row?.stoploss_id || (await redisCluster.hget(`order_data:${order_id}`, 'stoploss_id'));
-      if (expected && normalizeStr(expected) !== normalizeStr(stoploss_id)) {
-        return res.status(403).json({ success: false, message: 'stoploss_id does not match this order' });
+      const userCfg = await redisUserCache.getUser(user_type, parseInt(user_id, 10));
+      if (userCfg && userCfg.sending_orders) {
+        sendingOrders = String(userCfg.sending_orders).toLowerCase();
       }
-    } catch (_) {}
+    } catch (e) {
+      logger.warn('Failed to fetch user config from cache', { error: e.message, user_type, user_id });
+    }
+
+    // Resolve stoploss_id from SQL or Redis canonical
+    let resolvedStoplossId = normalizeStr(row?.stoploss_id);
+    if (!resolvedStoplossId) {
+      try {
+        const fromRedis = await redisCluster.hget(`order_data:${order_id}`, 'stoploss_id');
+        if (fromRedis) resolvedStoplossId = normalizeStr(fromRedis);
+      } catch (_) {}
+    }
+    if (!resolvedStoplossId) {
+      if (sendingOrders === 'barclays') {
+        return res.status(409).json({ success: false, message: 'No stoploss_id found for provider cancel' });
+      }
+      // For local flow, a placeholder is acceptable (Python ignores it for local cancel flow)
+      resolvedStoplossId = `SL-${order_id}`;
+    }
 
     // Generate cancel id and persist to SQL
     const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
@@ -1028,7 +1044,7 @@ async function cancelStopLoss(req, res) {
       order_type,
       status: 'STOPLOSS-CANCEL',
       order_status: order_status_in,
-      stoploss_id,
+      stoploss_id: resolvedStoplossId,
       stoploss_cancel_id,
     };
 
@@ -1098,13 +1114,9 @@ async function cancelTakeProfit(req, res) {
     const order_typeReq = normalizeStr(body.order_type).toUpperCase();
     const statusIn = normalizeStr(body.status || 'TAKEPROFIT-CANCEL');
     const order_status_in = normalizeStr(body.order_status || 'OPEN');
-    const takeprofit_id = normalizeStr(body.takeprofit_id);
 
     if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
-    }
-    if (!takeprofit_id) {
-      return res.status(400).json({ success: false, message: 'takeprofit_id is required' });
     }
     if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
       return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
@@ -1154,13 +1166,32 @@ async function cancelTakeProfit(req, res) {
       return res.status(409).json({ success: false, message: 'No active takeprofit to cancel' });
     }
 
-    // Verify takeprofit_id matches stored mapping when available
+    // Determine sending flow
+    let sendingOrders = 'rock';
     try {
-      const expected = row?.takeprofit_id || (await redisCluster.hget(`order_data:${order_id}`, 'takeprofit_id'));
-      if (expected && normalizeStr(expected) !== normalizeStr(takeprofit_id)) {
-        return res.status(403).json({ success: false, message: 'takeprofit_id does not match this order' });
+      const userCfg = await redisUserCache.getUser(user_type, parseInt(user_id, 10));
+      if (userCfg && userCfg.sending_orders) {
+        sendingOrders = String(userCfg.sending_orders).toLowerCase();
       }
-    } catch (_) {}
+    } catch (e) {
+      logger.warn('Failed to fetch user config from cache', { error: e.message, user_type, user_id });
+    }
+
+    // Resolve takeprofit_id from SQL or Redis canonical
+    let resolvedTakeprofitId = normalizeStr(row?.takeprofit_id);
+    if (!resolvedTakeprofitId) {
+      try {
+        const fromRedis = await redisCluster.hget(`order_data:${order_id}`, 'takeprofit_id');
+        if (fromRedis) resolvedTakeprofitId = normalizeStr(fromRedis);
+      } catch (_) {}
+    }
+    if (!resolvedTakeprofitId) {
+      if (sendingOrders === 'barclays') {
+        return res.status(409).json({ success: false, message: 'No takeprofit_id found for provider cancel' });
+      }
+      // For local flow, a placeholder is acceptable (Python ignores it for local cancel flow)
+      resolvedTakeprofitId = `TP-${order_id}`;
+    }
 
     // Generate cancel id and persist to SQL
     const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
@@ -1182,7 +1213,7 @@ async function cancelTakeProfit(req, res) {
       order_type,
       status: 'TAKEPROFIT-CANCEL',
       order_status: order_status_in,
-      takeprofit_id,
+      takeprofit_id: resolvedTakeprofitId,
       takeprofit_cancel_id,
     };
 
