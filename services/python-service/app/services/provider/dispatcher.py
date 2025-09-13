@@ -14,6 +14,8 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
 CONFIRMATION_QUEUE = os.getenv("CONFIRMATION_QUEUE", "confirmation_queue")
 DLQ = os.getenv("CONFIRMATION_DLQ", "confirmation_dlq")
+DB_UPDATE_QUEUE = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+CANCEL_QUEUE = os.getenv("ORDER_WORKER_CANCEL_QUEUE", "order_worker_cancel_queue")
 
 # Worker queues
 OPEN_QUEUE = os.getenv("ORDER_WORKER_OPEN_QUEUE", "order_worker_open_queue")
@@ -80,6 +82,8 @@ class Dispatcher:
         await self._channel.declare_queue(SL_QUEUE, durable=True)
         await self._channel.declare_queue(TP_QUEUE, durable=True)
         await self._channel.declare_queue(REJECT_QUEUE, durable=True)
+        await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
+        await self._channel.declare_queue(CANCEL_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
         logger.info("Dispatcher connected. Listening on %s", CONFIRMATION_QUEUE)
 
@@ -118,6 +122,9 @@ class Dispatcher:
                 redis_status = str(order_data.get("status") or order_data.get("order_status") or "").upper()
                 ord_status = str(report.get("ord_status") or "").upper().strip()
                 target_queue = None
+                # Route CANCELLED reports to a dedicated cancel worker (fire-and-forget)
+                if ord_status == "CANCELLED":
+                    target_queue = CANCEL_QUEUE
                 if redis_status == "OPEN" and ord_status == "EXECUTED":
                     target_queue = OPEN_QUEUE
                 elif redis_status == "OPEN" and ord_status == "REJECTED":

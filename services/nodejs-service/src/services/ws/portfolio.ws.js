@@ -130,6 +130,8 @@ function buildPayload({ balance, margin, openOrders, pendingOrders }) {
 }
 
 function startPortfolioWSServer(server) {
+  // By default, ws allows connections from all origins.
+  // If you want to restrict, use verifyClient or handle 'origin' header manually.
   const wss = new WebSocketServer({ server, path: '/ws/portfolio' });
   const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 

@@ -324,54 +324,19 @@ class TakeProfitService:
         if not ok:
             return {"ok": False, "reason": f"provider_send_failed:{via}"}
 
-        any_id = takeprofit_cancel_id or order_id
-        ord_status = await _wait_for_provider_ack(any_id, expected_statuses=("CANCELLED", "REJECTED"), timeout_ms=6000)
-        if ord_status is None:
-            return {"ok": False, "reason": "cancel_ack_timeout:TAKEPROFIT-CANCEL"}
-        if ord_status == "REJECTED":
-            return {"ok": False, "reason": "cancel_request_rejected:TAKEPROFIT-CANCEL"}
-
-        try:
-            await remove_takeprofit_trigger(order_id)
-        except Exception:
-            pass
+        # Mark routing status so dispatcher can route provider ACK correctly
         try:
             order_data_key = f"order_data:{order_id}"
             hash_tag = f"{user_type}:{user_id}"
             order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
             pipe = redis_cluster.pipeline()
-            pipe.hdel(order_data_key, "take_profit")
-            pipe.hdel(order_key, "take_profit")
-            pipe.hset(order_data_key, mapping={"status": "OPEN", "symbol": symbol, "order_type": side})
-            pipe.hset(order_key, mapping={"status": "OPEN"})
+            pipe.hset(order_data_key, mapping={"status": "TAKEPROFIT-CANCEL", "symbol": symbol, "order_type": side})
+            pipe.hset(order_key, mapping={"status": "TAKEPROFIT-CANCEL"})
             await pipe.execute()
         except Exception:
             pass
 
-        try:
-            import aio_pika  # type: ignore
-            RABBITMQ_URL = __import__('os').getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
-            ORDER_DB_UPDATE_QUEUE = __import__('os').getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
-            db_msg = {
-                "type": "ORDER_TAKEPROFIT_CANCEL",
-                "order_id": order_id,
-                "user_id": user_id,
-                "user_type": user_type,
-            }
-            conn = await aio_pika.connect_robust(RABBITMQ_URL)
-            try:
-                ch = await conn.channel()
-                await ch.declare_queue(ORDER_DB_UPDATE_QUEUE, durable=True)
-                msg = aio_pika.Message(body=__import__('orjson').dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
-                await ch.default_exchange.publish(msg, routing_key=ORDER_DB_UPDATE_QUEUE)
-            finally:
-                try:
-                    await conn.close()
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.warning("Failed to publish DB update for takeprofit cancel (provider): %s", e)
-
+        # Fire-and-forget: do not wait for provider ACK; finalization handled by dispatcher/worker
         return {
             "ok": True,
             "flow": flow,
@@ -379,8 +344,7 @@ class TakeProfitService:
             "symbol": symbol,
             "order_type": side,
             "provider_cancel_sent": True,
-            "provider_cancelled": True,
-            "status": "OPEN",
+            "note": "Takeprofit cancel sent to provider; will be finalized on confirmation",
         }
 
 

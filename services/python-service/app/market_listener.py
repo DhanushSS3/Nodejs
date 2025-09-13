@@ -21,7 +21,7 @@ class MarketListener:
     """WebSocket market data listener for real-time price feeds"""
     
     def __init__(self):
-        self.ws_url = "ws://188.241.62.105:9001/?token=Lkj@asd@123"
+        self.ws_url = "wss://quotes.livefxhub.com:9001/?token=Lkj@asd@123"
         self.market_service = MarketDataService()
         self.reconnect_delay = 5  # seconds
         self.max_reconnect_attempts = 10

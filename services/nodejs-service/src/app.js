@@ -40,7 +40,14 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Enable CORS for all origins
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  credentials: false,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}));
 
 // Handle invalid JSON error from express.json()
 app.use((err, req, res, next) => {

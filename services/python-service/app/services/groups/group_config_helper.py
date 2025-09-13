@@ -54,6 +54,8 @@ def _normalize_group_dict(src: Dict[str, Any]) -> Dict[str, Any]:
     # Margin from groups table stored as group_margin to avoid confusion with order margin
     if src.get("margin") is not None:
         out["group_margin"] = src.get("margin")
+        # Also expose as crypto_margin_factor for crypto margin computation
+        out["crypto_margin_factor"] = src.get("margin")
     return out
 
 
@@ -71,7 +73,8 @@ async def get_group_config_with_fallback(group: str, symbol: str) -> Dict[str, A
     """
     Resolve group config for (group, symbol) with Redis-first strategy and DB fallback via Node.
     Caches successful DB responses back into Redis for future reads.
-    Returns a dict possibly containing: type, contract_size, profit, spread, spread_pip
+    Returns a dict possibly containing: type, contract_size, profit, spread, spread_pip,
+    commission_rate/commission_type/commission_value_type, group_margin, crypto_margin_factor
     """
     # 1) Try Redis (group, then Standard)
     data = await _fetch_from_redis(group, symbol)

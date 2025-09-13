@@ -110,6 +110,17 @@ async def compute_single_order_margin_with_fallback(
                 cs_val = None
         profit_ccy = cfg.get("profit")
 
+        # Resolve crypto margin factor if not provided explicitly
+        factor = crypto_margin_factor
+        if factor is None:
+            for k in ("crypto_margin_factor", "group_margin", "margin"):
+                if cfg.get(k) is not None:
+                    try:
+                        factor = float(cfg.get(k))
+                        break
+                    except (TypeError, ValueError):
+                        continue
+
         return await compute_single_order_margin(
             contract_size=cs_val,
             order_quantity=order_quantity,
@@ -119,7 +130,7 @@ async def compute_single_order_margin_with_fallback(
             leverage=leverage,
             instrument_type=inst_type,
             prices_cache=prices_cache,
-            crypto_margin_factor=crypto_margin_factor,
+            crypto_margin_factor=factor,
             strict=strict,
         )
     except Exception as e:

@@ -132,6 +132,7 @@ async def compute_user_total_margin(
         contract_size = _safe_float(g.get("contract_size"))
         profit_currency = g.get("profit")
         instrument_type = _safe_int(g.get("type"), default=1)
+        # crypto_margin_factor comes from groups 'margin' field; ensure fallback mapping handled in _fetch_group_data_batch
         crypto_margin_factor = _safe_float(g.get("crypto_margin_factor"))
 
         if strict and (contract_size is None or not profit_currency):
@@ -140,13 +141,29 @@ async def compute_user_total_margin(
             meta["skipped_orders_count"] += 1
             continue
 
-        # Execution price: use ask for conservative margin regardless of side
+        # Execution price:
+        # - For CRYPTO (type==4): use order_price provided by the order as the buy price; if missing, fallback to market ask
+        # - For NON-CRYPTO: use market ask for conservative margin regardless of side
         sym_price = prices_cache_local.get(sym)
-        if not sym_price or _safe_float(sym_price.get("ask")) in (None, 0.0):
-            meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_price", "status": "skipped"}
-            meta["skipped_orders_count"] += 1
-            continue
-        execution_price = float(sym_price["ask"])  # conservative
+        instrument_type = _safe_int(g.get("type"), default=1)
+        execution_price = None
+        if instrument_type == 4:
+            op = _safe_float(od.get("order_price"))
+            if op is not None and op > 0.0:
+                execution_price = float(op)
+            else:
+                # Fallback to market ask if order_price not available
+                if not sym_price or _safe_float(sym_price.get("ask")) in (None, 0.0):
+                    meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_price", "status": "skipped"}
+                    meta["skipped_orders_count"] += 1
+                    continue
+                execution_price = float(sym_price["ask"])
+        else:
+            if not sym_price or _safe_float(sym_price.get("ask")) in (None, 0.0):
+                meta["per_order"][oid] = {"margin_usd": None, "reason": "missing_price", "status": "skipped"}
+                meta["skipped_orders_count"] += 1
+                continue
+            execution_price = float(sym_price["ask"])  # conservative for non-crypto
 
         qty = _safe_float(od.get("order_quantity")) or 0.0
         order_type = (od.get("order_type") or "").upper()
@@ -355,17 +372,24 @@ async def _fetch_group_data_batch(symbols: List[str], group: str) -> Dict[str, D
                     cmf = float(data.get('crypto_margin_factor')) if data.get('crypto_margin_factor') is not None else None
                 except (TypeError, ValueError):
                     cmf = None
+                try:
+                    margin_val = float(data.get('margin')) if data.get('margin') is not None else None
+                except (TypeError, ValueError):
+                    margin_val = None
             else:
                 cs = None
                 profit = None
                 itype = 1
                 cmf = None
+                margin_val = None
 
             group_data[sym] = {
                 'contract_size': cs,
                 'profit': profit,
                 'type': itype,
-                'crypto_margin_factor': cmf,
+                # Use explicit crypto_margin_factor if present; otherwise, fallback to groups 'margin' field
+                'crypto_margin_factor': cmf if cmf is not None else margin_val,
+                'group_margin': margin_val,
             }
         return group_data
     except Exception as e:
