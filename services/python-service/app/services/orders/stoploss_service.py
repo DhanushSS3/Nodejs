@@ -322,6 +322,8 @@ class StopLossService:
             "symbol": symbol,
             "order_type": side,
             "status": "STOPLOSS-CANCEL",
+            "stoploss_id": stoploss_id,
+            "stoploss_cancel_id": stoploss_cancel_id,
             "type": "order",
         }
         if stoploss_cancel_id:

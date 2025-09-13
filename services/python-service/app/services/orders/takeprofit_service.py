@@ -314,6 +314,8 @@ class TakeProfitService:
             "order_id": order_id,
             "symbol": symbol,
             "order_type": side,
+            "takeprofit_id": takeprofit_id,
+            "takeprofit_cancel_id": takeprofit_cancel_id,
             "status": "TAKEPROFIT-CANCEL",
             "type": "order",
         }
