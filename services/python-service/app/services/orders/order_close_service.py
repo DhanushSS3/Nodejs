@@ -228,11 +228,28 @@ class OrderCloser:
         except Exception:
             contract_value = None
 
+        # Discover existing lifecycle ids for SL/TP to include in cancel payloads
+        tp_id = None
+        sl_id = None
+        try:
+            tp_id = (order_hash or {}).get("takeprofit_id")
+            sl_id = (order_hash or {}).get("stoploss_id")
+        except Exception:
+            tp_id = None
+            sl_id = None
+        try:
+            # Fallback to canonical storage
+            od_lookup = await redis_cluster.hgetall(f"order_data:{order_id}") or {}
+            tp_id = tp_id or od_lookup.get("takeprofit_id")
+            sl_id = sl_id or od_lookup.get("stoploss_id")
+        except Exception:
+            pass
+
         # 1) Send cancels if needed and wait for confirmation
         cancel_steps: List[Tuple[str, Dict[str, Any]]] = []
         # Build cancel steps purely from payload-provided cancel IDs (no local trigger lookup)
         if payload.get("takeprofit_cancel_id"):
-            cancel_steps.append(("TAKEPROFIT-CANCEL", {
+            cp_tp = {
                 "order_id": order_id,
                 "take_profit_cancel_id": str(payload.get("takeprofit_cancel_id")),
                 "order_type": order_type,
@@ -240,9 +257,12 @@ class OrderCloser:
                 "symbol": symbol,
                 "status": "TAKEPROFIT-CANCEL",
                 "type": "order",
-            }))
+            }
+            if tp_id:
+                cp_tp["takeprofit_id"] = str(tp_id)
+            cancel_steps.append(("TAKEPROFIT-CANCEL", cp_tp))
         if payload.get("stoploss_cancel_id"):
-            cancel_steps.append(("STOPLOSS-CANCEL", {
+            cp_sl = {
                 "order_id": order_id,
                 "stop_loss_cancel_id": str(payload.get("stoploss_cancel_id")),
                 "order_type": order_type,
@@ -250,7 +270,10 @@ class OrderCloser:
                 "symbol": symbol,
                 "status": "STOPLOSS-CANCEL",
                 "type": "order",
-            }))
+            }
+            if sl_id:
+                cp_sl["stoploss_id"] = str(sl_id)
+            cancel_steps.append(("STOPLOSS-CANCEL", cp_sl))
 
         # Send cancel payloads sequentially and wait for ack per id
         for status_name, cp in cancel_steps:
