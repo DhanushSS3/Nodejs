@@ -112,6 +112,18 @@ class StopLossWorker:
             except Exception:
                 pass
 
+            # Also mirror to user_holdings for WS snapshots (do not change internal routing status)
+            try:
+                hash_tag = f"{user_type}:{user_id}"
+                order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                index_key = f"user_orders_index:{{{hash_tag}}}"
+                pipe = redis_cluster.pipeline()
+                pipe.sadd(index_key, order_id)
+                pipe.hset(order_key, mapping={"stop_loss": str(user_price)})
+                await pipe.execute()
+            except Exception:
+                pass
+
             # Publish DB update intent
             try:
                 db_msg = {

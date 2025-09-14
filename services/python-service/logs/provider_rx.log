@@ -1,0 +1,2 @@
+2025-09-14 04:50:06,459 INFO {"transport":"TCP","direction":"in","message":{"type":"execution_report","order_id":"TPC20250914000007","ord_status":"CANCELLED","ord_type":"2","symbol":"BTCUSD","avgpx":null,"cumqty":"0.000000","side":"SELL","reason":"Execution","ts":1757850606451}}
+2025-09-14 04:50:06,480 INFO {"transport":"TCP","direction":"in","message":{"type":"execution_report","order_id":"TPC20250914000007","ord_status":"CANCELLED","ord_type":"2","symbol":"BTCUSD","avgpx":null,"cumqty":"0.000000","side":"SELL","reason":"Execution","ts":1757850606451}}

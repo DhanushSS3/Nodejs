@@ -310,6 +310,8 @@ class TakeProfitService:
             except Exception as e:
                 logger.warning("add_lifecycle_id takeprofit_cancel_id failed: %s", e)
 
+        # NodeJS resolves takeprofit_id from SQL/Redis; use it directly to avoid NameError
+        takeprofit_id = str(payload.get("takeprofit_id") or "").strip()
         provider_payload = {
             "order_id": order_id,
             "symbol": symbol,

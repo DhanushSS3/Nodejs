@@ -271,6 +271,59 @@ async function applyDbUpdate(msg) {
         take_profit: row.take_profit != null ? row.take_profit.toString() : null,
       };
       logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
+      // Mirror trigger updates into Redis so WS snapshots and services reflect changes
+      try {
+        const userTypeStr = String(user_type);
+        const userIdStr = String(user_id);
+        const hashTag = `${userTypeStr}:${userIdStr}`;
+        const orderKey = `user_holdings:{${hashTag}}:${String(order_id)}`;
+        const orderDataKey = `order_data:${String(order_id)}`;
+        const indexKey = `user_orders_index:{${hashTag}}`;
+        const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
+        // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
+        const pUser = redisCluster.pipeline();
+        pUser.sadd(indexKey, String(order_id));
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
+          if (updateFields.stop_loss === null) {
+            pUser.hdel(orderKey, 'stop_loss');
+          } else {
+            pUser.hset(orderKey, 'stop_loss', String(updateFields.stop_loss));
+          }
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
+          if (updateFields.take_profit === null) {
+            pUser.hdel(orderKey, 'take_profit');
+          } else {
+            pUser.hset(orderKey, 'take_profit', String(updateFields.take_profit));
+          }
+        }
+        await pUser.exec();
+
+        // 2) order_data pipeline (separate slot)
+        const pOd = redisCluster.pipeline();
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
+          if (updateFields.stop_loss === null) pOd.hdel(orderDataKey, 'stop_loss');
+          else pOd.hset(orderDataKey, 'stop_loss', String(updateFields.stop_loss));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
+          if (updateFields.take_profit === null) pOd.hdel(orderDataKey, 'take_profit');
+          else pOd.hset(orderDataKey, 'take_profit', String(updateFields.take_profit));
+        }
+        await pOd.exec();
+
+        // 3) symbol_holders (separate slot)
+        if (symbolUpper) {
+          try {
+            const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
+            await redisCluster.sadd(symKey, hashTag);
+          } catch (e2) {
+            logger.warn('symbol_holders sadd failed', { error: e2.message, symbol: symbolUpper, user: hashTag });
+          }
+        }
+      } catch (e) {
+        logger.warn('Failed to mirror trigger to Redis holdings', { error: e.message, order_id: String(order_id) });
+      }
+
       // Emit event for this user's portfolio stream
       try {
         portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {

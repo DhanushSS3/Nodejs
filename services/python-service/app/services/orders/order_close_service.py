@@ -251,7 +251,7 @@ class OrderCloser:
         if payload.get("takeprofit_cancel_id"):
             cp_tp = {
                 "order_id": order_id,
-                "take_profit_cancel_id": str(payload.get("takeprofit_cancel_id")),
+                "takeprofit_cancel_id": str(payload.get("takeprofit_cancel_id")),
                 "order_type": order_type,
                 "contract_value": contract_value,
                 "symbol": symbol,
@@ -264,7 +264,7 @@ class OrderCloser:
         if payload.get("stoploss_cancel_id"):
             cp_sl = {
                 "order_id": order_id,
-                "stop_loss_cancel_id": str(payload.get("stoploss_cancel_id")),
+                "stoploss_cancel_id": str(payload.get("stoploss_cancel_id")),
                 "order_type": order_type,
                 "contract_value": contract_value,
                 "symbol": symbol,

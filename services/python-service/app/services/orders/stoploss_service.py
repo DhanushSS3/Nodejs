@@ -317,6 +317,8 @@ class StopLossService:
                 logger.warning("add_lifecycle_id stoploss_cancel_id failed: %s", e)
 
         # Compose provider cancel payload
+        # NodeJS resolves stoploss_id from SQL/Redis; use it directly
+        stoploss_id = str(payload.get("stoploss_id") or "").strip()
         provider_payload = {
             "order_id": order_id,
             "symbol": symbol,

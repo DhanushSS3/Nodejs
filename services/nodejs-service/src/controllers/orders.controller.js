@@ -983,11 +983,30 @@ async function cancelStopLoss(req, res) {
     const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
     const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
 
-    // Validate an active SL exists (DB or Redis triggers)
+    // Validate an active SL exists (DB or Redis canonical/holdings/triggers)
     let hasSL = false;
-    if (row && row.stop_loss != null) {
+    // 1) SQL row
+    if (row && row.stop_loss != null && Number(row.stop_loss) > 0) {
       hasSL = true;
-    } else {
+    }
+    // 2) Canonical Redis order_data
+    if (!hasSL && canonical && canonical.stop_loss != null && Number(canonical.stop_loss) > 0) {
+      hasSL = true;
+    }
+    // 3) User holdings (WS source of truth)
+    if (!hasSL) {
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const hkey = `user_holdings:{${tag}}:${order_id}`;
+        const hold = await redisCluster.hgetall(hkey);
+        const slNum = hold && hold.stop_loss != null ? Number(hold.stop_loss) : NaN;
+        if (!Number.isNaN(slNum) && slNum > 0) hasSL = true;
+      } catch (e) {
+        logger.warn('Fallback to user_holdings for SL cancel check failed', { error: e.message, order_id });
+      }
+    }
+    // 4) Local trigger store
+    if (!hasSL) {
       try {
         const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
         if (trig && (trig.stop_loss || trig.stop_loss_compare || trig.stop_loss_user)) hasSL = true;
@@ -1152,11 +1171,30 @@ async function cancelTakeProfit(req, res) {
     const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
     const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
 
-    // Validate an active TP exists (DB or Redis triggers)
+    // Validate an active TP exists (DB or Redis canonical/holdings/triggers)
     let hasTP = false;
-    if (row && row.take_profit != null) {
+    // 1) SQL row
+    if (row && row.take_profit != null && Number(row.take_profit) > 0) {
       hasTP = true;
-    } else {
+    }
+    // 2) Canonical Redis order_data
+    if (!hasTP && canonical && canonical.take_profit != null && Number(canonical.take_profit) > 0) {
+      hasTP = true;
+    }
+    // 3) User holdings (WS source of truth)
+    if (!hasTP) {
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const hkey = `user_holdings:{${tag}}:${order_id}`;
+        const hold = await redisCluster.hgetall(hkey);
+        const tpNum = hold && hold.take_profit != null ? Number(hold.take_profit) : NaN;
+        if (!Number.isNaN(tpNum) && tpNum > 0) hasTP = true;
+      } catch (e) {
+        logger.warn('Fallback to user_holdings for TP cancel check failed', { error: e.message, order_id });
+      }
+    }
+    // 4) Local trigger store
+    if (!hasTP) {
       try {
         const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
         if (trig && (trig.take_profit || trig.take_profit_compare || trig.take_profit_user)) hasTP = true;

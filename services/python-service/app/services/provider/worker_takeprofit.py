@@ -107,6 +107,20 @@ class TakeProfitWorker:
             except Exception:
                 pass
 
+            # Also reflect into user holdings for WS snapshots (do not change internal routing status)
+            try:
+                hash_tag = f"{user_type}:{user_id}"
+                order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                index_key = f"user_orders_index:{{{hash_tag}}}"
+                pipe = redis_cluster.pipeline()
+                # ensure index contains the order
+                pipe.sadd(index_key, order_id)
+                # write confirmed take_profit to holdings
+                pipe.hset(order_key, mapping={"take_profit": str(user_price)})
+                await pipe.execute()
+            except Exception:
+                pass
+
             try:
                 db_msg = {
                     "type": "ORDER_TAKEPROFIT_CONFIRMED",
