@@ -1,5 +1,6 @@
 const axios = require('axios');
 const logger = require('../services/logger.service');
+const orderReqLogger = require('../services/order.request.logger');
 const idGenerator = require('../services/idGenerator.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
@@ -67,6 +68,17 @@ function validatePayload(body) {
 async function placeInstantOrder(req, res) {
   const operationId = `instant_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'placeInstantOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     // JWT checks
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -362,6 +374,17 @@ async function placeInstantOrder(req, res) {
 async function placePendingOrder(req, res) {
   const operationId = `pending_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'placePendingOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     // JWT checks
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -599,16 +622,22 @@ async function placePendingOrder(req, res) {
           } catch (eRedis) {
             logger.warn('Failed to mirror cancel_id into Redis for provider pending', { error: eRedis.message, order_id });
           }
-          // Also register lifecycle id mapping in Python for provider dispatcher quick lookup
+          // Also register lifecycle id mapping in Python for provider dispatcher quick lookup (fire-and-forget)
           try {
             const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-            await axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, {
+            axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, {
               order_id,
               new_id: cancel_id,
               id_type: 'cancel_id',
-            }, { timeout: 8000 });
-          } catch (eMap) {
-            logger.warn('Failed to register cancel_id lifecycle mapping in Python', { error: eMap.message, order_id });
+            }, { timeout: 5000 })
+              .then(() => {
+                logger.debug('Registered cancel_id lifecycle mapping in Python', { order_id });
+              })
+              .catch((eMap) => {
+                logger.warn('Failed to register cancel_id lifecycle mapping in Python', { error: eMap.message, order_id });
+              });
+          } catch (eMapOuter) {
+            logger.warn('Unable to initiate cancel_id lifecycle registration', { error: eMapOuter.message, order_id });
           }
         }
         // 2) Call Python to place provider pending order (Python will half-spread adjust before sending)
@@ -623,10 +652,15 @@ async function placePendingOrder(req, res) {
             user_id: parsed.user_id,
             user_type: parsed.user_type,
           };
-          await axios.post(`${baseUrl}/api/orders/pending/place`, payload, { timeout: 10000 });
-          logger.info('Dispatched provider pending placement', { order_id, symbol, orderType });
-        } catch (ePy) {
-          logger.error('Python provider pending placement failed', { error: ePy.message, order_id });
+          axios.post(`${baseUrl}/api/orders/pending/place`, payload, { timeout: 5000 })
+            .then(() => {
+              logger.info('Dispatched provider pending placement', { order_id, symbol, orderType });
+            })
+            .catch((ePy) => {
+              logger.error('Python provider pending placement failed', { error: ePy.message, order_id });
+            });
+        } catch (ePyOuter) {
+          logger.warn('Unable to initiate provider pending placement call', { error: ePyOuter.message, order_id });
         }
       }
     } catch (eProv) {
@@ -671,6 +705,17 @@ function _isMarketOpenByType(typeVal) {
 async function closeOrder(req, res) {
   const operationId = `close_order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'closeOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -915,6 +960,17 @@ async function closeOrder(req, res) {
 async function addStopLoss(req, res) {
   const operationId = `add_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'addStopLoss',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     // Basic auth checks
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -1073,6 +1129,17 @@ async function addStopLoss(req, res) {
 async function addTakeProfit(req, res) {
   const operationId = `add_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'addTakeProfit',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -1228,6 +1295,17 @@ async function addTakeProfit(req, res) {
 async function cancelStopLoss(req, res) {
   const operationId = `cancel_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'cancelStopLoss',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -1416,6 +1494,17 @@ async function cancelStopLoss(req, res) {
 async function cancelTakeProfit(req, res) {
   const operationId = `cancel_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'cancelTakeProfit',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
