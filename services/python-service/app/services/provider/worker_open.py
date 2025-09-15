@@ -226,17 +226,25 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     except (TypeError, ValueError):
         cs_val = None
 
-    # Apply side-based half_spread adjustment to executed price similar to local execution,
-    # but skip when this came from pending-local execution where the price already includes half_spread.
+    # Apply half_spread adjustment to executed price.
+    # - Provider PENDING->EXECUTED: always add half_spread for ALL types (BUY and SELL), regardless of side.
+    # - Instant provider execution: side-based (+ for BUY, - for SELL).
+    # - Local PENDING->EXECUTED (pending_local=True): skip (already adjusted upstream).
     side = str(payload.get("order_type") or payload.get("side") or "").upper()
     pending_local = bool(payload.get("pending_local"))
+    pending_executed = bool(payload.get("pending_executed"))
     if final_price is not None and half_spread is not None and not pending_local:
-        if side == "BUY" or side == "B":
+        if pending_executed:
+            # For provider pending orders, the provider price did not include the "ask + half_spread" normalization.
+            # Normalize by adding half_spread for all order types.
             adjusted_price = final_price + half_spread
-        elif side == "SELL" or side == "S":
-            adjusted_price = final_price - half_spread
         else:
-            adjusted_price = final_price
+            if side == "BUY" or side == "B":
+                adjusted_price = final_price + half_spread
+            elif side == "SELL" or side == "S":
+                adjusted_price = final_price - half_spread
+            else:
+                adjusted_price = final_price
         logger.debug(
             "[OPEN:price_adjust] symbol=%s side=%s base_exec_price=%s half_spread=%s final_exec_price=%s",
             symbol, side, final_price, half_spread, adjusted_price,

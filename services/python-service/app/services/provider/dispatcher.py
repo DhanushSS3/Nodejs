@@ -57,6 +57,7 @@ async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], c
         "order_type": order_data.get("order_type"),
         "order_price": order_data.get("order_price"),
         "order_quantity": order_data.get("order_quantity"),
+        "status": order_data.get("status") or order_data.get("order_status"),
         "execution_report": report,
     }
     return payload
@@ -126,6 +127,10 @@ class Dispatcher:
                 if ord_status == "CANCELLED":
                     target_queue = CANCEL_QUEUE
                 if redis_status == "OPEN" and ord_status == "EXECUTED":
+                    target_queue = OPEN_QUEUE
+                elif redis_status in ("PENDING", "MODIFY") and ord_status == "EXECUTED":
+                    # Pending order executed at provider -> open the order
+                    payload["pending_executed"] = True
                     target_queue = OPEN_QUEUE
                 elif redis_status == "OPEN" and ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
