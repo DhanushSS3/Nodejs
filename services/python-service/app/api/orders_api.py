@@ -7,10 +7,11 @@ from ..services.orders.order_close_service import OrderCloser
 from ..services.orders.stoploss_service import StopLossService
 from ..services.orders.takeprofit_service import TakeProfitService
 from ..services.orders.service_provider_client import send_provider_order
-from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result
+from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result, fetch_group_data
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
+from ..services.pending.provider_pending_monitor import register_provider_pending
 from .schemas.orders import (
     InstantOrderRequest,
     InstantOrderResponse,
@@ -157,6 +158,114 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
         raise
     except Exception as e:
         logger.error(f"instant_execute_order error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
+@router.post("/pending/place")
+async def pending_place_endpoint(payload: Dict[str, Any]):
+    """
+    Provider flow: pending order placement.
+    - Node sends: order_id, symbol, order_type (BUY_LIMIT/SELL_LIMIT/BUY_STOP/SELL_STOP), order_price, order_quantity, user_id, user_type
+    - Python sends to provider: order_id, symbol, order_type, contract_value, order_price (user_price - half_spread)
+    - Registers the order for continuous margin monitoring until execution or cancel.
+    """
+    try:
+        order_id = str(payload.get("order_id") or "").strip()
+        symbol = str(payload.get("symbol") or "").upper().strip()
+        order_type = str(payload.get("order_type") or "").upper().strip()
+        user_id = str(payload.get("user_id") or "").strip()
+        user_type = str(payload.get("user_type") or "").lower().strip()
+        order_price_user = float(payload.get("order_price"))
+        order_qty = float(payload.get("order_quantity"))
+        if not order_id or not symbol or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or not user_id or user_type not in ("live","demo"):
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_fields"})
+
+        # Resolve group & group config (prefer canonical, fallback to DB/Redis group hash)
+        group = None
+        try:
+            od = await redis_cluster.hgetall(f"order_data:{order_id}")
+            if od:
+                group = od.get("group") or None
+        except Exception:
+            group = None
+        if not group:
+            # Try user cache
+            try:
+                ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
+                group = (ucfg.get("group") if ucfg else None) or "Standard"
+            except Exception:
+                group = "Standard"
+
+        g = await fetch_group_data(symbol, group)
+        # Compute half_spread
+        try:
+            spread = float(g.get("spread")) if g.get("spread") is not None else None
+            spread_pip = float(g.get("spread_pip")) if g.get("spread_pip") is not None else None
+        except (TypeError, ValueError):
+            spread = None
+            spread_pip = None
+        if spread is None or spread_pip is None:
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "missing_group_spread"})
+        half_spread = (spread * spread_pip) / 2.0
+
+        # Compute contract_size and contract_value
+        try:
+            contract_size = float(g.get("contract_size")) if g.get("contract_size") is not None else None
+        except (TypeError, ValueError):
+            contract_size = None
+        if contract_size is None:
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "missing_contract_size"})
+        contract_value = float(contract_size) * float(order_qty)
+
+        # Adjust provider price: user_price - half_spread
+        provider_price = float(order_price_user) - float(half_spread)
+
+        # Send to provider via persistent connection manager
+        try:
+            provider_payload = {
+                "order_id": order_id,
+                "symbol": symbol,
+                "order_type": order_type,
+                "order_price": provider_price,
+                "contract_value": contract_value,
+            }
+            ok, via = await send_provider_order(provider_payload)
+            if not ok:
+                raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_unreachable", "via": via})
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"provider pending send failed {order_id}: {e}")
+            raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_send_failed", "error": str(e)})
+
+        # Register for margin monitoring/cancel
+        try:
+            await register_provider_pending({
+                "order_id": order_id,
+                "symbol": symbol,
+                "order_type": order_type,
+                "order_quantity": order_qty,
+                "user_id": user_id,
+                "user_type": user_type,
+                "group": group,
+            })
+        except Exception as e:
+            logger.warning(f"register_provider_pending failed for {order_id}: {e}")
+
+        return {
+            "success": True,
+            "message": "Provider pending placement dispatched",
+            "data": {
+                "order_id": order_id,
+                "sent_price": provider_price,
+                "contract_value": contract_value,
+                "group": group,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"pending_place_endpoint error: {e}")
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 

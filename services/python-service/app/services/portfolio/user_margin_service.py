@@ -1,6 +1,7 @@
 import os
 import logging
 from typing import Optional, Dict, Any, List, Tuple, Set
+import aiomysql
 
 import asyncio
 from app.config.redis_config import redis_cluster
@@ -328,6 +329,32 @@ async def _fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
                 )
             break
 
+        # If both tagged and legacy are missing, try DB fallback once (only on first loop)
+        if attempt == 0 and not data:
+            try:
+                db_cfg = await _fetch_user_config_from_db(user_type, user_id)
+                if db_cfg:
+                    data = db_cfg
+                    # Backfill tagged key for stability
+                    try:
+                        await redis_cluster.hset(tagged_key, mapping={
+                            "group": db_cfg.get("group", "Standard"),
+                            "leverage": str(db_cfg.get("leverage", 0)),
+                            # optional fields if present
+                            **({"status": str(db_cfg["status"]) } if db_cfg.get("status") is not None else {}),
+                            **({"is_active": str(db_cfg["is_active"]) } if db_cfg.get("is_active") is not None else {}),
+                        })
+                    except Exception as be2:
+                        logger.warning(
+                            "_fetch_user_config DB-backfill to tagged failed for %s:%s: %s",
+                            user_type,
+                            user_id,
+                            be2,
+                        )
+                    break
+            except Exception as dbe:
+                logger.error("_fetch_user_config DB fallback failed for %s:%s: %s", user_type, user_id, dbe)
+
         # Short delay before next attempt
         try:
             await asyncio.sleep(0.05)
@@ -337,6 +364,73 @@ async def _fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     group = data.get("group") or "Standard"
     lev = _safe_float(data.get("leverage")) or 0.0
     return {"group": group, "leverage": lev}
+
+
+# ---------- Minimal MySQL fallback utilities (aiomysql) ----------
+_MYSQL_POOL: Optional[aiomysql.Pool] = None
+
+
+async def _get_mysql_pool() -> Optional[aiomysql.Pool]:
+    global _MYSQL_POOL
+    if _MYSQL_POOL and not getattr(_MYSQL_POOL, 'closed', False):
+        return _MYSQL_POOL
+
+    # Support multiple env var names for flexibility
+    host = os.getenv("MYSQL_HOST") or os.getenv("DB_HOST") or "127.0.0.1"
+    port = int(os.getenv("MYSQL_PORT") or os.getenv("DB_PORT") or 3306)
+    user = os.getenv("MYSQL_USER") or os.getenv("DB_USER") or os.getenv("DB_USERNAME")
+    password = os.getenv("MYSQL_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("DB_PASS")
+    db = os.getenv("MYSQL_DB") or os.getenv("DB_NAME")
+
+    if not user or not password or not db:
+        logger.warning("MySQL credentials not set; skipping DB fallback for user config")
+        return None
+
+    try:
+        _MYSQL_POOL = await aiomysql.create_pool(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            db=db,
+            minsize=1,
+            maxsize=5,
+            autocommit=True,
+            charset="utf8mb4",
+        )
+        return _MYSQL_POOL
+    except Exception as e:
+        logger.error("Failed to create MySQL pool for user config fallback: %s", e)
+        return None
+
+
+async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, Any]:
+    pool = await _get_mysql_pool()
+    if not pool:
+        return {}
+    table = "live_users" if str(user_type).lower() == "live" else "demo_users"
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                # Note: `group` is a reserved keyword; wrap with backticks
+                await cur.execute(
+                    f"SELECT `group`, leverage, status, is_active FROM {table} WHERE id=%s LIMIT 1",
+                    (int(user_id),),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    return {}
+                grp, lev, status, is_active = row
+                cfg: Dict[str, Any] = {
+                    "group": grp or "Standard",
+                    "leverage": float(lev or 0),
+                    "status": int(status) if status is not None else None,
+                    "is_active": int(is_active) if is_active is not None else None,
+                }
+                return cfg
+    except Exception as e:
+        logger.error("DB fetch user config failed for %s:%s: %s", user_type, user_id, e)
+        return {}
 
 
 async def _fetch_group_data_batch(symbols: List[str], group: str) -> Dict[str, Dict[str, Any]]:

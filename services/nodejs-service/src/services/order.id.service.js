@@ -15,14 +15,14 @@ function yyyymmdd(date = new Date()) {
 
 async function generateOrderId() {
   const dateStr = yyyymmdd();
-  const key = `order_seq:${dateStr}`;
+  const key = `ord_seq:${dateStr}`;
   const seq = await redisCluster.incr(key);
   // Set a TTL so old counters expire (3 days)
   if (seq === 1) {
     try { await redisCluster.expire(key, 3 * 24 * 60 * 60); } catch (e) {}
   }
   const seqStr = pad(seq, 3);
-  return `order_${dateStr}_${seqStr}`;
+  return `ord_${dateStr}_${seqStr}`;
 }
 
 // Generate Stop Loss ID with Redis-backed atomic counter to avoid collisions across workers

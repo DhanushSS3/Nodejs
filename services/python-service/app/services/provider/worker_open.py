@@ -102,9 +102,12 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
     index_key = f"user_orders_index:{{{hash_tag}}}"
 
+    # Normalize side from payload
+    side_val = str(payload.get("order_type") or payload.get("side") or "").upper()
     mapping_common = {
         "order_status": "OPEN",
         "execution_status": "EXECUTED",  # provider acknowledged
+        "order_type": side_val if side_val else None,
         "provider_ord_status": ord_status,
         "provider_exec_id": exec_id if exec_id is not None else "",
         "provider_avspx": avspx if avspx is not None else "",
@@ -114,8 +117,10 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # Update both keys in a pipeline
     pipe = redis_cluster.pipeline()
-    pipe.hset(order_data_key, mapping=mapping_common)
-    pipe.hset(order_key, mapping=mapping_common)
+    # Filter out None values to avoid writing 'order_type': None
+    mapping_filtered = {k: v for k, v in mapping_common.items() if v is not None}
+    pipe.hset(order_data_key, mapping=mapping_filtered)
+    pipe.hset(order_key, mapping=mapping_filtered)
     # Ensure order is in the active index (idempotent safety)
     pipe.sadd(index_key, order_id)
     # Ensure symbol_holders has this user for this symbol (idempotent safety)
@@ -191,11 +196,14 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     spread_val = payload.get("spread") or er.get("spread")
     spread_pip_val = payload.get("spread_pip") or er.get("spread_pip")
     g = {}
-    if spread_val is None or spread_pip_val is None or payload.get("contract_size") is None:
+    if spread_val is None or spread_pip_val is None or payload.get("contract_size") is None or profit_currency is None:
         # Fetch only if we are missing required fields
         g = await fetch_group_data(symbol, group)
         spread_val = spread_val if spread_val is not None else g.get("spread")
         spread_pip_val = spread_pip_val if spread_pip_val is not None else g.get("spread_pip")
+        # Fallback for profit currency from group hash when missing
+        if profit_currency is None and g:
+            profit_currency = g.get("profit")
     # Compute half_spread = (spread * spread_pip) / 2
     half_spread = None
     try:
@@ -218,9 +226,11 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     except (TypeError, ValueError):
         cs_val = None
 
-    # Apply side-based half_spread adjustment to executed price similar to local execution
+    # Apply side-based half_spread adjustment to executed price similar to local execution,
+    # but skip when this came from pending-local execution where the price already includes half_spread.
     side = str(payload.get("order_type") or payload.get("side") or "").upper()
-    if final_price is not None and half_spread is not None:
+    pending_local = bool(payload.get("pending_local"))
+    if final_price is not None and half_spread is not None and not pending_local:
         if side == "BUY" or side == "B":
             adjusted_price = final_price + half_spread
         elif side == "SELL" or side == "S":
@@ -565,6 +575,7 @@ class OpenWorker:
                         "total_used_margin_usd": margins.get("total_used_margin_usd"),
                         "half_spread": margins.get("half_spread"),
                         "contract_size": margins.get("contract_size"),
+                        "contract_value": (float(cs_val) * float(margins.get("final_order_qty")) if (cs_val is not None and margins.get("final_order_qty") is not None) else None),
                         "provider": {
                             "ord_status": (payload.get("execution_report") or {}).get("ord_status"),
                             "exec_id": (payload.get("execution_report") or {}).get("exec_id"),
@@ -578,15 +589,20 @@ class OpenWorker:
 
                 # Step 4: publish DB update intent for Node consumer (decoupled persistence)
                 try:
+                    # Derive executed side for DB from computed margins or payload
+                    side_for_db = str(margins.get("side") or payload.get("order_type") or payload.get("side") or "").upper()
                     db_msg = {
                         "type": "ORDER_OPEN_CONFIRMED",
                         "order_id": str(payload.get("order_id")),
                         "user_id": str(payload.get("user_id")),
                         "user_type": str(payload.get("user_type")),
+                        "order_type": side_for_db,
                         "order_status": "OPEN",
                         "order_price": margins.get("final_exec_price") or payload.get("order_price"),
                         # Persist per-order executed margin in SQL via DB consumer
                         "margin": margins.get("single_margin_usd"),
+                        # Contract value = contract_size * executed_qty
+                        "contract_value": (float(cs_val) * float(margins.get("final_order_qty")) if (cs_val is not None and margins.get("final_order_qty") is not None) else None),
                         # Persist entry commission in SQL
                         "commission": commission_entry if 'commission_entry' in locals() else None,
                         # Backward compatibility: used_margin_usd mirrors executed margin
@@ -610,6 +626,7 @@ class OpenWorker:
                             "order_status": db_msg.get("order_status"),
                             "order_price": db_msg.get("order_price"),
                             "margin": db_msg.get("margin"),
+                            "contract_value": db_msg.get("contract_value"),
                             "commission": db_msg.get("commission"),
                             "used_margin_usd": db_msg.get("used_margin_usd"),
                         }

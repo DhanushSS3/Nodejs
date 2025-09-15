@@ -25,9 +25,11 @@ async function applyDbUpdate(msg) {
     order_id,
     user_id,
     user_type,
+    order_type,
     order_status,
     order_price,
     margin,
+    contract_value,
     commission,
     used_margin_usd,
     // Close-specific new fields
@@ -86,6 +88,9 @@ async function applyDbUpdate(msg) {
         const marginStr = margin != null && Number.isFinite(Number(margin))
           ? Number(margin).toFixed(8)
           : (canonical.margin ?? null);
+        const contractValueStr = contract_value != null && Number.isFinite(Number(contract_value))
+          ? Number(contract_value).toFixed(8)
+          : (canonical.contract_value ?? null);
         const commissionStr = commission != null && Number.isFinite(Number(commission))
           ? Number(commission).toFixed(8)
           : (canonical.commission ?? canonical.commission_entry ?? null);
@@ -101,6 +106,7 @@ async function applyDbUpdate(msg) {
             order_status: status,
             order_price: String(price),
             order_quantity: String(order_quantity),
+            contract_value: contractValueStr != null ? String(contractValueStr) : null,
             margin: marginStr != null ? String(marginStr) : null,
             commission: commissionStr != null ? String(commissionStr) : null,
             placed_by: 'user'
@@ -183,9 +189,13 @@ async function applyDbUpdate(msg) {
   } else {
     const updateFields = {};
     if (order_status) updateFields.order_status = String(order_status);
+    if (order_type) updateFields.order_type = String(order_type).toUpperCase();
     if (order_price != null) updateFields.order_price = String(order_price);
     if (margin != null && Number.isFinite(Number(margin))) {
       updateFields.margin = Number(margin).toFixed(8);
+    }
+    if (contract_value != null && Number.isFinite(Number(contract_value))) {
+      updateFields.contract_value = Number(contract_value).toFixed(8);
     }
     if (commission != null && Number.isFinite(Number(commission))) {
       updateFields.commission = Number(commission).toFixed(8);

@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import asyncio
+import os
 from .api.market_api import router as market_router
 from .api.orders_api import router as orders_router
 from .api.admin_orders_api import router as admin_orders_router
 from .market_listener import start_market_listener
 from .services.portfolio_calculator import start_portfolio_listener
 from .services.orders.provider_connection import get_provider_connection_manager
+from .services.pending.provider_pending_monitor import start_provider_pending_monitor
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +37,14 @@ async def lifespan(app: FastAPI):
     provider_manager = get_provider_connection_manager()
     provider_task = asyncio.create_task(provider_manager.run())
     logger.info("Provider connection manager started")
+
+    # Start provider pending monitor (continuous margin checks and cancel on insufficient margin)
+    try:
+        start_provider_pending_monitor()
+        logger.info("Provider pending monitor started")
+    except Exception as e:
+        logger.error(f"Failed to start provider pending monitor: {e}")
+
     
     yield
     

@@ -93,6 +93,77 @@ const ordersController = require('../controllers/orders.controller');
  */
 router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrder);
 
+// POST /api/orders/pending/place
+/**
+ * @swagger
+ * /api/orders/pending/place:
+ *   post:
+ *     summary: Place a pending order with spread-adjusted compare price stored in Redis
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - symbol
+ *               - order_type
+ *               - order_price
+ *               - order_quantity
+ *               - user_id
+ *               - user_type
+ *             properties:
+ *               symbol:
+ *                 type: string
+ *                 example: "AUDCAD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP]
+ *                 example: "BUY_LIMIT"
+ *               order_price:
+ *                 type: number
+ *                 example: 0.89
+ *               order_quantity:
+ *                 type: number
+ *                 example: 0.01
+ *               user_id:
+ *                 type: string
+ *                 example: "1"
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *                 example: "demo"
+ *     responses:
+ *       201:
+ *         description: Pending order accepted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 order_id:
+ *                   type: string
+ *                 order_status:
+ *                   type: string
+ *                   example: PENDING
+ *                 compare_price:
+ *                   type: number
+ *                 group:
+ *                   type: string
+ *       400:
+ *         description: Invalid payload or price constraints violated
+ *       403:
+ *         description: Forbidden (JWT/user checks)
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/pending/place', authenticateJWT, ordersController.placePendingOrder);
+
 // POST /api/orders/close
 /**
  * @swagger

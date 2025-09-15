@@ -16,6 +16,26 @@ function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
 }
 
+// Validate pending order payload and derive parsed fields
+function validatePendingPayload(body) {
+  const errors = [];
+  const symbol = normalizeStr(body.symbol).toUpperCase();
+  const order_type = normalizeStr(body.order_type).toUpperCase(); // BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP
+  const user_type = normalizeStr(body.user_type).toLowerCase();
+  const order_price = toNumber(body.order_price);
+  const order_quantity = toNumber(body.order_quantity);
+  const user_id = normalizeStr(body.user_id);
+
+  if (!symbol) errors.push('symbol');
+  if (!['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'].includes(order_type)) errors.push('order_type');
+  if (!(order_price > 0)) errors.push('order_price');
+  if (!(order_quantity > 0)) errors.push('order_quantity');
+  if (!user_id) errors.push('user_id');
+  if (!['live', 'demo'].includes(user_type)) errors.push('user_type');
+
+  return { errors, parsed: { symbol, order_type, user_type, order_price, order_quantity, user_id } };
+}
+
 function normalizeStr(v) {
   return (v ?? '').toString();
 }
@@ -336,7 +356,295 @@ async function placeInstantOrder(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder };
+// Exports consolidated at bottom
+
+// Place a pending order: validate constraints, compute compare_price, persist SQL+Redis
+async function placePendingOrder(req, res) {
+  const operationId = `pending_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    // JWT checks
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+    const userGroup = user && user.group ? String(user.group) : 'Standard';
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for pending order placement' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    // Validate payload
+    const { errors, parsed } = validatePendingPayload(req.body || {});
+    if (errors.length) {
+      return res.status(400).json({ success: false, message: 'Invalid payload fields', fields: errors });
+    }
+
+    // Ensure user places orders only for themselves (if token has id)
+    if (tokenUserId && String(parsed.user_id) !== String(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot place orders for another user' });
+    }
+
+    // Normalize for Redis keys and cross-service compatibility
+    const symbol = String(parsed.symbol).toUpperCase();
+    const orderType = String(parsed.order_type).toUpperCase();
+
+    // Fetch current market prices from Redis
+    let bid = null, ask = null;
+    try {
+      const arr = await redisCluster.hmget(`market:${symbol}`, 'bid', 'ask');
+      if (arr && arr.length >= 2) {
+        bid = arr[0] != null ? Number(arr[0]) : null;
+        ask = arr[1] != null ? Number(arr[1]) : null;
+      }
+    } catch (e) {
+      logger.error('Failed to read market price from Redis', { error: e.message, symbol: parsed.symbol });
+    }
+    if (!(bid > 0) || !(ask > 0)) {
+      return res.status(503).json({ success: false, message: 'Market price unavailable for symbol' });
+    }
+
+    // Price constraints removed as per requirement; placement no longer checks against current bid/ask
+
+    // Compute half_spread from group cache
+    let half_spread = null;
+    try {
+      const gf = await groupsCache.getGroupFields(userGroup, symbol, ['spread', 'spread_pip']);
+      if (gf && gf.spread != null && gf.spread_pip != null) {
+        const spread = Number(gf.spread);
+        const spread_pip = Number(gf.spread_pip);
+        if (Number.isFinite(spread) && Number.isFinite(spread_pip)) {
+          half_spread = (spread * spread_pip) / 2.0;
+        }
+      }
+    } catch (e) {
+      logger.warn('Failed to get group spread config for pending', { error: e.message, group: userGroup, symbol: parsed.symbol });
+    }
+    if (!(half_spread >= 0)) {
+      return res.status(400).json({ success: false, message: 'Group spread configuration missing for symbol/group' });
+    }
+
+    // Pending monitoring is ask-based for all types: store compare = user_price - half_spread
+    // Trigger direction is handled by the worker (ask >= or <= compare) per type
+    const hs = Number.isFinite(Number(half_spread)) ? Number(half_spread) : 0;
+    const compare_price = Number((parsed.order_price - hs).toFixed(8));
+    if (!(compare_price > 0)) {
+      return res.status(400).json({ success: false, message: 'Computed compare_price invalid' });
+    }
+
+    // Generate order_id and persist SQL row as PENDING
+    const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    const order_id = await idGenerator.generateOrderId();
+    try {
+      await OrderModel.create({
+        order_id,
+        order_user_id: parseInt(parsed.user_id, 10),
+        symbol: parsed.symbol,
+        order_type: parsed.order_type,
+        order_status: 'PENDING',
+        order_price: parsed.order_price,
+        order_quantity: parsed.order_quantity,
+        margin: 0,
+        status: 'PENDING',
+        placed_by: 'user',
+      });
+    } catch (dbErr) {
+      logger.error('Pending order DB create failed', { error: dbErr.message, order_id });
+      return res.status(500).json({ success: false, message: 'DB error', db_error: dbErr.message, operationId });
+    }
+
+    // Determine if provider flow to avoid local ZSET/index for provider-handled pendings
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{${parsed.user_type}:${parsed.user_id}}:config`;
+      const ucfg = await redisCluster.hgetall(userCfgKey);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) {
+      isProviderFlow = false;
+    }
+
+    // Store pending order in Redis (local monitor only if not provider)
+    const zkey = `pending_index:{${symbol}}:${orderType}`;
+    const hkey = `pending_orders:${order_id}`;
+    try {
+      if (!isProviderFlow) {
+        await redisCluster.zadd(zkey, compare_price, order_id);
+        await redisCluster.hset(hkey, {
+          symbol: symbol,
+          order_type: orderType,
+          user_type: parsed.user_type,
+          user_id: parsed.user_id,
+          order_price_user: String(parsed.order_price),
+          order_price_compare: String(compare_price),
+          order_quantity: String(parsed.order_quantity),
+          status: 'PENDING',
+          created_at: Date.now().toString(),
+          group: userGroup,
+        });
+      }
+      // Mirror minimal PENDING into user holdings and index for immediate WS visibility
+      try {
+        const hashTag = `${parsed.user_type}:${parsed.user_id}`;
+        const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
+        const indexKey = `user_orders_index:{${hashTag}}`;
+        const pipe = redisCluster.pipeline();
+        pipe.sadd(indexKey, order_id);
+        pipe.hset(orderKey, {
+          order_id: String(order_id),
+          symbol: symbol,
+          order_type: orderType, // pending type (e.g., BUY_LIMIT)
+          order_status: 'PENDING',
+          execution_status: 'QUEUED',
+          order_price: String(parsed.order_price),
+          order_quantity: String(parsed.order_quantity),
+          group: userGroup,
+          created_at: Date.now().toString(),
+        });
+        await pipe.exec();
+      } catch (e3) {
+        logger.warn('Failed to mirror pending into user holdings/index', { error: e3.message, order_id });
+      }
+      // Also write canonical order_data for downstream consumers
+      try {
+        const odKey = `order_data:${String(order_id)}`;
+        await redisCluster.hset(odKey, {
+          order_id: String(order_id),
+          user_type: String(parsed.user_type),
+          user_id: String(parsed.user_id),
+          symbol: symbol,
+          order_type: orderType, // pending type
+          order_status: 'PENDING',
+          order_price: String(parsed.order_price),
+          order_quantity: String(parsed.order_quantity),
+          group: userGroup,
+          compare_price: String(compare_price),
+          half_spread: String(hs),
+        });
+      } catch (e4) {
+        logger.warn('Failed to write canonical order_data for pending', { error: e4.message, order_id });
+      }
+      // Ensure symbol is tracked for periodic scanning by the worker (local only)
+      try {
+        if (!isProviderFlow) {
+          await redisCluster.sadd('pending_active_symbols', symbol);
+        }
+      } catch (e2) {
+        logger.warn('Failed to add symbol to pending_active_symbols set', { error: e2.message, symbol });
+      }
+    } catch (e) {
+      logger.error('Failed to write pending order to Redis', { error: e.message, order_id, zkey });
+      return res.status(500).json({ success: false, message: 'Cache error', operationId });
+    }
+
+ 
+    try {
+      await redisCluster.publish('market_price_updates', symbol);
+      logger.info('Published market_price_updates for pending placement', { symbol, zkey, order_id });
+    } catch (e) {
+      logger.warn('Failed to publish market_price_updates after pending placement', { error: e.message, symbol, order_id });
+    }
+
+    // Notify WS layer
+    try {
+      portfolioEvents.emitUserUpdate(parsed.user_type, parsed.user_id, {
+        type: 'order_update',
+        order_id,
+        update: { order_status: 'PENDING' },
+      });
+    } catch (e) {
+      logger.warn('Failed to emit portfolio event for pending order', { error: e.message, order_id });
+    }
+
+    // Provider flow: if user's sending_orders is provider, send pending placement to provider
+    try {
+      // Read user's sending_orders from cache
+      const userCfgKey = `user:{${parsed.user_type}:${parsed.user_id}}:config`;
+      let sendingOrders = null;
+      try {
+        const ucfg = await redisCluster.hgetall(userCfgKey);
+        sendingOrders = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      } catch (eCfg) {
+        sendingOrders = null;
+      }
+      if (sendingOrders === 'barclays') {
+        // 1) Generate cancel_id in Node and persist to SQL
+        let cancel_id = null;
+        try {
+          cancel_id = await idGenerator.generateCancelOrderId();
+        } catch (eGen) {
+          logger.warn('Failed to generate cancel_id for provider pending', { error: eGen.message, order_id });
+        }
+        if (cancel_id) {
+          try {
+            await OrderModel.update({ cancel_id }, { where: { order_id } });
+          } catch (eUpd) {
+            logger.warn('Failed to persist cancel_id in SQL for provider pending', { error: eUpd.message, order_id });
+          }
+          // Persist in Redis holdings and canonical for Python monitor access
+          try {
+            const hashTag = `${parsed.user_type}:${parsed.user_id}`;
+            const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
+            const odKey = `order_data:${order_id}`;
+            const p = redisCluster.pipeline();
+            p.hset(orderKey, 'cancel_id', String(cancel_id));
+            p.hset(odKey, 'cancel_id', String(cancel_id));
+            await p.exec();
+          } catch (eRedis) {
+            logger.warn('Failed to mirror cancel_id into Redis for provider pending', { error: eRedis.message, order_id });
+          }
+          // Also register lifecycle id mapping in Python for provider dispatcher quick lookup
+          try {
+            const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+            await axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, {
+              order_id,
+              new_id: cancel_id,
+              id_type: 'cancel_id',
+            }, { timeout: 8000 });
+          } catch (eMap) {
+            logger.warn('Failed to register cancel_id lifecycle mapping in Python', { error: eMap.message, order_id });
+          }
+        }
+        // 2) Call Python to place provider pending order (Python will half-spread adjust before sending)
+        try {
+          const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+          const payload = {
+            order_id,
+            symbol,
+            order_type: orderType,
+            order_price: parsed.order_price,
+            order_quantity: parsed.order_quantity,
+            user_id: parsed.user_id,
+            user_type: parsed.user_type,
+          };
+          await axios.post(`${baseUrl}/api/orders/pending/place`, payload, { timeout: 10000 });
+          logger.info('Dispatched provider pending placement', { order_id, symbol, orderType });
+        } catch (ePy) {
+          logger.error('Python provider pending placement failed', { error: ePy.message, order_id });
+        }
+      }
+    } catch (eProv) {
+      logger.warn('Provider pending dispatch block failed', { error: eProv.message, order_id });
+    }
+
+    return res.status(201).json({
+      success: true,
+      order_id,
+      order_status: 'PENDING',
+      compare_price,
+      group: userGroup,
+    });
+  } catch (error) {
+    logger.error('placePendingOrder internal error', { error: error.message, operationId });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
 
 async function _getCanonicalOrder(order_id) {
   try {
@@ -703,7 +1011,6 @@ async function addStopLoss(req, res) {
     } catch (e) {
       logger.warn('Failed to persist stoploss_id before send', { order_id, error: e.message });
     }
-
     // Build payload to Python
     const pyPayload = {
       order_id,
@@ -1294,4 +1601,4 @@ async function cancelTakeProfit(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit };
+module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit };
