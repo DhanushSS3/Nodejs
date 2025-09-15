@@ -62,13 +62,44 @@ class CancelWorker:
             except Exception:
                 od = {}
 
+            # If no canonical record found (dispatcher may have fallen back to lifecycle_id), try resolving now
+            if not od:
+                try:
+                    lifecycle_id = str(er.get("order_id") or (er.get("raw") or {}).get("11") or "")
+                    if lifecycle_id:
+                        canon = await redis_cluster.get(f"global_order_lookup:{lifecycle_id}")
+                        if canon and canon != order_id:
+                            order_id = str(canon)
+                            od = await redis_cluster.hgetall(f"order_data:{order_id}") or {}
+                except Exception:
+                    pass
+
             redis_status = str(od.get("status") or od.get("order_status") or "").upper()
             user_type = str(od.get("user_type") or payload.get("user_type") or "")
             user_id = str(od.get("user_id") or payload.get("user_id") or "")
             symbol = str(od.get("symbol") or payload.get("symbol") or "").upper()
             side = str(od.get("order_type") or payload.get("order_type") or payload.get("side") or "").upper()
 
-            if redis_status == "STOPLOSS-CANCEL":
+            # Determine cancel kind robustly to avoid race with status write
+            lifecycle_id = str(er.get("order_id") or (er.get("raw") or {}).get("11") or "")
+            cancel_kind = None
+            try:
+                if od:
+                    tp_cid = str(od.get("takeprofit_cancel_id") or "")
+                    sl_cid = str(od.get("stoploss_cancel_id") or "")
+                    if lifecycle_id and tp_cid and lifecycle_id == tp_cid:
+                        cancel_kind = "TP"
+                    elif lifecycle_id and sl_cid and lifecycle_id == sl_cid:
+                        cancel_kind = "SL"
+            except Exception:
+                pass
+            if not cancel_kind:
+                if redis_status == "STOPLOSS-CANCEL":
+                    cancel_kind = "SL"
+                elif redis_status == "TAKEPROFIT-CANCEL":
+                    cancel_kind = "TP"
+
+            if cancel_kind == "SL":
                 # Idempotency guard
                 try:
                     if await redis_cluster.set(f"sl_cancel_finalized:{order_id}", "1", ex=7 * 24 * 3600, nx=True) is None:
@@ -110,7 +141,7 @@ class CancelWorker:
                 await self._ack(message)
                 return
 
-            if redis_status == "TAKEPROFIT-CANCEL":
+            if cancel_kind == "TP":
                 try:
                     if await redis_cluster.set(f"tp_cancel_finalized:{order_id}", "1", ex=7 * 24 * 3600, nx=True) is None:
                         await self._ack(message)

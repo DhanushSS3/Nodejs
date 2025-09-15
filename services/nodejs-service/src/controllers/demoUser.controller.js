@@ -267,7 +267,7 @@ async function login(req, res) {
       session_id: sessionId
     };
 
-    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '15m', jwtid: sessionId });
+    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '30m', jwtid: sessionId });
     const refreshToken = jwt.sign(
       { userId: user.id, sessionId },
       JWT_SECRET + '_REFRESH',
@@ -361,7 +361,7 @@ async function refreshToken(req, res) {
     };
     
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '15m', 
+      expiresIn: '30m', 
       jwtid: sessionId 
     });
 

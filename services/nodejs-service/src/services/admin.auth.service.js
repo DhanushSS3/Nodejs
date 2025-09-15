@@ -95,7 +95,7 @@ class AdminAuthService {
 
     const jti = require('uuid').v4();
     const accessTokenKey = `jti:${admin.id}:${jti}`;
-    const accessTokenTTL = 60 * 15; // 15 minutes
+    const accessTokenTTL = 60 * 30; // 30 minutes
     const refreshTokenTTL = 60 * 60 * 24 * 7; // 7 days
 
     const accessTokenPayload = {

@@ -44,6 +44,7 @@ async function fetchOrdersFromDB(userType, userId) {
   const rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
   const open = [];
   const pending = [];
+  const rejected = [];
   for (const r of rows) {
     const base = {
       order_id: r.order_id,
@@ -63,8 +64,9 @@ async function fetchOrdersFromDB(userType, userId) {
     };
     if (String(r.order_status).toUpperCase() === 'OPEN') open.push(base);
     else if (String(r.order_status).toUpperCase() === 'PENDING') pending.push(base);
+    else if (String(r.order_status).toUpperCase() === 'REJECTED') rejected.push(base);
   }
-  return { open, pending };
+  return { open, pending, rejected };
 }
 
 async function fetchOpenOrdersFromRedis(userType, userId) {
@@ -115,7 +117,7 @@ async function fetchOpenOrdersFromRedis(userType, userId) {
   return results;
 }
 
-function buildPayload({ balance, margin, openOrders, pendingOrders }) {
+function buildPayload({ balance, margin, openOrders, pendingOrders, rejectedOrders }) {
   return {
     type: 'market_update',
     data: {
@@ -124,6 +126,7 @@ function buildPayload({ balance, margin, openOrders, pendingOrders }) {
         margin: margin ?? '0',
         open_orders: openOrders || [],
         pending_orders: pendingOrders || [],
+        rejected_orders: rejectedOrders || [],
       }
     }
   };
@@ -193,11 +196,13 @@ function startPortfolioWSServer(server) {
           fetchAccountSummary(userType, userId),
           fetchOpenOrdersFromRedis(userType, userId),
         ]);
-        // Refresh pending orders from DB at most every 10s
+        // Refresh pending/rejected orders from DB at most every 10s
         const now = Date.now();
-        if (!ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
+        const forceDbRefresh = evt && evt.type === 'order_rejected';
+        if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           const dbOrders = await fetchOrdersFromDB(userType, userId);
           ws._lastPending = dbOrders.pending;
+          ws._lastRejected = dbOrders.rejected;
           ws._lastPendingFetch = now;
         }
         const payload = buildPayload({
@@ -205,6 +210,7 @@ function startPortfolioWSServer(server) {
           margin: summary.margin,
           openOrders,
           pendingOrders: ws._lastPending || [],
+          rejectedOrders: ws._lastRejected || [],
         });
         ws.send(JSON.stringify(payload));
       } catch (e) {

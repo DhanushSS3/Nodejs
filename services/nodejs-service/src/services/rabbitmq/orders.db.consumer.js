@@ -282,7 +282,18 @@ async function applyDbUpdate(msg) {
         const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
         // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
         const pUser = redisCluster.pipeline();
-        pUser.sadd(indexKey, String(order_id));
+        // Maintain index membership based on order_status when provided
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
+          const st = String(updateFields.order_status).toUpperCase();
+          if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED') {
+            pUser.srem(indexKey, String(order_id));
+          } else if (st === 'OPEN') {
+            pUser.sadd(indexKey, String(order_id));
+          }
+        } else {
+          // Default behavior (for trigger updates not changing status): ensure presence
+          pUser.sadd(indexKey, String(order_id));
+        }
         if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
           if (updateFields.stop_loss === null) {
             pUser.hdel(orderKey, 'stop_loss');
@@ -331,6 +342,13 @@ async function applyDbUpdate(msg) {
           order_id: String(order_id),
           update: updateFields,
         });
+        // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
+        if (String(type) === 'ORDER_REJECTED') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'order_rejected',
+            order_id: String(order_id),
+          });
+        }
       } catch (e) {
         logger.warn('Failed to emit portfolio event after order update', { error: e.message });
       }
