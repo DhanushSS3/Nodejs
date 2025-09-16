@@ -65,11 +65,20 @@ class TakeProfitWorker:
                 await self._ack(message)
                 return
 
+            # Provider idempotency: skip duplicates based on token present in execution_report
             try:
-                if await redis_cluster.set(f"takeprofit_confirmed:{order_id}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                    logger.info("[TP:skip:idempotent] order_id=%s", order_id)
-                    await self._ack(message)
-                    return
+                idem = str(
+                    er.get("idempotency")
+                    or (er.get("raw") or {}).get("idempotency")
+                    or er.get("ideampotency")
+                    or (er.get("raw") or {}).get("ideampotency")
+                    or ""
+                ).strip()
+                if idem:
+                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                        logger.info("[TP:skip:provider_idempotent] order_id=%s idem=%s", order_id, idem)
+                        await self._ack(message)
+                        return
             except Exception:
                 pass
 

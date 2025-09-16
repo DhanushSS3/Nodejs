@@ -131,12 +131,20 @@ class CloseWorker:
                 await self._ack(message)
                 return
 
-            # Per-order idempotency: skip if already finalized
+            # Provider idempotency token-based dedupe
             try:
-                if await redis_cluster.get(f"close_finalized:{payload.get('order_id')}"):
-                    logger.info("[CLOSE:skip:idempotent] order_id=%s already finalized", order_id_dbg)
-                    await self._ack(message)
-                    return
+                idem = str(
+                    er.get("idempotency")
+                    or (er.get("raw") or {}).get("idempotency")
+                    or er.get("ideampotency")
+                    or (er.get("raw") or {}).get("ideampotency")
+                    or ""
+                ).strip()
+                if idem:
+                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                        logger.info("[CLOSE:skip:provider_idempotent] order_id=%s idem=%s", order_id_dbg, idem)
+                        await self._ack(message)
+                        return
             except Exception:
                 pass
 
@@ -270,11 +278,6 @@ class CloseWorker:
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
-                    # Mark finalized idempotency key to drop future duplicates
-                    try:
-                        await redis_cluster.setex(f"close_finalized:{payload.get('order_id')}", 7 * 24 * 3600, "1")
-                    except Exception:
-                        pass
                 except Exception:
                     logger.exception("Failed to publish DB update message for close")
             finally:

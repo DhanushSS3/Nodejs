@@ -98,6 +98,11 @@ class Dispatcher:
         async with message.process(requeue=False):
             try:
                 report = orjson.loads(message.body)
+                # Only process execution reports, ignore provider ACK messages
+                rtype = str(report.get("type") or "").strip().lower()
+                if rtype != "execution_report":
+                    logger.info("Dispatcher ignoring non-execution report type=%s", rtype)
+                    return
                 lifecycle_id = report.get("order_id") or report.get("exec_id")
                 if not lifecycle_id:
                     # try in raw dict
@@ -125,10 +130,27 @@ class Dispatcher:
                 redis_status = str(order_data.get("status") or order_data.get("order_status") or "").upper()
                 ord_status = str(report.get("ord_status") or "").upper().strip()
                 target_queue = None
-                # Route CANCELLED reports to a dedicated cancel worker (fire-and-forget)
-                if ord_status == "CANCELLED":
-                    target_queue = CANCEL_QUEUE
-                if redis_status == "OPEN" and ord_status == "EXECUTED":
+                # Handle CANCELLED (or CANCELED) confirmations first: only for SL/TP cancel flows
+                if ord_status in ("CANCELLED", "CANCELED"):
+                    if redis_status in ("STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL"):
+                        target_queue = CANCEL_QUEUE
+                    else:
+                        logger.info(
+                            "Unmapped cancel confirmation; DLQ. redis_status=%s ord_status=%s order_id=%s",
+                            redis_status, ord_status, canonical_order_id,
+                        )
+                        await self._publish(
+                            DLQ,
+                            {
+                                "reason": "unmapped_cancel_state",
+                                "redis_status": redis_status,
+                                "ord_status": ord_status,
+                                "order_id": canonical_order_id,
+                                "report": report,
+                            },
+                        )
+                        return
+                elif redis_status == "OPEN" and ord_status == "EXECUTED":
                     target_queue = OPEN_QUEUE
                 elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "EXECUTED":
                     # Pending order executed at provider -> open the order

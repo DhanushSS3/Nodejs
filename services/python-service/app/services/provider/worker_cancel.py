@@ -52,9 +52,26 @@ class CancelWorker:
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
             order_id = str(payload.get("order_id"))
 
-            if ord_status != "CANCELLED":
+            if ord_status not in ("CANCELLED", "CANCELED"):
                 await self._ack(message)
                 return
+
+            # Provider idempotency token-based dedupe
+            try:
+                idem = str(
+                    er.get("idempotency")
+                    or (er.get("raw") or {}).get("idempotency")
+                    or er.get("ideampotency")
+                    or (er.get("raw") or {}).get("ideampotency")
+                    or ""
+                ).strip()
+                if idem:
+                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                        logger.info("[CANCEL:skip:provider_idempotent] order_id=%s idem=%s", order_id, idem)
+                        await self._ack(message)
+                        return
+            except Exception:
+                pass
 
             # Inspect current engine/UI routing status to decide finalization path
             try:
@@ -100,13 +117,7 @@ class CancelWorker:
                     cancel_kind = "TP"
 
             if cancel_kind == "SL":
-                # Idempotency guard
-                try:
-                    if await redis_cluster.set(f"sl_cancel_finalized:{order_id}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        await self._ack(message)
-                        return
-                except Exception:
-                    pass
+                # Provider idempotency handled earlier; proceed to finalize SL cancel
                 # Remove only SL trigger and set OPEN
                 try:
                     await remove_stoploss_trigger(order_id)
@@ -142,12 +153,7 @@ class CancelWorker:
                 return
 
             if cancel_kind == "TP":
-                try:
-                    if await redis_cluster.set(f"tp_cancel_finalized:{order_id}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        await self._ack(message)
-                        return
-                except Exception:
-                    pass
+                # Provider idempotency handled earlier; proceed to finalize TP cancel
                 try:
                     await remove_takeprofit_trigger(order_id)
                 except Exception:
