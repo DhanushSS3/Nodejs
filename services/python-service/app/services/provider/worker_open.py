@@ -75,6 +75,23 @@ def _get_orders_calc_logger() -> logging.Logger:
 _ORDERS_CALC_LOG = _get_orders_calc_logger()
 
 
+def _normalize_side(side_or_type: Optional[str]) -> str:
+    """Map order_type variants to canonical BUY/SELL where appropriate.
+    BUY_LIMIT/BUY_STOP -> BUY; SELL_LIMIT/SELL_STOP -> SELL; B/S -> BUY/SELL.
+    Otherwise return the uppercased input unchanged.
+    """
+    s = str(side_or_type or "").upper().strip()
+    if s in ("B",):
+        return "BUY"
+    if s in ("S",):
+        return "SELL"
+    if s in ("BUY_LIMIT", "BUY_STOP", "B_LIMIT", "B_STOP"):
+        return "BUY"
+    if s in ("SELL_LIMIT", "SELL_STOP", "S_LIMIT", "S_STOP"):
+        return "SELL"
+    return s
+
+
 async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     For an OPEN acknowledgement:
@@ -102,8 +119,9 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
     order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
     index_key = f"user_orders_index:{{{hash_tag}}}"
 
-    # Normalize side from payload
-    side_val = str(payload.get("order_type") or payload.get("side") or "").upper()
+    # Normalize side from payload: map *_LIMIT/*_STOP to BUY/SELL
+    raw_side = payload.get("order_type") or payload.get("side")
+    side_val = _normalize_side(raw_side)
     mapping_common = {
         "order_status": "OPEN",
         "execution_status": "EXECUTED",  # provider acknowledged
@@ -230,7 +248,7 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     # - Provider PENDING->EXECUTED: always add half_spread for ALL types (BUY and SELL), regardless of side.
     # - Instant provider execution: side-based (+ for BUY, - for SELL).
     # - Local PENDING->EXECUTED (pending_local=True): skip (already adjusted upstream).
-    side = str(payload.get("order_type") or payload.get("side") or "").upper()
+    side = _normalize_side(payload.get("order_type") or payload.get("side"))
     pending_local = bool(payload.get("pending_local"))
     pending_executed = bool(payload.get("pending_executed"))
     if final_price is not None and half_spread is not None and not pending_local:
@@ -597,8 +615,8 @@ class OpenWorker:
 
                 # Step 4: publish DB update intent for Node consumer (decoupled persistence)
                 try:
-                    # Derive executed side for DB from computed margins or payload
-                    side_for_db = str(margins.get("side") or payload.get("order_type") or payload.get("side") or "").upper()
+                    # Derive executed side for DB from computed margins or payload (normalized)
+                    side_for_db = _normalize_side(margins.get("side") or payload.get("order_type") or payload.get("side"))
                     db_msg = {
                         "type": "ORDER_OPEN_CONFIRMED",
                         "order_id": str(payload.get("order_id")),

@@ -19,6 +19,15 @@ function getOrderModel(userType) {
   return userType === 'live' ? LiveUserOrder : DemoUserOrder;
 }
 
+function normalizeOrderType(t) {
+  const s = String(t || '').toUpperCase().trim();
+  if (s === 'B') return 'BUY';
+  if (s === 'S') return 'SELL';
+  if (s === 'BUY_LIMIT' || s === 'BUY_STOP' || s === 'B_LIMIT' || s === 'B_STOP') return 'BUY';
+  if (s === 'SELL_LIMIT' || s === 'SELL_STOP' || s === 'S_LIMIT' || s === 'S_STOP') return 'SELL';
+  return s;
+}
+
 async function applyDbUpdate(msg) {
   const {
     type,
@@ -189,7 +198,7 @@ async function applyDbUpdate(msg) {
   } else {
     const updateFields = {};
     if (order_status) updateFields.order_status = String(order_status);
-    if (order_type) updateFields.order_type = String(order_type).toUpperCase();
+    if (order_type) updateFields.order_type = normalizeOrderType(order_type);
     if (order_price != null) updateFields.order_price = String(order_price);
     if (margin != null && Number.isFinite(Number(margin))) {
       updateFields.margin = Number(margin).toFixed(8);
@@ -259,6 +268,19 @@ async function applyDbUpdate(msg) {
       }
     }
 
+    // Fallback: if status transitions to OPEN and no explicit order_type provided, convert existing pending type to BUY/SELL
+    try {
+      const willBeOpen = Object.prototype.hasOwnProperty.call(updateFields, 'order_status') && String(updateFields.order_status).toUpperCase() === 'OPEN';
+      const lacksType = !Object.prototype.hasOwnProperty.call(updateFields, 'order_type');
+      if (willBeOpen && lacksType && row && row.order_type) {
+        const cur = String(row.order_type).toUpperCase();
+        const norm = normalizeOrderType(cur);
+        if (norm !== cur) {
+          updateFields.order_type = norm;
+        }
+      }
+    } catch (_) {}
+
     if (Object.keys(updateFields).length > 0) {
       const before = {
         margin: row.margin != null ? row.margin.toString() : null,
@@ -300,6 +322,8 @@ async function applyDbUpdate(msg) {
           } else if (st === 'OPEN') {
             pUser.sadd(indexKey, String(order_id));
           }
+          // Mirror order_status into user_holdings for immediate WS/UI visibility
+          pUser.hset(orderKey, 'order_status', st);
         } else {
           // Default behavior (for trigger updates not changing status): ensure presence
           pUser.sadd(indexKey, String(order_id));
@@ -318,10 +342,16 @@ async function applyDbUpdate(msg) {
             pUser.hset(orderKey, 'take_profit', String(updateFields.take_profit));
           }
         }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
+          pUser.hset(orderKey, 'order_type', String(updateFields.order_type).toUpperCase());
+        }
         await pUser.exec();
 
         // 2) order_data pipeline (separate slot)
         const pOd = redisCluster.pipeline();
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
+          pOd.hset(orderDataKey, 'order_status', String(updateFields.order_status).toUpperCase());
+        }
         if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
           if (updateFields.stop_loss === null) pOd.hdel(orderDataKey, 'stop_loss');
           else pOd.hset(orderDataKey, 'stop_loss', String(updateFields.stop_loss));
@@ -329,6 +359,9 @@ async function applyDbUpdate(msg) {
         if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
           if (updateFields.take_profit === null) pOd.hdel(orderDataKey, 'take_profit');
           else pOd.hset(orderDataKey, 'take_profit', String(updateFields.take_profit));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
+          pOd.hset(orderDataKey, 'order_type', String(updateFields.order_type).toUpperCase());
         }
         await pOd.exec();
 
@@ -347,11 +380,15 @@ async function applyDbUpdate(msg) {
 
       // Emit event for this user's portfolio stream
       try {
-        portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+        const wsPayload = {
           type: 'order_update',
           order_id: String(order_id),
           update: updateFields,
-        });
+        };
+        if (String(type) === 'ORDER_PENDING_CONFIRMED') {
+          wsPayload.reason = 'pending_confirmed';
+        }
+        portfolioEvents.emitUserUpdate(String(user_type), String(user_id), wsPayload);
         // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
         if (String(type) === 'ORDER_REJECTED') {
           portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
