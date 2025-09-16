@@ -23,6 +23,7 @@ CLOSE_QUEUE = os.getenv("ORDER_WORKER_CLOSE_QUEUE", "order_worker_close_queue")
 SL_QUEUE = os.getenv("ORDER_WORKER_STOPLOSS_QUEUE", "order_worker_stoploss_queue")
 TP_QUEUE = os.getenv("ORDER_WORKER_TAKEPROFIT_QUEUE", "order_worker_takeprofit_queue")
 REJECT_QUEUE = os.getenv("ORDER_WORKER_REJECT_QUEUE", "order_worker_reject_queue")
+PENDING_QUEUE = os.getenv("ORDER_WORKER_PENDING_QUEUE", "order_worker_pending_queue")
 
 
 def _select_worker_queue(status: Optional[str]) -> Optional[str]:
@@ -85,6 +86,7 @@ class Dispatcher:
         await self._channel.declare_queue(REJECT_QUEUE, durable=True)
         await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
         await self._channel.declare_queue(CANCEL_QUEUE, durable=True)
+        await self._channel.declare_queue(PENDING_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
         logger.info("Dispatcher connected. Listening on %s", CONFIRMATION_QUEUE)
 
@@ -128,11 +130,16 @@ class Dispatcher:
                     target_queue = CANCEL_QUEUE
                 if redis_status == "OPEN" and ord_status == "EXECUTED":
                     target_queue = OPEN_QUEUE
-                elif redis_status in ("PENDING", "MODIFY") and ord_status == "EXECUTED":
+                elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "EXECUTED":
                     # Pending order executed at provider -> open the order
                     payload["pending_executed"] = True
                     target_queue = OPEN_QUEUE
+                elif ord_status == "PENDING" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
+                    # Provider confirmed pending placement
+                    target_queue = PENDING_QUEUE
                 elif redis_status == "OPEN" and ord_status == "REJECTED":
+                    target_queue = REJECT_QUEUE
+                elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
                 elif redis_status == "CLOSED" and ord_status == "EXECUTED":
                     target_queue = CLOSE_QUEUE

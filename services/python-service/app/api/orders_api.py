@@ -11,7 +11,6 @@ from ..services.orders.order_repository import fetch_user_orders, save_idempoten
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
-from ..services.pending.provider_pending_monitor import register_provider_pending
 from .schemas.orders import (
     InstantOrderRequest,
     InstantOrderResponse,
@@ -167,7 +166,7 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
     Provider flow: pending order placement.
     - Node sends: order_id, symbol, order_type (BUY_LIMIT/SELL_LIMIT/BUY_STOP/SELL_STOP), order_price, order_quantity, user_id, user_type
     - Python sends to provider: order_id, symbol, order_type, contract_value, order_price (user_price - half_spread)
-    - Registers the order for continuous margin monitoring until execution or cancel.
+    - Monitoring will start only after provider confirms ord_status=PENDING via dispatcher -> pending worker.
     """
     try:
         order_id = str(payload.get("order_id") or "").strip()
@@ -228,6 +227,7 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
                 "order_type": order_type,
                 "order_price": provider_price,
                 "contract_value": contract_value,
+                "status": "PENDING",
             }
             ok, via = await send_provider_order(provider_payload)
             if not ok:
@@ -238,19 +238,7 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
             logger.error(f"provider pending send failed {order_id}: {e}")
             raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_send_failed", "error": str(e)})
 
-        # Register for margin monitoring/cancel
-        try:
-            await register_provider_pending({
-                "order_id": order_id,
-                "symbol": symbol,
-                "order_type": order_type,
-                "order_quantity": order_qty,
-                "user_id": user_id,
-                "user_type": user_type,
-                "group": group,
-            })
-        except Exception as e:
-            logger.warning(f"register_provider_pending failed for {order_id}: {e}")
+        # Note: Do NOT start monitoring here. We start monitoring after provider confirms PENDING.
 
         return {
             "success": True,

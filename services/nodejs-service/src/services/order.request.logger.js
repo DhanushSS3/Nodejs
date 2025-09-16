@@ -4,6 +4,17 @@ const path = require('path');
 
 // Directory: ../../logs relative to this file
 const LOG_DIR = path.resolve(__dirname, '../../logs');
+// Size-based rotation config (env overrides)
+const MAX_BYTES = (() => {
+  const env = process.env.ORDER_REQ_LOG_MAX_BYTES;
+  const n = env ? parseInt(env, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 10 * 1024 * 1024; // 10 MB default
+})();
+const MAX_FILES = (() => {
+  const env = process.env.ORDER_REQ_LOG_MAX_FILES;
+  const n = env ? parseInt(env, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 5; // keep latest 5 rotated files
+})();
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function ymd(date = new Date()) {
@@ -20,6 +31,46 @@ async function ensureLogDir() {
 
 function getLogFilePath(date = new Date()) {
   return path.join(LOG_DIR, `orders_requests-${ymd(date)}.log`);
+}
+
+async function fileExists(p) {
+  try {
+    await fsp.stat(p);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function rotateIfNeeded(file) {
+  try {
+    const st = await fsp.stat(file);
+    if (!st || st.size < MAX_BYTES) return;
+  } catch (_) {
+    // file does not exist; no rotation
+    return;
+  }
+  // Shift rotated files: .N -> .N+1 (drop oldest)
+  for (let i = MAX_FILES - 1; i >= 1; i--) {
+    const src = `${file}.${i}`;
+    const dst = `${file}.${i + 1}`;
+    try {
+      if (await fileExists(dst)) {
+        await fsp.unlink(dst).catch(() => {});
+      }
+      if (await fileExists(src)) {
+        await fsp.rename(src, dst).catch(() => {});
+      }
+    } catch (_) {}
+  }
+  // Base -> .1
+  try {
+    const first = `${file}.1`;
+    if (await fileExists(first)) {
+      await fsp.unlink(first).catch(() => {});
+    }
+    await fsp.rename(file, first);
+  } catch (_) {}
 }
 
 function sanitizeHeaders(headers = {}) {
@@ -53,9 +104,23 @@ function sanitizeBody(body = {}) {
   }
 }
 
+function sanitizeUser(user = {}) {
+  try {
+    const clone = JSON.parse(JSON.stringify(user));
+    const redact = ['password', 'secret', 'access_token', 'refresh_token', 'token'];
+    for (const k of Object.keys(clone)) {
+      if (redact.includes(String(k).toLowerCase())) clone[k] = '***';
+    }
+    return clone;
+  } catch (_) {
+    return {};
+  }
+}
+
 async function appendLine(line) {
   await ensureLogDir();
   const file = getLogFilePath();
+  await rotateIfNeeded(file);
   const data = line + '\n';
   // Use appendFile with flag 'a' to create if not exists
   await fsp.appendFile(file, data, { encoding: 'utf8', flag: 'a' });
@@ -72,7 +137,7 @@ async function logOrderRequest({ endpoint, operationId, method, path: reqPath, i
       method,
       path: reqPath,
       ip,
-      user: user || {},
+      user: sanitizeUser(user || {}),
       headers: sanitizeHeaders(headers || {}),
       body: sanitizeBody(body || {}),
     };

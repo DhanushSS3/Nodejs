@@ -461,7 +461,18 @@ async function placePendingOrder(req, res) {
       return res.status(400).json({ success: false, message: 'Computed compare_price invalid' });
     }
 
-    // Generate order_id and persist SQL row as PENDING
+    // Determine if provider flow (before DB create) to set proper order_status
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{${parsed.user_type}:${parsed.user_id}}:config`;
+      const ucfg = await redisCluster.hgetall(userCfgKey);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) {
+      isProviderFlow = false;
+    }
+
+    // Generate order_id and persist SQL row
     const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
     const order_id = await idGenerator.generateOrderId();
     try {
@@ -470,7 +481,7 @@ async function placePendingOrder(req, res) {
         order_user_id: parseInt(parsed.user_id, 10),
         symbol: parsed.symbol,
         order_type: parsed.order_type,
-        order_status: 'PENDING',
+        order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
         order_price: parsed.order_price,
         order_quantity: parsed.order_quantity,
         margin: 0,
@@ -480,17 +491,6 @@ async function placePendingOrder(req, res) {
     } catch (dbErr) {
       logger.error('Pending order DB create failed', { error: dbErr.message, order_id });
       return res.status(500).json({ success: false, message: 'DB error', db_error: dbErr.message, operationId });
-    }
-
-    // Determine if provider flow to avoid local ZSET/index for provider-handled pendings
-    let isProviderFlow = false;
-    try {
-      const userCfgKey = `user:{${parsed.user_type}:${parsed.user_id}}:config`;
-      const ucfg = await redisCluster.hgetall(userCfgKey);
-      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
-      isProviderFlow = (so === 'barclays');
-    } catch (_) {
-      isProviderFlow = false;
     }
 
     // Store pending order in Redis (local monitor only if not provider)
@@ -523,7 +523,7 @@ async function placePendingOrder(req, res) {
           order_id: String(order_id),
           symbol: symbol,
           order_type: orderType, // pending type (e.g., BUY_LIMIT)
-          order_status: 'PENDING',
+          order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
           execution_status: 'QUEUED',
           order_price: String(parsed.order_price),
           order_quantity: String(parsed.order_quantity),
@@ -543,7 +543,7 @@ async function placePendingOrder(req, res) {
           user_id: String(parsed.user_id),
           symbol: symbol,
           order_type: orderType, // pending type
-          order_status: 'PENDING',
+          order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
           order_price: String(parsed.order_price),
           order_quantity: String(parsed.order_quantity),
           group: userGroup,
@@ -579,7 +579,7 @@ async function placePendingOrder(req, res) {
       portfolioEvents.emitUserUpdate(parsed.user_type, parsed.user_id, {
         type: 'order_update',
         order_id,
-        update: { order_status: 'PENDING' },
+        update: { order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING' },
       });
     } catch (e) {
       logger.warn('Failed to emit portfolio event for pending order', { error: e.message, order_id });
@@ -587,16 +587,8 @@ async function placePendingOrder(req, res) {
 
     // Provider flow: if user's sending_orders is provider, send pending placement to provider
     try {
-      // Read user's sending_orders from cache
-      const userCfgKey = `user:{${parsed.user_type}:${parsed.user_id}}:config`;
-      let sendingOrders = null;
-      try {
-        const ucfg = await redisCluster.hgetall(userCfgKey);
-        sendingOrders = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
-      } catch (eCfg) {
-        sendingOrders = null;
-      }
-      if (sendingOrders === 'barclays') {
+      // Use previously determined provider flow flag
+      if (isProviderFlow) {
         // 1) Generate cancel_id in Node and persist to SQL
         let cancel_id = null;
         try {
@@ -670,7 +662,7 @@ async function placePendingOrder(req, res) {
     return res.status(201).json({
       success: true,
       order_id,
-      order_status: 'PENDING',
+      order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
       compare_price,
       group: userGroup,
     });
