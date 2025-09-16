@@ -40,6 +40,8 @@ async function applyDbUpdate(msg) {
     margin,
     contract_value,
     commission,
+    commission_entry: commission_entry_msg,
+    commission_exit: commission_exit_msg,
     used_margin_usd,
     // Close-specific new fields
     close_price,
@@ -345,6 +347,25 @@ async function applyDbUpdate(msg) {
         if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
           pUser.hset(orderKey, 'order_type', String(updateFields.order_type).toUpperCase());
         }
+        // Mirror common numeric fields used by UI
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
+          pUser.hset(orderKey, 'order_price', String(updateFields.order_price));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
+          pUser.hset(orderKey, 'contract_value', String(updateFields.contract_value));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
+          pUser.hset(orderKey, 'commission', String(updateFields.commission));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
+          pUser.hset(orderKey, 'net_profit', String(updateFields.net_profit));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
+          pUser.hset(orderKey, 'close_price', String(updateFields.close_price));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
+          pUser.hset(orderKey, 'swap', String(updateFields.swap));
+        }
         await pUser.exec();
 
         // 2) order_data pipeline (separate slot)
@@ -362,6 +383,34 @@ async function applyDbUpdate(msg) {
         }
         if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
           pOd.hset(orderDataKey, 'order_type', String(updateFields.order_type).toUpperCase());
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
+          pOd.hset(orderDataKey, 'order_price', String(updateFields.order_price));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
+          pOd.hset(orderDataKey, 'contract_value', String(updateFields.contract_value));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
+          pOd.hset(orderDataKey, 'commission', String(updateFields.commission));
+          // For OPEN confirmations, also persist entry commission breakdown into canonical
+          if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+            pOd.hset(orderDataKey, 'commission_entry', String(updateFields.commission));
+          }
+        }
+        if (commission_entry_msg != null) {
+          pOd.hset(orderDataKey, 'commission_entry', String(commission_entry_msg));
+        }
+        if (commission_exit_msg != null) {
+          pOd.hset(orderDataKey, 'commission_exit', String(commission_exit_msg));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
+          pOd.hset(orderDataKey, 'net_profit', String(updateFields.net_profit));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
+          pOd.hset(orderDataKey, 'close_price', String(updateFields.close_price));
+        }
+        if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
+          pOd.hset(orderDataKey, 'swap', String(updateFields.swap));
         }
         await pOd.exec();
 

@@ -1,6 +1,9 @@
 import time
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
+import orjson
 
 from app.services.price_utils import get_execution_price
 from app.services.portfolio.margin_calculator import compute_single_order_margin
@@ -32,6 +35,28 @@ idempotent replays.
 """
 
 logger = logging.getLogger(__name__)
+
+def _get_orders_calc_logger() -> logging.Logger:
+    lg = logging.getLogger("orders.calculated")
+    # Avoid duplicate handlers
+    for h in lg.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
+            return lg
+    try:
+        base_dir = Path(__file__).resolve().parents[3]
+    except Exception:
+        base_dir = Path('.')
+    log_dir = base_dir / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / 'orders_calculated.log'
+    fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+    fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    fh._orders_calc = True
+    lg.addHandler(fh)
+    lg.setLevel(logging.INFO)
+    return lg
+
+_ORDERS_CALC_LOG = _get_orders_calc_logger()
 
 
 class BaseExecutionStrategy:
@@ -329,7 +354,33 @@ class OrderExecutor:
                 contract_size=contract_size,
             )
 
-        # (Removed temporary debug logging)
+        # Log calculated local execution into orders_calculated.log
+        if flow == "local":
+            try:
+                half_spread_val = None
+                if isinstance(pricing_meta.get("pricing"), dict):
+                    half_spread_val = pricing_meta["pricing"].get("half_spread")
+                calc = {
+                    "type": "ORDER_OPEN_CALC",
+                    "flow": "local",
+                    "order_id": str(order_id),
+                    "user_type": user_type,
+                    "user_id": user_id,
+                    "symbol": symbol,
+                    "side": order_type,
+                    "final_exec_price": float(exec_price) if exec_price is not None else None,
+                    "final_order_qty": float(order_qty) if order_qty is not None else None,
+                    "single_margin_usd": float(margin_usd) if margin_usd is not None else None,
+                    "commission_entry": float(commission_entry) if commission_entry is not None else None,
+                    "total_used_margin_usd": float(total_margin_with_queued) if total_margin_with_queued is not None else None,
+                    "half_spread": float(half_spread_val) if half_spread_val is not None else None,
+                    "contract_size": float(contract_size) if contract_size is not None else None,
+                    "contract_value": float(contract_value) if contract_value is not None else None,
+                    "provider": {},
+                }
+                _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
+            except Exception:
+                pass
 
         order_fields: Dict[str, Any] = {
             "order_id": order_id,
@@ -352,6 +403,7 @@ class OrderExecutor:
             **({"commission_value_type": commission_value_type} if commission_value_type is not None else {}),
             **({"group_margin": group_margin_cfg} if group_margin_cfg is not None else {}),
             **({"commission_entry": commission_entry} if commission_entry is not None else {}),
+            **({"commission": commission_entry} if (commission_entry is not None and flow == "local") else {}),
         }
         if pricing_meta.get("pricing"):
             price_info = pricing_meta["pricing"]
