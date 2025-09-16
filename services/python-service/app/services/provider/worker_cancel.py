@@ -52,10 +52,6 @@ class CancelWorker:
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
             order_id = str(payload.get("order_id"))
 
-            if ord_status not in ("CANCELLED", "CANCELED"):
-                await self._ack(message)
-                return
-
             # Provider idempotency token-based dedupe
             try:
                 idem = str(
@@ -92,6 +88,18 @@ class CancelWorker:
                     pass
 
             redis_status = str(od.get("status") or od.get("order_status") or "").upper()
+
+            # Accept rules:
+            # - For PENDING-CANCEL, accept ord_status in (CANCELLED/CANCELED/PENDING/MODIFY)
+            # - Otherwise (SL/TP cancels), accept only CANCELLED/CANCELED
+            if redis_status == "PENDING-CANCEL":
+                if ord_status not in ("CANCELLED", "CANCELED", "PENDING", "MODIFY"):
+                    await self._ack(message)
+                    return
+            else:
+                if ord_status not in ("CANCELLED", "CANCELED"):
+                    await self._ack(message)
+                    return
             user_type = str(od.get("user_type") or payload.get("user_type") or "")
             user_id = str(od.get("user_id") or payload.get("user_id") or "")
             symbol = str(od.get("symbol") or payload.get("symbol") or "").upper()
@@ -104,10 +112,13 @@ class CancelWorker:
                 if od:
                     tp_cid = str(od.get("takeprofit_cancel_id") or "")
                     sl_cid = str(od.get("stoploss_cancel_id") or "")
+                    pc_cid = str(od.get("cancel_id") or "")
                     if lifecycle_id and tp_cid and lifecycle_id == tp_cid:
                         cancel_kind = "TP"
                     elif lifecycle_id and sl_cid and lifecycle_id == sl_cid:
                         cancel_kind = "SL"
+                    elif lifecycle_id and pc_cid and lifecycle_id == pc_cid:
+                        cancel_kind = "PENDING"
             except Exception:
                 pass
             if not cancel_kind:
@@ -115,6 +126,8 @@ class CancelWorker:
                     cancel_kind = "SL"
                 elif redis_status == "TAKEPROFIT-CANCEL":
                     cancel_kind = "TP"
+                elif redis_status == "PENDING-CANCEL":
+                    cancel_kind = "PENDING"
 
             if cancel_kind == "SL":
                 # Provider idempotency handled earlier; proceed to finalize SL cancel
@@ -183,6 +196,48 @@ class CancelWorker:
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
                 except Exception:
                     logger.exception("Failed to publish DB update for takeprofit cancel finalize")
+                await self._ack(message)
+                return
+
+            if cancel_kind == "PENDING":
+                # Finalize pending order cancellation: remove monitoring + holdings + canonical
+                symbol = str(od.get("symbol") or payload.get("symbol") or "").upper()
+                order_type = str(od.get("order_type") or payload.get("order_type") or "").upper()
+                try:
+                    if symbol and order_type:
+                        try:
+                            await redis_cluster.zrem(f"pending_index:{{{symbol}}}:{order_type}", order_id)
+                        except Exception:
+                            pass
+                        try:
+                            await redis_cluster.delete(f"pending_orders:{order_id}")
+                        except Exception:
+                            pass
+                except Exception:
+                    logger.exception("Pending cancel: failed to remove monitoring keys for %s", order_id)
+                try:
+                    hash_tag = f"{user_type}:{user_id}"
+                    index_key = f"user_orders_index:{{{hash_tag}}}"
+                    order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                    pipe = redis_cluster.pipeline()
+                    pipe.srem(index_key, order_id)
+                    pipe.delete(order_key)
+                    pipe.delete(f"order_data:{order_id}")
+                    await pipe.execute()
+                except Exception:
+                    logger.exception("Pending cancel: failed to remove holdings/canonical for %s", order_id)
+                # Publish DB update intent for pending cancel
+                try:
+                    db_msg = {
+                        "type": "ORDER_PENDING_CANCEL",
+                        "order_id": order_id,
+                        "user_id": user_id,
+                        "user_type": user_type,
+                    }
+                    msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
+                    await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
+                except Exception:
+                    logger.exception("Failed to publish DB update for pending cancel finalize")
                 await self._ack(message)
                 return
 

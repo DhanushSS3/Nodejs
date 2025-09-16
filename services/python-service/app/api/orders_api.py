@@ -160,6 +160,75 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 
+@router.post("/pending/cancel")
+async def pending_cancel_endpoint(payload: Dict[str, Any]):
+    """
+    Provider flow: cancel a pending order (fire-and-forget).
+    Expected payload from Node:
+      - order_id: canonical order id
+      - cancel_id: lifecycle cancel id (registered via /orders/registry/lifecycle-id)
+      - order_type: one of [BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP]
+      - user_id, user_type (informational)
+      - status: "CANCELLED" (engine intent)
+
+    We forward to provider including cancel_id and fields required by provider.
+    Redis/SQL modifications are performed only after provider confirmation by workers.
+    """
+    try:
+        order_id = str(payload.get("order_id") or "").strip()
+        cancel_id = str(payload.get("cancel_id") or "").strip()
+        order_type = str(payload.get("order_type") or "").upper().strip()
+        user_id = str(payload.get("user_id") or "").strip()
+        user_type = str(payload.get("user_type") or "").lower().strip()
+        status = str(payload.get("status") or "").upper().strip()
+
+        if not order_id or not cancel_id or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or user_type not in ("live","demo"):
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_fields"})
+
+        # Optional: include symbol if present in canonical for provider context
+        symbol = None
+        try:
+            od = await redis_cluster.hgetall(f"order_data:{order_id}")
+            symbol = (od.get("symbol") if od else None) or None
+        except Exception:
+            symbol = None
+
+        provider_payload = {
+            # Keep canonical order id for mapping context
+            "order_id": order_id,
+            # Provide explicit cancel_id for provider lifecycle
+            "cancel_id": cancel_id,
+            "order_type": order_type,
+            "status": status or "CANCELLED",
+        }
+        if symbol:
+            provider_payload["symbol"] = str(symbol).upper()
+
+        try:
+            ok, via = await send_provider_order(provider_payload)
+        except Exception as e:
+            logger.error(f"provider pending cancel send failed {order_id}: {e}")
+            raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_send_failed", "error": str(e)})
+
+        if not ok:
+            raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_unreachable", "via": via})
+
+        return {
+            "success": True,
+            "message": "Provider pending cancel dispatched",
+            "data": {
+                "order_id": order_id,
+                "cancel_id": cancel_id,
+                "via": via,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"pending_cancel_endpoint error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
 @router.post("/pending/place")
 async def pending_place_endpoint(payload: Dict[str, Any]):
     """

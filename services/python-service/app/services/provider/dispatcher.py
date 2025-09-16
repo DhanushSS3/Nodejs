@@ -159,6 +159,13 @@ class Dispatcher:
                 elif ord_status == "PENDING" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
                     # Provider confirmed pending placement
                     target_queue = PENDING_QUEUE
+                elif redis_status == "PENDING-CANCEL" and ord_status in ("CANCELLED", "CANCELED", "PENDING", "MODIFY"):
+                    # Provider confirmed/acknowledged cancel request for pending order
+                    target_queue = CANCEL_QUEUE
+                elif redis_status == "PENDING-CANCEL" and ord_status == "EXECUTED":
+                    # Race: pending executed at provider before cancel took effect -> proceed to OPEN
+                    payload["pending_executed"] = True
+                    target_queue = OPEN_QUEUE
                 elif redis_status == "OPEN" and ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
                 elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "REJECTED":

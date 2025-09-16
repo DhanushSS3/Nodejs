@@ -164,6 +164,64 @@ router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrde
  */
 router.post('/pending/place', authenticateJWT, ordersController.placePendingOrder);
 
+// POST /api/orders/pending/cancel
+/**
+ * @swagger
+ * /api/orders/pending/cancel:
+ *   post:
+ *     summary: Cancel an existing pending order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - user_id
+ *               - user_type
+ *               - symbol
+ *               - order_type
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *                 example: "ord_20250905_008"
+ *               user_id:
+ *                 type: string
+ *                 example: "6"
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *                 example: "live"
+ *               symbol:
+ *                 type: string
+ *                 example: "EURUSD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP]
+ *                 example: "BUY_LIMIT"
+ *               cancel_message:
+ *                 type: string
+ *                 example: "User cancelled pending order"
+ *     responses:
+ *       200:
+ *         description: Pending order cancelled (local flow)
+ *       202:
+ *         description: Cancel request accepted (provider flow, awaiting confirmation)
+ *       400:
+ *         description: Invalid payload
+ *       403:
+ *         description: Forbidden (JWT/user checks)
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (order is not pending)
+ */
+router.post('/pending/cancel', authenticateJWT, ordersController.cancelPendingOrder);
+
 // POST /api/orders/close
 /**
  * @swagger

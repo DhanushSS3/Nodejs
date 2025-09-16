@@ -368,8 +368,6 @@ async function placeInstantOrder(req, res) {
   }
 }
 
-// Exports consolidated at bottom
-
 // Place a pending order: validate constraints, compute compare_price, persist SQL+Redis
 async function placePendingOrder(req, res) {
   const operationId = `pending_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1682,4 +1680,124 @@ async function cancelTakeProfit(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit };
+async function cancelPendingOrder(req, res) {
+  const operationId = `pending_cancel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    orderReqLogger.logOrderRequest({ endpoint: 'cancelPendingOrder', operationId, method: req.method, path: req.originalUrl || req.url, ip: req.ip, user: req.user, headers: req.headers, body: req.body }).catch(() => {});
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    if (role && role !== 'trader') return res.status(403).json({ success: false, message: 'User role not allowed for pending cancel' });
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    if (userStatus !== undefined && String(userStatus) === '0') return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const user_id = normalizeStr(body.user_id);
+    const user_type = normalizeStr(body.user_type).toLowerCase();
+    const symbolReq = normalizeStr(body.symbol).toUpperCase();
+    const order_type_req = normalizeStr(body.order_type).toUpperCase();
+    const cancel_message = normalizeStr(body.cancel_message || 'User cancelled pending order');
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY_LIMIT','SELL_LIMIT','BUY_STOP','SELL_STOP'].includes(order_type_req)) {
+      return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
+    }
+    if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot cancel orders for another user' });
+    }
+    if (!['live','demo'].includes(user_type)) {
+      return res.status(400).json({ success: false, message: 'user_type must be live or demo' });
+    }
+
+    const canonical = await _getCanonicalOrder(order_id);
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    let row = null;
+    if (!canonical) {
+      row = await OrderModel.findOne({ where: { order_id } });
+      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
+      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      const st = (row.order_status || '').toString().toUpperCase();
+      if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
+    } else {
+      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      const st = (canonical.order_status || '').toString().toUpperCase();
+      if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
+    }
+
+    const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+
+    // Flow determination
+    let isProviderFlow = false;
+    try {
+      const ucfg = await redisCluster.hgetall(`user:{${user_type}:${user_id}}:config`);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) { isProviderFlow = false; }
+
+    if (!isProviderFlow) {
+      // Local finalize
+      try {
+        await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, order_id);
+        await redisCluster.delete(`pending_orders:${order_id}`);
+      } catch (e) { logger.warn('Failed to remove from pending ZSET/HASH', { error: e.message, order_id }); }
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const idx = `user_orders_index:{${tag}}`;
+        const h = `user_holdings:{${tag}}:${order_id}`;
+        const p = redisCluster.pipeline();
+        p.srem(idx, order_id);
+        p.delete(h);
+        p.delete(`order_data:${order_id}`);
+        await p.exec();
+      } catch (e2) { logger.warn('Failed to remove holdings/canonical', { error: e2.message, order_id }); }
+      try {
+        const rowNow = await OrderModel.findOne({ where: { order_id } });
+        if (rowNow) await rowNow.update({ order_status: 'CANCELLED', close_message: cancel_message });
+      } catch (e3) { logger.warn('SQL update failed for pending cancel', { error: e3.message, order_id }); }
+      try { portfolioEvents.emitUserUpdate(user_type, user_id, { type: 'order_update', order_id, update: { order_status: 'CANCELLED' }, reason: 'local_pending_cancel' }); } catch (_) {}
+      return res.status(200).json({ success: true, order_id, order_status: 'CANCELLED' });
+    }
+
+    // Provider path
+    let cancel_id = null;
+    try { cancel_id = await idGenerator.generateCancelOrderId(); } catch (e) { logger.warn('Failed to generate cancel_id', { error: e.message, order_id }); }
+    if (!cancel_id) return res.status(500).json({ success: false, message: 'Failed to generate cancel id' });
+    try {
+      const rowNow = await OrderModel.findOne({ where: { order_id } });
+      if (rowNow) await rowNow.update({ cancel_id, status: 'PENDING-CANCEL' });
+    } catch (e) { logger.warn('Failed to persist cancel_id', { error: e.message, order_id }); }
+    try {
+      const tag = `${user_type}:${user_id}`;
+      const h = `user_holdings:{${tag}}:${order_id}`;
+      const od = `order_data:${order_id}`;
+      const p = redisCluster.pipeline();
+      p.hset(h, 'cancel_id', String(cancel_id));
+      p.hset(od, 'cancel_id', String(cancel_id));
+      p.hset(h, 'order_status', 'PENDING-CANCEL');
+      p.hset(od, 'order_status', 'PENDING-CANCEL');
+      await p.exec();
+    } catch (e) { logger.warn('Failed to mirror cancel status in Redis', { error: e.message, order_id }); }
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, { order_id, new_id: cancel_id, id_type: 'cancel_id' }, { timeout: 5000 }).catch(() => {});
+    } catch (_) {}
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      const pyPayload = { order_id, cancel_id, order_type, user_id, user_type, status: 'CANCELLED' };
+      axios.post(`${baseUrl}/api/orders/pending/cancel`, pyPayload, { timeout: 5000 }).then(() => {
+        logger.info('Dispatched provider pending cancel', { order_id, cancel_id, order_type });
+      }).catch((ePy) => { logger.error('Python pending cancel failed', { error: ePy.message, order_id }); });
+    } catch (_) {}
+    return res.status(202).json({ success: true, order_id, order_status: 'PENDING-CANCEL', cancel_id });
+  } catch (error) {
+    logger.error('cancelPendingOrder internal error', { error: error.message, operationId });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit, cancelPendingOrder };
