@@ -195,6 +195,7 @@ async function signup(req, res) {
         const userData = {
           id: user.id,
           user_type: 'live',
+          email: user.email,
           wallet_balance: parseFloat(user.wallet_balance) || 0,
           leverage: user.leverage || 0,
           margin: parseFloat(user.margin) || 0,
@@ -214,7 +215,7 @@ async function signup(req, res) {
           sending_orders: user.sending_orders || 'rock'
         };
         await redisUserCache.updateUser('live', user.id, userData);
-        logger.debug(`Added new live user ${user.id} to Redis cache`);
+        logger.info(`Added new live user ${user.id} to Redis cache`);
       } catch (cacheError) {
         logger.error('Failed to add new live user to Redis cache:', cacheError);
         // Don't fail the signup if cache update fails

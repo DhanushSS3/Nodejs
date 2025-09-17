@@ -167,7 +167,14 @@ async function placeInstantOrder(req, res) {
 
     let pyResp;
     try {
-      pyResp = await axios.post(`${baseUrl}/api/orders/instant/execute`, pyPayload, { timeout: 15000 });
+      pyResp = await axios.post(
+        `${baseUrl}/api/orders/instant/execute`,
+        pyPayload,
+        {
+          timeout: 15000,
+          headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' },
+        }
+      );
     } catch (err) {
       // Python returned error (4xx/5xx)
       const statusCode = err?.response?.status || 500;
@@ -601,14 +608,17 @@ async function placePendingOrder(req, res) {
             logger.warn('Failed to persist cancel_id in SQL for provider pending', { error: eUpd.message, order_id });
           }
           // Persist in Redis holdings and canonical for Python monitor access
+          // IMPORTANT: Avoid cross-slot pipelines in Redis Cluster. Write per-key.
           try {
             const hashTag = `${parsed.user_type}:${parsed.user_id}`;
             const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
             const odKey = `order_data:${order_id}`;
-            const p = redisCluster.pipeline();
-            p.hset(orderKey, 'cancel_id', String(cancel_id));
-            p.hset(odKey, 'cancel_id', String(cancel_id));
-            await p.exec();
+            await redisCluster.hset(orderKey, 'cancel_id', String(cancel_id));
+            try {
+              await redisCluster.hset(odKey, 'cancel_id', String(cancel_id));
+            } catch (e2) {
+              logger.warn('Failed to set cancel_id on order_data', { error: e2.message, order_id });
+            }
           } catch (eRedis) {
             logger.warn('Failed to mirror cancel_id into Redis for provider pending', { error: eRedis.message, order_id });
           }
@@ -619,9 +629,9 @@ async function placePendingOrder(req, res) {
               order_id,
               new_id: cancel_id,
               id_type: 'cancel_id',
-            }, { timeout: 5000 })
+            }, { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } })
               .then(() => {
-                logger.debug('Registered cancel_id lifecycle mapping in Python', { order_id });
+                logger.info('Registered cancel_id lifecycle mapping in Python', { order_id });
               })
               .catch((eMap) => {
                 logger.warn('Failed to register cancel_id lifecycle mapping in Python', { error: eMap.message, order_id });
@@ -642,7 +652,11 @@ async function placePendingOrder(req, res) {
             user_id: parsed.user_id,
             user_type: parsed.user_type,
           };
-          axios.post(`${baseUrl}/api/orders/pending/place`, payload, { timeout: 5000 })
+          axios.post(
+            `${baseUrl}/api/orders/pending/place`,
+            payload,
+            { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+          )
             .then(() => {
               logger.info('Dispatched provider pending placement', { order_id, symbol, orderType });
             })
@@ -855,7 +869,11 @@ async function closeOrder(req, res) {
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
     try {
-      pyResp = await axios.post(`${baseUrl}/api/orders/close`, pyPayload, { timeout: 20000 });
+      pyResp = await axios.post(
+        `${baseUrl}/api/orders/close`,
+        pyPayload,
+        { timeout: 20000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      );
     } catch (err) {
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
@@ -1075,7 +1093,11 @@ async function addStopLoss(req, res) {
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
     try {
-      pyResp = await axios.post(`${baseUrl}/api/orders/stoploss/add`, pyPayload, { timeout: 15000 });
+      pyResp = await axios.post(
+        `${baseUrl}/api/orders/stoploss/add`,
+        pyPayload,
+        { timeout: 15000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      );
     } catch (err) {
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
@@ -1241,7 +1263,11 @@ async function addTakeProfit(req, res) {
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
     try {
-      pyResp = await axios.post(`${baseUrl}/api/orders/takeprofit/add`, pyPayload, { timeout: 15000 });
+      pyResp = await axios.post(
+        `${baseUrl}/api/orders/takeprofit/add`,
+        pyPayload,
+        { timeout: 15000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      );
     } catch (err) {
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
@@ -1445,7 +1471,11 @@ async function cancelStopLoss(req, res) {
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
     try {
-      pyResp = await axios.post(`${baseUrl}/api/orders/stoploss/cancel`, pyPayload, { timeout: 15000 });
+      pyResp = await axios.post(
+        `${baseUrl}/api/orders/stoploss/cancel`,
+        pyPayload,
+        { timeout: 15000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      );
     } catch (err) {
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
@@ -1644,7 +1674,11 @@ async function cancelTakeProfit(req, res) {
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
     try {
-      pyResp = await axios.post(`${baseUrl}/api/orders/takeprofit/cancel`, pyPayload, { timeout: 15000 });
+      pyResp = await axios.post(
+        `${baseUrl}/api/orders/takeprofit/cancel`,
+        pyPayload,
+        { timeout: 15000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      );
     } catch (err) {
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
@@ -1749,12 +1783,16 @@ async function cancelPendingOrder(req, res) {
         const tag = `${user_type}:${user_id}`;
         const idx = `user_orders_index:{${tag}}`;
         const h = `user_holdings:{${tag}}:${order_id}`;
-        const p = redisCluster.pipeline();
-        p.srem(idx, order_id);
-        p.delete(h);
-        p.delete(`order_data:${order_id}`);
-        await p.exec();
-      } catch (e2) { logger.warn('Failed to remove holdings/canonical', { error: e2.message, order_id }); }
+        // Use pipeline only for same-slot keys (idx, h)
+        const p1 = redisCluster.pipeline();
+        p1.srem(idx, order_id);
+        p1.delete(h);
+        await p1.exec();
+        // Delete canonical separately to avoid cross-slot pipeline error
+        try { await redisCluster.delete(`order_data:${order_id}`); } catch (eDel) {
+          logger.warn('Failed to delete order_data for pending cancel', { error: eDel.message, order_id });
+        }
+      } catch (e2) { logger.warn('Failed to remove holdings/index for pending cancel', { error: e2.message, order_id }); }
       try {
         const rowNow = await OrderModel.findOne({ where: { order_id } });
         if (rowNow) await rowNow.update({ order_status: 'CANCELLED', close_message: cancel_message });
@@ -1784,12 +1822,20 @@ async function cancelPendingOrder(req, res) {
     } catch (e) { logger.warn('Failed to mirror cancel status in Redis', { error: e.message, order_id }); }
     try {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, { order_id, new_id: cancel_id, id_type: 'cancel_id' }, { timeout: 5000 }).catch(() => {});
+      axios.post(
+        `${baseUrl}/api/orders/registry/lifecycle-id`,
+        { order_id, new_id: cancel_id, id_type: 'cancel_id' },
+        { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      ).catch(() => {});
     } catch (_) {}
     try {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       const pyPayload = { order_id, cancel_id, order_type, user_id, user_type, status: 'CANCELLED' };
-      axios.post(`${baseUrl}/api/orders/pending/cancel`, pyPayload, { timeout: 5000 }).then(() => {
+      axios.post(
+        `${baseUrl}/api/orders/pending/cancel`,
+        pyPayload,
+        { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      ).then(() => {
         logger.info('Dispatched provider pending cancel', { order_id, cancel_id, order_type });
       }).catch((ePy) => { logger.error('Python pending cancel failed', { error: ePy.message, order_id }); });
     } catch (_) {}

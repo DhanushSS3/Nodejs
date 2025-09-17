@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+import os
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Header
 from typing import Dict, Any
 import logging
 
@@ -27,7 +28,14 @@ from .schemas.orders import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/orders", tags=["Orders"])
+# Internal provider secret guard (header: X-Internal-Auth)
+def _require_internal_auth(x_internal_auth: str = Header(None, alias="X-Internal-Auth")):
+    # Fallback to default key 'livefxhub' if env variables are not set.
+    secret = os.getenv("INTERNAL_PROVIDER_SECRET") or os.getenv("INTERNAL_API_SECRET") or "livefxhub"
+    if not x_internal_auth or x_internal_auth != secret:
+        raise HTTPException(status_code=401, detail={"success": False, "message": "Unauthorized (internal)"})
+
+router = APIRouter(prefix="/orders", tags=["Orders"], dependencies=[Depends(_require_internal_auth)])
 
 _executor = OrderExecutor()
 _closer = OrderCloser()

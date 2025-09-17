@@ -74,6 +74,7 @@ class RedisUserCacheService {
     return {
       id: user.id,
       user_type: 'live',
+      email: user.email,
       wallet_balance: parseFloat(user.wallet_balance) || 0,
       leverage: user.leverage || 0,
       margin: parseFloat(user.margin) || 0,
@@ -102,6 +103,7 @@ class RedisUserCacheService {
     return {
       id: user.id,
       user_type: 'demo',
+      email: user.email,
       wallet_balance: parseFloat(user.wallet_balance) || 0,
       leverage: user.leverage || 0,
       margin: parseFloat(user.margin) || 0,
@@ -158,7 +160,7 @@ class RedisUserCacheService {
       // Cache live users
       const liveUsers = await LiveUser.findAll({
         attributes: [
-          'id', 'wallet_balance', 'leverage', 'margin', 'account_number',
+          'id', 'email', 'wallet_balance', 'leverage', 'margin', 'account_number',
           'group', 'status', 'is_active', 'country_id', 'mam_id', 'mam_status',
           'pam_id', 'pam_status', 'copy_trading_wallet', 'copytrader_id',
           'copytrading_status', 'copytrading_alloted_time', 'sending_orders'
@@ -174,7 +176,7 @@ class RedisUserCacheService {
       // Cache demo users
       const demoUsers = await DemoUser.findAll({
         attributes: [
-          'id', 'wallet_balance', 'leverage', 'margin', 'account_number',
+          'id', 'email', 'wallet_balance', 'leverage', 'margin', 'account_number',
           'group', 'status', 'is_active', 'country_id'
         ]
       });
@@ -403,7 +405,7 @@ class RedisUserCacheService {
       if (userType === 'live') {
         user = await LiveUser.findByPk(userId, {
           attributes: [
-            'id', 'wallet_balance', 'leverage', 'margin', 'account_number',
+            'id', 'email', 'wallet_balance', 'leverage', 'margin', 'account_number',
             'group', 'status', 'is_active', 'country_id', 'mam_id', 'mam_status',
             'pam_id', 'pam_status', 'copy_trading_wallet', 'copytrader_id',
             'copytrading_status', 'copytrading_alloted_time', 'sending_orders'
@@ -416,7 +418,7 @@ class RedisUserCacheService {
       } else if (userType === 'demo') {
         user = await DemoUser.findByPk(userId, {
           attributes: [
-            'id', 'wallet_balance', 'leverage', 'margin', 'account_number',
+            'id', 'email', 'wallet_balance', 'leverage', 'margin', 'account_number',
             'group', 'status', 'is_active', 'country_id'
           ]
         });
