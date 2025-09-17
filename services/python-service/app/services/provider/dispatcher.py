@@ -88,7 +88,19 @@ class Dispatcher:
         await self._channel.declare_queue(CANCEL_QUEUE, durable=True)
         await self._channel.declare_queue(PENDING_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
-        logger.info("Dispatcher connected. Listening on %s", CONFIRMATION_QUEUE)
+        logger.info(
+            "Dispatcher connected. URL=%s in=%s dlq=%s open=%s close=%s sl=%s tp=%s reject=%s cancel=%s pending=%s",
+            RABBITMQ_URL,
+            CONFIRMATION_QUEUE,
+            DLQ,
+            OPEN_QUEUE,
+            CLOSE_QUEUE,
+            SL_QUEUE,
+            TP_QUEUE,
+            REJECT_QUEUE,
+            CANCEL_QUEUE,
+            PENDING_QUEUE,
+        )
 
     async def _publish(self, queue_name: str, body: Dict[str, Any]):
         msg = aio_pika.Message(body=orjson.dumps(body), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
@@ -127,7 +139,20 @@ class Dispatcher:
 
                 payload = await _compose_payload(report, order_data, canonical_order_id)
                 # Route based on Redis status (engine/UI state) and provider ord_status (string)
-                redis_status = str(order_data.get("status") or order_data.get("order_status") or "").upper()
+                # IMPORTANT: Use only the 'status' field per spec; do not fallback to 'order_status'.
+                redis_status = str(order_data.get("status") or "").upper().strip()
+                # Fallback: if status missing on order_data, try user_holdings status (still the 'status' field)
+                if not redis_status:
+                    try:
+                        ut = str(order_data.get("user_type") or "")
+                        uid = str(order_data.get("user_id") or "")
+                        if ut and uid:
+                            hkey = f"user_holdings:{{{ut}:{uid}}}:{canonical_order_id}"
+                            hstat = await redis_cluster.hget(hkey, "status")
+                            if hstat:
+                                redis_status = str(hstat).upper().strip()
+                    except Exception:
+                        pass
                 ord_status = str(report.get("ord_status") or "").upper().strip()
                 target_queue = None
                 # Pending cancel confirmations: route before generic CANCELLED branch

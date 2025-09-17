@@ -31,7 +31,7 @@ class CancelWorker:
         self._q = await self._ch.declare_queue(CANCEL_QUEUE, durable=True)
         await self._ch.declare_queue(DB_UPDATE_QUEUE, durable=True)
         self._ex = self._ch.default_exchange
-        logger.info("CancelWorker connected. Waiting on %s", CANCEL_QUEUE)
+        logger.info("CancelWorker connected. URL=%s Waiting on queue=%s", RABBITMQ_URL, CANCEL_QUEUE)
 
     async def _ack(self, m: aio_pika.abc.AbstractIncomingMessage):
         try:
@@ -51,7 +51,7 @@ class CancelWorker:
             er = payload.get("execution_report") or {}
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
             order_id = str(payload.get("order_id"))
-
+            logger.info("[CancelWorker] received message: order_id=%s ord_status=%s keys=%s", order_id, ord_status, list(payload.keys()))
             # Provider idempotency token-based dedupe
             try:
                 idem = str(
@@ -88,6 +88,7 @@ class CancelWorker:
                     pass
 
             redis_status = str(od.get("status") or od.get("order_status") or "").upper()
+            logger.info("[CancelWorker] order_id=%s redis_status=%s", order_id, redis_status)
 
             # Accept rules:
             # - For PENDING-CANCEL, accept ord_status in (CANCELLED/CANCELED/PENDING/MODIFY)
@@ -128,6 +129,11 @@ class CancelWorker:
                     cancel_kind = "TP"
                 elif redis_status == "PENDING-CANCEL":
                     cancel_kind = "PENDING"
+                # Fallback per spec: if provider reports CANCELLED and order status is one of MODIFY/PENDING/CANCELLED,
+                # treat this as a pending order cancel even without cancel_id match
+                elif ord_status in ("CANCELLED", "CANCELED") and redis_status in ("MODIFY", "PENDING", "CANCELLED"):
+                    cancel_kind = "PENDING"
+            logger.info("[CancelWorker] order_id=%s resolved cancel_kind=%s", order_id, cancel_kind)
 
             if cancel_kind == "SL":
                 # Provider idempotency handled earlier; proceed to finalize SL cancel
@@ -233,6 +239,7 @@ class CancelWorker:
                         "order_id": order_id,
                         "user_id": user_id,
                         "user_type": user_type,
+                        "order_status": "CANCELLED",
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)

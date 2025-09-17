@@ -201,6 +201,21 @@ async def pending_cancel_endpoint(payload: Dict[str, Any]):
         except Exception:
             symbol = None
 
+        # Best-effort: ensure Redis status reflects engine intent PENDING-CANCEL for dispatcher routing
+        try:
+            current_status = str((od or {}).get("status") or "").upper().strip()
+            if current_status not in ("PENDING-CANCEL",):
+                if current_status in ("PENDING", "PENDING-QUEUED", "MODIFY", ""):
+                    await redis_cluster.hset(f"order_data:{order_id}", "status", "PENDING-CANCEL")
+                    if user_id and user_type:
+                        try:
+                            hkey = f"user_holdings:{{{user_type}:{user_id}}}:{order_id}"
+                            await redis_cluster.hset(hkey, "status", "PENDING-CANCEL")
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"pending_cancel: failed to mirror PENDING-CANCEL status for {order_id}: {e}")
+
         provider_payload = {
             # Keep canonical order id for mapping context
             "original_id": order_id,

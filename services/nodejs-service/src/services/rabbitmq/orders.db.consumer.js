@@ -200,6 +200,10 @@ async function applyDbUpdate(msg) {
   } else {
     const updateFields = {};
     if (order_status) updateFields.order_status = String(order_status);
+    // Default for pending-cancel confirmations if publisher forgot to set order_status
+    if (!order_status && String(type) === 'ORDER_PENDING_CANCEL') {
+      updateFields.order_status = 'CANCELLED';
+    }
     if (order_type) updateFields.order_type = normalizeOrderType(order_type);
     if (order_price != null) updateFields.order_price = String(order_price);
     if (margin != null && Number.isFinite(Number(margin))) {
@@ -305,126 +309,130 @@ async function applyDbUpdate(msg) {
         take_profit: row.take_profit != null ? row.take_profit.toString() : null,
       };
       logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
-      // Mirror trigger updates into Redis so WS snapshots and services reflect changes
-      try {
-        const userTypeStr = String(user_type);
-        const userIdStr = String(user_id);
-        const hashTag = `${userTypeStr}:${userIdStr}`;
-        const orderKey = `user_holdings:{${hashTag}}:${String(order_id)}`;
-        const orderDataKey = `order_data:${String(order_id)}`;
-        const indexKey = `user_orders_index:{${hashTag}}`;
-        const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
-        // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
-        const pUser = redisCluster.pipeline();
-        // Maintain index membership based on order_status when provided
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
-          const st = String(updateFields.order_status).toUpperCase();
-          if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED') {
-            pUser.srem(indexKey, String(order_id));
-          } else if (st === 'OPEN') {
+      // Mirror updates into Redis except for pending cancel finalization (keys were deleted by worker)
+      if (String(type) !== 'ORDER_PENDING_CANCEL') {
+        try {
+          const userTypeStr = String(user_type);
+          const userIdStr = String(user_id);
+          const hashTag = `${userTypeStr}:${userIdStr}`;
+          const orderKey = `user_holdings:{${hashTag}}:${String(order_id)}`;
+          const orderDataKey = `order_data:${String(order_id)}`;
+          const indexKey = `user_orders_index:{${hashTag}}`;
+          const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
+          // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
+          const pUser = redisCluster.pipeline();
+          // Maintain index membership based on order_status when provided
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
+            const st = String(updateFields.order_status).toUpperCase();
+            if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED') {
+              pUser.srem(indexKey, String(order_id));
+            } else if (st === 'OPEN') {
+              pUser.sadd(indexKey, String(order_id));
+            }
+            // Mirror order_status into user_holdings for immediate WS/UI visibility
+            pUser.hset(orderKey, 'order_status', st);
+          } else {
+            // Default behavior (for trigger updates not changing status): ensure presence
             pUser.sadd(indexKey, String(order_id));
           }
-          // Mirror order_status into user_holdings for immediate WS/UI visibility
-          pUser.hset(orderKey, 'order_status', st);
-        } else {
-          // Default behavior (for trigger updates not changing status): ensure presence
-          pUser.sadd(indexKey, String(order_id));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
-          if (updateFields.stop_loss === null) {
-            pUser.hdel(orderKey, 'stop_loss');
-          } else {
-            pUser.hset(orderKey, 'stop_loss', String(updateFields.stop_loss));
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
+            if (updateFields.stop_loss === null) {
+              pUser.hdel(orderKey, 'stop_loss');
+            } else {
+              pUser.hset(orderKey, 'stop_loss', String(updateFields.stop_loss));
+            }
           }
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
-          if (updateFields.take_profit === null) {
-            pUser.hdel(orderKey, 'take_profit');
-          } else {
-            pUser.hset(orderKey, 'take_profit', String(updateFields.take_profit));
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
+            if (updateFields.take_profit === null) {
+              pUser.hdel(orderKey, 'take_profit');
+            } else {
+              pUser.hset(orderKey, 'take_profit', String(updateFields.take_profit));
+            }
           }
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
-          pUser.hset(orderKey, 'order_type', String(updateFields.order_type).toUpperCase());
-        }
-        // Mirror common numeric fields used by UI
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
-          pUser.hset(orderKey, 'order_price', String(updateFields.order_price));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
-          pUser.hset(orderKey, 'contract_value', String(updateFields.contract_value));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
-          pUser.hset(orderKey, 'commission', String(updateFields.commission));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
-          pUser.hset(orderKey, 'net_profit', String(updateFields.net_profit));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
-          pUser.hset(orderKey, 'close_price', String(updateFields.close_price));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
-          pUser.hset(orderKey, 'swap', String(updateFields.swap));
-        }
-        await pUser.exec();
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
+            pUser.hset(orderKey, 'order_type', String(updateFields.order_type).toUpperCase());
+          }
+          // Mirror common numeric fields used by UI
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
+            pUser.hset(orderKey, 'order_price', String(updateFields.order_price));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
+            pUser.hset(orderKey, 'contract_value', String(updateFields.contract_value));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
+            pUser.hset(orderKey, 'commission', String(updateFields.commission));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
+            pUser.hset(orderKey, 'net_profit', String(updateFields.net_profit));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
+            pUser.hset(orderKey, 'close_price', String(updateFields.close_price));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
+            pUser.hset(orderKey, 'swap', String(updateFields.swap));
+          }
+          await pUser.exec();
 
-        // 2) order_data pipeline (separate slot)
-        const pOd = redisCluster.pipeline();
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
-          pOd.hset(orderDataKey, 'order_status', String(updateFields.order_status).toUpperCase());
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
-          if (updateFields.stop_loss === null) pOd.hdel(orderDataKey, 'stop_loss');
-          else pOd.hset(orderDataKey, 'stop_loss', String(updateFields.stop_loss));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
-          if (updateFields.take_profit === null) pOd.hdel(orderDataKey, 'take_profit');
-          else pOd.hset(orderDataKey, 'take_profit', String(updateFields.take_profit));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
-          pOd.hset(orderDataKey, 'order_type', String(updateFields.order_type).toUpperCase());
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
-          pOd.hset(orderDataKey, 'order_price', String(updateFields.order_price));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
-          pOd.hset(orderDataKey, 'contract_value', String(updateFields.contract_value));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
-          pOd.hset(orderDataKey, 'commission', String(updateFields.commission));
-          // For OPEN confirmations, also persist entry commission breakdown into canonical
-          if (String(type) === 'ORDER_OPEN_CONFIRMED') {
-            pOd.hset(orderDataKey, 'commission_entry', String(updateFields.commission));
+          // 2) order_data pipeline (separate slot)
+          const pOd = redisCluster.pipeline();
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
+            pOd.hset(orderDataKey, 'order_status', String(updateFields.order_status).toUpperCase());
           }
-        }
-        if (commission_entry_msg != null) {
-          pOd.hset(orderDataKey, 'commission_entry', String(commission_entry_msg));
-        }
-        if (commission_exit_msg != null) {
-          pOd.hset(orderDataKey, 'commission_exit', String(commission_exit_msg));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
-          pOd.hset(orderDataKey, 'net_profit', String(updateFields.net_profit));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
-          pOd.hset(orderDataKey, 'close_price', String(updateFields.close_price));
-        }
-        if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
-          pOd.hset(orderDataKey, 'swap', String(updateFields.swap));
-        }
-        await pOd.exec();
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
+            if (updateFields.stop_loss === null) pOd.hdel(orderDataKey, 'stop_loss');
+            else pOd.hset(orderDataKey, 'stop_loss', String(updateFields.stop_loss));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
+            if (updateFields.take_profit === null) pOd.hdel(orderDataKey, 'take_profit');
+            else pOd.hset(orderDataKey, 'take_profit', String(updateFields.take_profit));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
+            pOd.hset(orderDataKey, 'order_type', String(updateFields.order_type).toUpperCase());
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
+            pOd.hset(orderDataKey, 'order_price', String(updateFields.order_price));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
+            pOd.hset(orderDataKey, 'contract_value', String(updateFields.contract_value));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
+            pOd.hset(orderDataKey, 'commission', String(updateFields.commission));
+            // For OPEN confirmations, also persist entry commission breakdown into canonical
+            if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+              pOd.hset(orderDataKey, 'commission_entry', String(updateFields.commission));
+            }
+          }
+          if (commission_entry_msg != null) {
+            pOd.hset(orderDataKey, 'commission_entry', String(commission_entry_msg));
+          }
+          if (commission_exit_msg != null) {
+            pOd.hset(orderDataKey, 'commission_exit', String(commission_exit_msg));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
+            pOd.hset(orderDataKey, 'net_profit', String(updateFields.net_profit));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
+            pOd.hset(orderDataKey, 'close_price', String(updateFields.close_price));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
+            pOd.hset(orderDataKey, 'swap', String(updateFields.swap));
+          }
+          await pOd.exec();
 
-        // 3) symbol_holders (separate slot)
-        if (symbolUpper) {
-          try {
-            const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
-            await redisCluster.sadd(symKey, hashTag);
-          } catch (e2) {
-            logger.warn('symbol_holders sadd failed', { error: e2.message, symbol: symbolUpper, user: hashTag });
+          // 3) symbol_holders (separate slot): only add for OPEN orders
+          if (symbolUpper && String(updateFields.order_status || row.order_status).toUpperCase() === 'OPEN') {
+            try {
+              const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
+              await redisCluster.sadd(symKey, hashTag);
+            } catch (e2) {
+              logger.warn('symbol_holders sadd failed', { error: e2.message, symbol: symbolUpper, user: hashTag });
+            }
           }
+        } catch (e) {
+          logger.warn('Failed to mirror trigger to Redis holdings', { error: e.message, order_id: String(order_id) });
         }
-      } catch (e) {
-        logger.warn('Failed to mirror trigger to Redis holdings', { error: e.message, order_id: String(order_id) });
+      } else {
+        logger.info('Skip Redis mirror for ORDER_PENDING_CANCEL (keys were removed by worker)', { order_id: String(order_id) });
       }
 
       // Emit event for this user's portfolio stream
@@ -436,6 +444,9 @@ async function applyDbUpdate(msg) {
         };
         if (String(type) === 'ORDER_PENDING_CONFIRMED') {
           wsPayload.reason = 'pending_confirmed';
+        }
+        if (String(type) === 'ORDER_PENDING_CANCEL') {
+          wsPayload.reason = 'pending_cancelled';
         }
         portfolioEvents.emitUserUpdate(String(user_type), String(user_id), wsPayload);
         // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS

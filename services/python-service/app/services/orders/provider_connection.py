@@ -102,12 +102,20 @@ def _build_report(msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     ord_status = fields.get("ord_status")
     if order_id is None or ord_status is None:
         return None
+    # Only accept known execution report statuses. Drop ACK and other types.
+    try:
+        ord_status_norm = str(ord_status).upper().strip()
+    except Exception:
+        return None
+    allowed_statuses = {"EXECUTED", "PENDING", "REJECTED", "CANCELLED", "CANCELED", "MODIFY"}
+    if ord_status_norm not in allowed_statuses:
+        return None
     report: Dict[str, Any] = {
         "type": "execution_report",
         "order_id": order_id,
         # exec_id is optional, keep if provider sends it
         "exec_id": fields.get("exec_id"),
-        "ord_status": ord_status,
+        "ord_status": ord_status_norm,
         "avgpx": fields.get("avgpx"),
         "cumqty": fields.get("cumqty"),
         "side": fields.get("side"),

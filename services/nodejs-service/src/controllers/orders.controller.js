@@ -529,6 +529,7 @@ async function placePendingOrder(req, res) {
           symbol: symbol,
           order_type: orderType, // pending type (e.g., BUY_LIMIT)
           order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+          status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
           execution_status: 'QUEUED',
           order_price: String(parsed.order_price),
           order_quantity: String(parsed.order_quantity),
@@ -549,6 +550,7 @@ async function placePendingOrder(req, res) {
           symbol: symbol,
           order_type: orderType, // pending type
           order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+          status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
           order_price: String(parsed.order_price),
           order_quantity: String(parsed.order_quantity),
           group: userGroup,
@@ -1816,13 +1818,12 @@ async function cancelPendingOrder(req, res) {
       const tag = `${user_type}:${user_id}`;
       const h = `user_holdings:{${tag}}:${order_id}`;
       const od = `order_data:${order_id}`;
-      const p = redisCluster.pipeline();
-      p.hset(h, 'cancel_id', String(cancel_id));
-      p.hset(od, 'cancel_id', String(cancel_id));
+      // Avoid cross-slot pipelines in Redis Cluster: perform per-key writes
+      try { await redisCluster.hset(h, 'cancel_id', String(cancel_id)); } catch (e1) { logger.warn('HSET cancel_id failed on user_holdings', { error: e1.message, order_id }); }
+      try { await redisCluster.hset(od, 'cancel_id', String(cancel_id)); } catch (e2) { logger.warn('HSET cancel_id failed on order_data', { error: e2.message, order_id }); }
       // Mirror engine-intended status for dispatcher routing (do not touch order_status here)
-      p.hset(h, 'status', statusReq);
-      p.hset(od, 'status', statusReq);
-      await p.exec();
+      try { await redisCluster.hset(h, 'status', statusReq); } catch (e3) { logger.warn('HSET status failed on user_holdings', { error: e3.message, order_id }); }
+      try { await redisCluster.hset(od, 'status', statusReq); } catch (e4) { logger.warn('HSET status failed on order_data', { error: e4.message, order_id }); }
     } catch (e) { logger.warn('Failed to mirror cancel status in Redis', { error: e.message, order_id }); }
     try {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
