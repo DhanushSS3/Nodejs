@@ -4,6 +4,9 @@ from contextlib import asynccontextmanager
 import logging
 import asyncio
 import os
+from dotenv import load_dotenv
+# Load environment variables from .env early
+load_dotenv()
 from .api.market_api import router as market_router
 from .api.orders_api import router as orders_router
 from .api.admin_orders_api import router as admin_orders_router

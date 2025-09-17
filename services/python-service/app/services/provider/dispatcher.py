@@ -130,9 +130,17 @@ class Dispatcher:
                 redis_status = str(order_data.get("status") or order_data.get("order_status") or "").upper()
                 ord_status = str(report.get("ord_status") or "").upper().strip()
                 target_queue = None
-                # Handle CANCELLED (or CANCELED) confirmations first: only for SL/TP cancel flows
-                if ord_status in ("CANCELLED", "CANCELED"):
+                # Pending cancel confirmations: route before generic CANCELLED branch
+                if redis_status == "PENDING-CANCEL" and ord_status in ("CANCELLED", "CANCELED", "PENDING", "MODIFY"):
+                    # Provider confirmed/acknowledged cancel request for pending order
+                    target_queue = CANCEL_QUEUE
+                # Handle CANCELLED (or CANCELED) confirmations for cancels
+                elif ord_status in ("CANCELLED", "CANCELED"):
+                    # SL/TP cancel confirmations
                     if redis_status in ("STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL"):
+                        target_queue = CANCEL_QUEUE
+                    # Pending cancel confirmations may find status in MODIFY/PENDING/CANCELLED
+                    elif redis_status in ("MODIFY", "PENDING", "CANCELLED"):
                         target_queue = CANCEL_QUEUE
                     else:
                         logger.info(
@@ -159,9 +167,7 @@ class Dispatcher:
                 elif ord_status == "PENDING" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
                     # Provider confirmed pending placement
                     target_queue = PENDING_QUEUE
-                elif redis_status == "PENDING-CANCEL" and ord_status in ("CANCELLED", "CANCELED", "PENDING", "MODIFY"):
-                    # Provider confirmed/acknowledged cancel request for pending order
-                    target_queue = CANCEL_QUEUE
+                # (Handled above before generic CANCELLED branch)
                 elif redis_status == "PENDING-CANCEL" and ord_status == "EXECUTED":
                     # Race: pending executed at provider before cancel took effect -> proceed to OPEN
                     payload["pending_executed"] = True

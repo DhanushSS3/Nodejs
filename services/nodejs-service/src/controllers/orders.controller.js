@@ -1484,7 +1484,7 @@ async function cancelStopLoss(req, res) {
 
     const result = pyResp.data?.data || pyResp.data || {};
 
-    // Local flow: immediately nullify SQL and notify WS
+    // Local flow: immediately nullify SQL and notify websocket
     try {
       if (result && String(result.flow).toLowerCase() === 'local') {
         const OrderModelNow = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
@@ -1773,6 +1773,9 @@ async function cancelPendingOrder(req, res) {
       isProviderFlow = (so === 'barclays');
     } catch (_) { isProviderFlow = false; }
 
+    // Frontend-intended engine status to persist (do not touch SQL order_status here)
+    const statusReq = normalizeStr(body.status || 'PENDING-CANCEL').toUpperCase();
+
     if (!isProviderFlow) {
       // Local finalize
       try {
@@ -1807,7 +1810,7 @@ async function cancelPendingOrder(req, res) {
     if (!cancel_id) return res.status(500).json({ success: false, message: 'Failed to generate cancel id' });
     try {
       const rowNow = await OrderModel.findOne({ where: { order_id } });
-      if (rowNow) await rowNow.update({ cancel_id, status: 'PENDING-CANCEL' });
+      if (rowNow) await rowNow.update({ cancel_id, status: statusReq });
     } catch (e) { logger.warn('Failed to persist cancel_id', { error: e.message, order_id }); }
     try {
       const tag = `${user_type}:${user_id}`;
@@ -1816,8 +1819,9 @@ async function cancelPendingOrder(req, res) {
       const p = redisCluster.pipeline();
       p.hset(h, 'cancel_id', String(cancel_id));
       p.hset(od, 'cancel_id', String(cancel_id));
-      p.hset(h, 'order_status', 'PENDING-CANCEL');
-      p.hset(od, 'order_status', 'PENDING-CANCEL');
+      // Mirror engine-intended status for dispatcher routing (do not touch order_status here)
+      p.hset(h, 'status', statusReq);
+      p.hset(od, 'status', statusReq);
       await p.exec();
     } catch (e) { logger.warn('Failed to mirror cancel status in Redis', { error: e.message, order_id }); }
     try {

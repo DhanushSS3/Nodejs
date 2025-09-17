@@ -203,12 +203,13 @@ async def pending_cancel_endpoint(payload: Dict[str, Any]):
 
         provider_payload = {
             # Keep canonical order id for mapping context
-            "order_id": order_id,
+            "original_id": order_id,
             # Provide explicit cancel_id for provider lifecycle
             "cancel_id": cancel_id,
             "order_type": order_type,
             "status": status or "CANCELLED",
         }
+        # print("Provider payload: ",provider_payload)
         if symbol:
             provider_payload["symbol"] = str(symbol).upper()
 
