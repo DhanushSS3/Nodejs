@@ -9,6 +9,7 @@ from .api.orders_api import router as orders_router
 from .api.admin_orders_api import router as admin_orders_router
 from .market_listener import start_market_listener
 from .services.portfolio_calculator import start_portfolio_listener
+from .services.autocutoff.watcher import start_autocutoff_watcher
 from .services.orders.provider_connection import get_provider_connection_manager
 from .services.pending.provider_pending_monitor import start_provider_pending_monitor
 
@@ -44,6 +45,13 @@ async def lifespan(app: FastAPI):
         logger.info("Provider pending monitor started")
     except Exception as e:
         logger.error(f"Failed to start provider pending monitor: {e}")
+
+    # Start AutoCutoff watcher (alerts + liquidation engine)
+    try:
+        asyncio.create_task(start_autocutoff_watcher())
+        logger.info("AutoCutoff watcher started")
+    except Exception as e:
+        logger.error(f"Failed to start AutoCutoff watcher: {e}")
 
     
     yield

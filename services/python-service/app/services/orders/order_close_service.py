@@ -206,9 +206,15 @@ class OrderCloser:
         # Link lifecycle IDs if present
         if payload.get("close_id"):
             try:
-                await add_lifecycle_id(order_id, str(payload.get("close_id")), "close_id")
+                cid = str(payload.get("close_id"))
+                await add_lifecycle_id(order_id, cid, "close_id")
             except Exception as e:
                 logger.warning("add_lifecycle_id close_id failed: %s", e)
+            # Persist close_id into canonical order_data for downstream consumers (Node DB mapping fallback)
+            try:
+                await redis_cluster.hset(f"order_data:{order_id}", mapping={"close_id": str(payload.get("close_id"))})
+            except Exception:
+                pass
         if payload.get("stoploss_cancel_id"):
             try:
                 await add_lifecycle_id(order_id, str(payload.get("stoploss_cancel_id")), "stoploss_cancel_id")
@@ -281,7 +287,7 @@ class OrderCloser:
             if not ok:
                 return {"ok": False, "reason": f"provider_send_failed:{status_name}:{via}"}
             # Wait for ack on cancel id; abort if REJECTED; proceed only if CANCELLED
-            cancel_id = cp.get("take_profit_cancel_id") or cp.get("stop_loss_cancel_id")
+            cancel_id = cp.get("takeprofit_cancel_id") or cp.get("stoploss_cancel_id")
             if cancel_id:
                 ord_stat = await self._wait_for_provider_ack_multi([str(cancel_id)], ["CANCELLED", "REJECTED"], timeout_ms=5000)
                 if ord_stat is None:
@@ -315,10 +321,15 @@ class OrderCloser:
             order_data_key = f"order_data:{order_id}"
             hash_tag = f"{user_type}:{user_id}"
             order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
-            pipe = redis_cluster.pipeline()
-            pipe.hset(order_data_key, mapping={"status": "CLOSED"})
-            pipe.hset(order_key, mapping={"status": "CLOSED"})
-            await pipe.execute()
+            # Separate writes to avoid cross-slot pipeline
+            try:
+                await redis_cluster.hset(order_key, mapping={"status": "CLOSED"})
+            except Exception:
+                pass
+            try:
+                await redis_cluster.hset(order_data_key, mapping={"status": "CLOSED"})
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -430,21 +441,25 @@ class OrderCloser:
                 include_queued=True,
             )
 
-            # Remove keys and update margins atomically
-            pipe = redis_cluster.pipeline()
-            pipe.srem(index_key, order_id)
-            pipe.delete(order_key)
-            pipe.delete(order_data_key)
+            # Remove keys and update margins using same-slot pipeline for user-scoped keys
+            p_user = redis_cluster.pipeline()
+            p_user.srem(index_key, order_id)
+            p_user.delete(order_key)
             if executed_margin is not None:
-                pipe.hset(portfolio_key, mapping={
+                p_user.hset(portfolio_key, mapping={
                     "used_margin_executed": str(float(executed_margin)),
                     "used_margin": str(float(executed_margin)),
                 })
             if total_margin is not None:
-                pipe.hset(portfolio_key, mapping={
+                p_user.hset(portfolio_key, mapping={
                     "used_margin_all": str(float(total_margin)),
                 })
-            await pipe.execute()
+            await p_user.execute()
+            # Delete canonical in separate call to avoid cross-slot pipeline
+            try:
+                await redis_cluster.delete(order_data_key)
+            except Exception:
+                pass
 
             # Symbol holders cleanup if no more orders for same symbol
             if symbol:

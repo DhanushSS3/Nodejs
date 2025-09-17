@@ -751,6 +751,11 @@ class PortfolioCalculatorListener:
 
             await redis_cluster.hset(redis_key, mapping=portfolio)
             self.logger.debug(f"Updated portfolio for {redis_key}: {portfolio}")
+            # Publish a lightweight notification for watchers (AutoCutoff, dashboards, etc.)
+            try:
+                await redis_pubsub_client.publish('portfolio_updates', f"{user_type}:{user_id}")
+            except Exception as pub_err:
+                self.logger.warning(f"Failed to publish portfolio update for {user_type}:{user_id}: {pub_err}")
         except Exception as e:
             self.logger.error(f"Error updating portfolio for {redis_key}: {e}")
 
