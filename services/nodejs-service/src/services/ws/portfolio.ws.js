@@ -198,7 +198,15 @@ function startPortfolioWSServer(server) {
         ]);
         // Refresh pending/rejected orders from DB at most every 10s
         const now = Date.now();
-        const forceDbRefresh = evt && evt.type === 'order_rejected';
+        // Force DB refresh when pending is confirmed/cancelled so UI reflects immediately
+        const isOrderUpdate = evt && evt.type === 'order_update';
+        const reasonStr = evt && evt.reason ? String(evt.reason) : '';
+        const updateStatus = isOrderUpdate && evt.update && evt.update.order_status ? String(evt.update.order_status).toUpperCase() : '';
+        const forceDbRefresh = (
+          (evt && evt.type === 'order_rejected') ||
+          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled')) ||
+          (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED'))
+        );
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           const dbOrders = await fetchOrdersFromDB(userType, userId);
           ws._lastPending = dbOrders.pending;

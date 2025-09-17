@@ -326,7 +326,8 @@ async function applyDbUpdate(msg) {
             const st = String(updateFields.order_status).toUpperCase();
             if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED') {
               pUser.srem(indexKey, String(order_id));
-            } else if (st === 'OPEN') {
+            } else if (st === 'OPEN' || st === 'PENDING') {
+              // Ensure presence in index for OPEN and PENDING
               pUser.sadd(indexKey, String(order_id));
             }
             // Mirror order_status into user_holdings for immediate WS/UI visibility
@@ -437,10 +438,26 @@ async function applyDbUpdate(msg) {
 
       // Emit event for this user's portfolio stream
       try {
+        // Hydrate WS update for PENDING confirmation with core fields if not present
+        let updateForWs = { ...updateFields };
+        if (String(type) === 'ORDER_PENDING_CONFIRMED') {
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && row?.symbol) {
+            updateForWs.symbol = String(row.symbol).toUpperCase();
+          }
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_type') && row?.order_type) {
+            updateForWs.order_type = String(row.order_type).toUpperCase();
+          }
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_price') && row?.order_price != null) {
+            updateForWs.order_price = String(row.order_price);
+          }
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
+            updateForWs.order_quantity = String(row.order_quantity);
+          }
+        }
         const wsPayload = {
           type: 'order_update',
           order_id: String(order_id),
-          update: updateFields,
+          update: updateForWs,
         };
         if (String(type) === 'ORDER_PENDING_CONFIRMED') {
           wsPayload.reason = 'pending_confirmed';
