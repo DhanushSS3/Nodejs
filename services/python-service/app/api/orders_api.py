@@ -350,6 +350,126 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 
+@router.post("/pending/modify")
+async def pending_modify_endpoint(payload: Dict[str, Any]):
+    """
+    Provider flow: modify an existing pending order's price.
+    - Node sends: order_id, modify_id, symbol, order_type (BUY_LIMIT/SELL_LIMIT/BUY_STOP/SELL_STOP), order_price (user), order_quantity, user_id, user_type
+    - Python computes provider_price = order_price_user - half_spread and forwards to provider with status=MODIFY.
+    - Actual Redis/SQL updates are finalized by PendingWorker upon provider confirmation (ord_status=PENDING/MODIFY).
+    """
+    try:
+        order_id = str(payload.get("order_id") or "").strip()
+        modify_id = str(payload.get("modify_id") or "").strip()
+        symbol = str(payload.get("symbol") or "").upper().strip()
+        order_type = str(payload.get("order_type") or "").upper().strip()
+        user_id = str(payload.get("user_id") or "").strip()
+        user_type = str(payload.get("user_type") or "").lower().strip()
+        order_price_user = float(payload.get("order_price")) if payload.get("order_price") is not None else None
+        order_qty = float(payload.get("order_quantity")) if payload.get("order_quantity") is not None else None
+        if not order_id or not modify_id or not symbol or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or not user_id or user_type not in ("live","demo"):
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_fields"})
+        if order_price_user is None or not (order_price_user > 0):
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_order_price"})
+
+        # Resolve group & group config (prefer canonical, fallback to user config)
+        group = None
+        od = None
+        try:
+            od = await redis_cluster.hgetall(f"order_data:{order_id}")
+            if od:
+                group = od.get("group") or None
+        except Exception:
+            group = None
+        if not group:
+            try:
+                ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
+                group = (ucfg.get("group") if ucfg else None) or "Standard"
+            except Exception:
+                group = "Standard"
+
+        g = await fetch_group_data(symbol, group)
+        # Compute half_spread
+        try:
+            spread = float(g.get("spread")) if g.get("spread") is not None else None
+            spread_pip = float(g.get("spread_pip")) if g.get("spread_pip") is not None else None
+        except (TypeError, ValueError):
+            spread = None
+            spread_pip = None
+        if spread is None or spread_pip is None:
+            raise HTTPException(status_code=400, detail={"ok": False, "reason": "missing_group_spread"})
+        half_spread = (spread * spread_pip) / 2.0
+
+        # Compute provider order price
+        provider_price = float(order_price_user) - float(half_spread)
+
+        # Optional contract_value for provider
+        contract_value = None
+        if order_qty is not None:
+            try:
+                contract_size = float(g.get("contract_size")) if g.get("contract_size") is not None else None
+            except (TypeError, ValueError):
+                contract_size = None
+            if contract_size is not None:
+                try:
+                    contract_value = float(contract_size) * float(order_qty)
+                except Exception:
+                    contract_value = None
+
+        # Best-effort: ensure Redis status reflects engine intent MODIFY for dispatcher routing
+        try:
+            cur = str((od or {}).get("status") or "").upper().strip()
+            if cur not in ("MODIFY",):
+                if cur in ("PENDING", "PENDING-QUEUED", ""):
+                    await redis_cluster.hset(f"order_data:{order_id}", "status", "MODIFY")
+                    if user_id and user_type:
+                        try:
+                            hkey = f"user_holdings:{{{user_type}:{user_id}}}:{order_id}"
+                            await redis_cluster.hset(hkey, "status", "MODIFY")
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"pending_modify: failed to mirror MODIFY status for {order_id}: {e}")
+
+        # Compose provider payload
+        provider_payload = {
+            "original_id": order_id,
+            "modify_id": modify_id,
+            "symbol": symbol,
+            "order_type": order_type,
+            "order_price": provider_price,
+            "status": "MODIFY",
+        }
+        if contract_value is not None:
+            provider_payload["contract_value"] = contract_value
+
+        try:
+            ok, via = await send_provider_order(provider_payload)
+            if not ok:
+                raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_unreachable", "via": via})
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"provider pending modify send failed {order_id}: {e}")
+            raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_send_failed", "error": str(e)})
+
+        return {
+            "success": True,
+            "message": "Provider pending modify dispatched",
+            "data": {
+                "order_id": order_id,
+                "modify_id": modify_id,
+                "sent_price": provider_price,
+                "group": group,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"pending_modify_endpoint error: {e}")
+        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+
+
 @router.post("/stoploss/cancel")
 async def stoploss_cancel_endpoint(payload: StopLossCancelRequest):
     """

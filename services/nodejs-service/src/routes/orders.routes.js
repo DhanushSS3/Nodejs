@@ -222,6 +222,77 @@ router.post('/pending/place', authenticateJWT, ordersController.placePendingOrde
  */
 router.post('/pending/cancel', authenticateJWT, ordersController.cancelPendingOrder);
 
+// POST /api/orders/pending/modify
+/**
+ * @swagger
+ * /api/orders/pending/modify:
+ *   post:
+ *     summary: Modify the price of an existing pending order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *               - symbol
+ *               - order_type
+ *               - order_price
+ *               - order_quantity
+ *               - user_id
+ *               - user_type
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *                 example: "ord_20250905_008"
+ *               symbol:
+ *                 type: string
+ *                 example: "AUDCHF"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP]
+ *                 example: "BUY_LIMIT"
+ *               order_price:
+ *                 type: number
+ *                 example: 0.4956
+ *               order_quantity:
+ *                 type: number
+ *                 example: 0.01
+ *               user_id:
+ *                 type: string
+ *                 example: "1"
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *                 example: "demo"
+ *               status:
+ *                 type: string
+ *                 description: Engine intent; for provider flow set to MODIFY
+ *                 example: "MODIFY"
+ *               order_status:
+ *                 type: string
+ *                 description: Internal lifecycle; must be PENDING for local flow
+ *                 example: "PENDING"
+ *     responses:
+ *       200:
+ *         description: Pending order price modified (local flow)
+ *       202:
+ *         description: Modify request accepted (provider flow, awaiting confirmation)
+ *       400:
+ *         description: Invalid payload
+ *       403:
+ *         description: Forbidden (JWT/user checks)
+ *       404:
+ *         description: Order not found
+ *       409:
+ *         description: Conflict (order is not pending)
+ */
+router.post('/pending/modify', authenticateJWT, ordersController.modifyPendingOrder);
+
 // POST /api/orders/close
 /**
  * @swagger

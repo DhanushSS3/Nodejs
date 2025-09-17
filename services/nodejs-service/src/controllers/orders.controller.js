@@ -543,7 +543,9 @@ async function placePendingOrder(req, res) {
       // Also write canonical order_data for downstream consumers
       try {
         const odKey = `order_data:${String(order_id)}`;
-        await redisCluster.hset(odKey, {
+        await redisCluster.hset(
+          odKey,
+          {
           order_id: String(order_id),
           user_type: String(parsed.user_type),
           user_id: String(parsed.user_id),
@@ -706,6 +708,268 @@ function _isMarketOpenByType(typeVal) {
   const day = new Date().getUTCDay(); // 0 Sunday, 6 Saturday
   if (day === 0 || day === 6) return false;
   return true;
+}
+
+// Modify a pending order's price
+async function modifyPendingOrder(req, res) {
+  const operationId = `pending_modify_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    // Structured request log (fire-and-forget)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'modifyPendingOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
+    // JWT checks
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+    const userGroupFromToken = user && user.group ? String(user.group) : 'Standard';
+
+    if (role && role !== 'trader') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for pending modify' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    // Validate payload
+    const body = req.body || {};
+    const order_id = normalizeStr(body.order_id);
+    const symbol = normalizeStr(body.symbol).toUpperCase();
+    const order_type = normalizeStr(body.order_type).toUpperCase(); // BUY_LIMIT/SELL_LIMIT/BUY_STOP/SELL_STOP
+    const user_type = normalizeStr(body.user_type).toLowerCase();
+    const order_price = toNumber(body.order_price);
+    const order_quantity = toNumber(body.order_quantity);
+    const user_id = normalizeStr(body.user_id);
+    if (!order_id) return res.status(400).json({ success: false, message: 'order_id is required' });
+    if (!symbol) return res.status(400).json({ success: false, message: 'symbol is required' });
+    if (!['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'].includes(order_type)) return res.status(400).json({ success: false, message: 'Invalid order_type' });
+    if (!(order_price > 0)) return res.status(400).json({ success: false, message: 'Invalid order_price' });
+    if (!(order_quantity > 0)) return res.status(400).json({ success: false, message: 'Invalid order_quantity' });
+    if (!user_id) return res.status(400).json({ success: false, message: 'user_id is required' });
+    if (!['live', 'demo'].includes(user_type)) return res.status(400).json({ success: false, message: 'Invalid user_type' });
+
+    // Ensure user can only modify own orders
+    if (tokenUserId && String(user_id) !== String(tokenUserId)) {
+      return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
+    }
+
+    // Load canonical order (prefer Redis)
+    let canonical = await _getCanonicalOrder(order_id);
+    let sqlRow = null;
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    if (!canonical) {
+      // Fallback to SQL
+      sqlRow = await OrderModel.findOne({ where: { order_id } });
+      if (!sqlRow) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+      if (String(sqlRow.order_user_id) !== String(user_id)) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      // Must be pending
+      const st = (sqlRow.order_status || '').toString().toUpperCase();
+      if (!['PENDING', 'PENDING-QUEUED', 'MODIFY'].includes(st)) {
+        return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
+      }
+      canonical = {
+        order_id,
+        user_id: String(user_id),
+        user_type: String(user_type),
+        symbol: String(sqlRow.symbol || sqlRow.order_company_name).toUpperCase(),
+        order_type: String(sqlRow.order_type).toUpperCase(),
+        order_status: st,
+        status: st,
+        group: userGroupFromToken,
+      };
+    } else {
+      // Basic ownership and type checks from canonical
+      if (String(canonical.user_id) !== String(user_id) || String(canonical.user_type).toLowerCase() !== String(user_type)) {
+        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      }
+      const st = String(canonical.order_status || canonical.status || '').toUpperCase();
+      if (!['PENDING', 'PENDING-QUEUED', 'MODIFY'].includes(st)) {
+        return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
+      }
+      // Optional symbol/type match enforcement
+      if (String(canonical.symbol || '').toUpperCase() !== symbol) {
+        return res.status(400).json({ success: false, message: 'Symbol mismatch with existing order' });
+      }
+      if (String(canonical.order_type || '').toUpperCase() !== order_type) {
+        return res.status(400).json({ success: false, message: 'order_type mismatch with existing order' });
+      }
+    }
+
+    // Determine flow based on user config (sending_orders)
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{${user_type}:${user_id}}:config`;
+      const ucfg = await redisCluster.hgetall(userCfgKey);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) { isProviderFlow = false; }
+
+    // Fetch half_spread for compare price calculation
+    const groupName = String(canonical.group || userGroupFromToken || 'Standard');
+    let half_spread = null;
+    try {
+      const gf = await groupsCache.getGroupFields(groupName, symbol, ['spread', 'spread_pip']);
+      if (gf && gf.spread != null && gf.spread_pip != null) {
+        const spread = Number(gf.spread);
+        const spread_pip = Number(gf.spread_pip);
+        if (Number.isFinite(spread) && Number.isFinite(spread_pip)) {
+          half_spread = (spread * spread_pip) / 2.0;
+        }
+      }
+    } catch (e) {
+      logger.warn('Failed to get group spread config for pending modify', { error: e.message, group: groupName, symbol });
+    }
+    if (!(half_spread >= 0)) {
+      return res.status(400).json({ success: false, message: 'Group spread configuration missing for symbol/group' });
+    }
+
+    if (!isProviderFlow) {
+      // Local flow: update monitoring keys and canonical immediately
+      const compare_price = Number((order_price - Number(half_spread)).toFixed(8));
+      if (!(compare_price > 0)) {
+        return res.status(400).json({ success: false, message: 'Computed compare_price invalid' });
+      }
+      const zkey = `pending_index:{${symbol}}:${order_type}`;
+      const hkey = `pending_orders:${order_id}`;
+      try {
+        // Update ZSET score (re-add with new score)
+        await redisCluster.zadd(zkey, compare_price, order_id);
+        // Update pending orders hash
+        await redisCluster.hset(hkey, {
+          order_price_user: String(order_price),
+          order_price_compare: String(compare_price),
+          updated_at: Date.now().toString(),
+        });
+        // Mirror to user holdings (same-slot pipeline)
+        try {
+          const tag = `${user_type}:${user_id}`;
+          const orderKey = `user_holdings:{${tag}}:${order_id}`;
+          const pUser = redisCluster.pipeline();
+          pUser.hset(orderKey, 'order_price', String(order_price));
+          pUser.hset(orderKey, 'status', 'PENDING');
+          await pUser.exec();
+        } catch (e) { logger.warn('Failed to mirror modify to user holdings', { error: e.message, order_id }); }
+        // Update canonical (separate slot)
+        try {
+          const odKey = `order_data:${order_id}`;
+          const pOd = redisCluster.pipeline();
+          pOd.hset(odKey, 'order_price', String(order_price));
+          pOd.hset(odKey, 'compare_price', String(compare_price));
+          pOd.hset(odKey, 'half_spread', String(half_spread));
+          pOd.hset(odKey, 'status', 'PENDING');
+          await pOd.exec();
+        } catch (e) { logger.warn('Failed to update canonical for pending modify', { error: e.message, order_id }); }
+      } catch (e) {
+        logger.error('Failed to update Redis for pending modify', { error: e.message, order_id, zkey });
+        return res.status(500).json({ success: false, message: 'Cache error', operationId });
+      }
+
+      // Publish symbol for any monitoring recalculation and WS event
+      try { await redisCluster.publish('market_price_updates', symbol); } catch (_) {}
+      try {
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'order_update',
+          order_id,
+          update: { order_status: 'PENDING', order_price: String(order_price) },
+        });
+      } catch (_) {}
+
+      // Persist SQL order_price
+      try {
+        await OrderModel.update({ order_price: order_price }, { where: { order_id } });
+      } catch (dbErr) {
+        logger.warn('SQL update failed for pending modify', { error: dbErr.message, order_id });
+      }
+
+      return res.status(200).json({ success: true, order_id, order_status: 'PENDING', compare_price, execution_mode: 'local' });
+    }
+
+    // Provider flow: generate modify_id, set status=MODIFY, store pending modify price, dispatch to Python
+    let modify_id = null;
+    try { modify_id = await idGenerator.generateModifyId(); } catch (e) { logger.warn('Failed to generate modify_id', { error: e.message }); }
+    if (modify_id) {
+      // Persist modify_id in SQL
+      try { await OrderModel.update({ modify_id }, { where: { order_id } }); } catch (e) { logger.warn('Failed to persist modify_id in SQL', { error: e.message, order_id }); }
+    }
+    // Mirror status=MODIFY and store pending_modify_price_user for worker to apply on confirmation
+    try {
+      const tag = `${user_type}:${user_id}`;
+      const orderKey = `user_holdings:{${tag}}:${order_id}`;
+      const odKey = `order_data:${order_id}`;
+      await redisCluster.hset(orderKey, {
+        status: 'MODIFY',
+        pending_modify_price_user: String(order_price),
+      });
+      // Separate slot updates
+      const pOd = redisCluster.pipeline();
+      pOd.hset(odKey, 'status', 'MODIFY');
+      pOd.hset(odKey, 'pending_modify_price_user', String(order_price));
+      if (modify_id) pOd.hset(odKey, 'modify_id', String(modify_id));
+      await pOd.exec();
+    } catch (e) {
+      logger.warn('Failed to set MODIFY status in Redis for pending modify', { error: e.message, order_id });
+    }
+
+    // Register lifecycle id mapping in Python (fire-and-forget)
+    if (modify_id) {
+      try {
+        const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+        axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, {
+          order_id,
+          new_id: modify_id,
+          id_type: 'modify_id',
+        }, { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } })
+          .then(() => { logger.info('Registered modify_id lifecycle mapping in Python', { order_id }); })
+          .catch((eMap) => { logger.warn('Failed to register modify_id lifecycle mapping in Python', { error: eMap.message, order_id }); });
+      } catch (e) { logger.warn('Unable to initiate modify_id lifecycle registration', { error: e.message, order_id }); }
+    }
+
+    // Dispatch to Python provider modify endpoint
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      const payload = {
+        order_id,
+        modify_id,
+        symbol,
+        order_type,
+        order_price,
+        order_quantity,
+        user_id,
+        user_type,
+      };
+      axios.post(
+        `${baseUrl}/api/orders/pending/modify`,
+        payload,
+        { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+      )
+        .then(() => { logger.info('Dispatched provider pending modify', { order_id, symbol, order_type }); })
+        .catch((ePy) => { logger.error('Python provider pending modify failed', { error: ePy.message, order_id }); });
+    } catch (ePyOuter) {
+      logger.warn('Unable to initiate provider pending modify call', { error: ePyOuter.message, order_id });
+    }
+
+    return res.status(202).json({ success: true, order_id, order_status: 'PENDING', status: 'MODIFY', modify_id, execution_mode: 'provider' });
+  } catch (error) {
+    logger.error('modifyPendingOrder internal error', { error: error.message, operationId });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
 }
 
 async function closeOrder(req, res) {
@@ -1851,4 +2115,4 @@ async function cancelPendingOrder(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit, cancelPendingOrder };
+module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit, cancelPendingOrder, modifyPendingOrder };

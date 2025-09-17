@@ -110,12 +110,34 @@ async def _update_redis_for_pending(payload: Dict[str, Any]) -> Dict[str, Any]:
     pipe.sadd(index_key, order_id)
     await pipe.execute()
 
+    # If a pending modify price was staged by Node, apply it now and clear the staging fields
+    modified_price: Optional[str] = None
+    try:
+        pget = redis_cluster.pipeline()
+        pget.hget(order_data_key, "pending_modify_price_user")
+        pget.hget(order_key, "pending_modify_price_user")
+        vals = await pget.execute()
+        pm_od = vals[0] if isinstance(vals, (list, tuple)) and len(vals) > 0 else None
+        pm_hold = vals[1] if isinstance(vals, (list, tuple)) and len(vals) > 1 else None
+        pm = pm_od or pm_hold
+        if pm is not None:
+            modified_price = str(pm)
+            pset = redis_cluster.pipeline()
+            pset.hset(order_data_key, "order_price", modified_price)
+            pset.hset(order_key, "order_price", modified_price)
+            pset.hdel(order_data_key, "pending_modify_price_user")
+            pset.hdel(order_key, "pending_modify_price_user")
+            await pset.execute()
+    except Exception:
+        logger.exception("Failed to apply pending modify price for %s", order_id)
+
     return {
         "order_id": order_id,
         "user_id": user_id,
         "user_type": user_type,
         "order_key": order_key,
         "order_data_key": order_data_key,
+        "modified_price": modified_price,
     }
 
 
@@ -157,7 +179,7 @@ class PendingWorker:
             user_type = str(payload.get("user_type"))
             user_id = str(payload.get("user_id"))
 
-            if ord_status != "PENDING":
+            if ord_status not in ("PENDING", "MODIFY"):
                 logger.warning("[PENDING:skip] order_id=%s ord_status=%s not PENDING", order_id, ord_status)
                 await self._ack(message)
                 return
@@ -216,6 +238,13 @@ class PendingWorker:
                         "user_type": user_type,
                         "order_status": "PENDING",
                     }
+                    # Include updated order_price if a modify was applied
+                    try:
+                        mod_px = ctx.get("modified_price")
+                        if mod_px is not None:
+                            db_msg["order_price"] = str(mod_px)
+                    except Exception:
+                        pass
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
                 except Exception:

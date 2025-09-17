@@ -192,6 +192,9 @@ class Dispatcher:
                 elif ord_status == "PENDING" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
                     # Provider confirmed pending placement
                     target_queue = PENDING_QUEUE
+                elif ord_status == "MODIFY" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
+                    # Provider acknowledged a pending modify request
+                    target_queue = PENDING_QUEUE
                 # (Handled above before generic CANCELLED branch)
                 elif redis_status == "PENDING-CANCEL" and ord_status == "EXECUTED":
                     # Race: pending executed at provider before cancel took effect -> proceed to OPEN
