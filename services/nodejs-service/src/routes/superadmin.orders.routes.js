@@ -42,11 +42,53 @@ router.use(requireRole(['superadmin']));
  *               backfill:
  *                 type: boolean
  *                 description: If true, backfill user_holdings from SQL before rebuilding indices
+  *               deep:
+  *                 type: boolean
+  *                 description: If true (default), also rebuild execution caches (pending, triggers, order_data)
+  *               prune:
+  *                 type: boolean
+  *                 description: If true, prune Redis entries not present in SQL for this user
+  *               prune_symbol_holders:
+  *                 type: boolean
+  *                 description: If true, also SREM user from symbol_holders when they have no other active orders on the symbol
  *     responses:
  *       200:
  *         description: Rebuild completed
  */
 router.post('/rebuild/user', ctrl.rebuildUser);
+
+/**
+ * @swagger
+ * /api/superadmin/orders/prune/user:
+ *   post:
+ *     summary: Prune a user's Redis entries that do not exist in SQL
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [user_type, user_id]
+ *             properties:
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *               user_id:
+ *                 type: string
+ *               deep:
+ *                 type: boolean
+ *                 description: If true (default), also remove order_data, pending, triggers, and global lookups for stale orders
+ *               prune_symbol_holders:
+ *                 type: boolean
+ *                 description: If true, also SREM user from symbol_holders when they have no other active orders on that symbol
+ *     responses:
+ *       200:
+ *         description: Prune completed
+ */
+router.post('/prune/user', ctrl.pruneUser);
 
 /**
  * @swagger

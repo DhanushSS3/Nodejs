@@ -29,6 +29,21 @@ function decConn(userKey) {
   else userConnCounts.set(userKey, n);
 }
 
+// Safely convert various timestamp representations to ISO string
+function toIsoTimeSafe(v) {
+  if (v === undefined || v === null || v === '') return undefined;
+  // numeric (ms) or numeric string
+  const n = Number(v);
+  if (Number.isFinite(n)) {
+    const d = new Date(n);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  // try parse ISO or other string formats
+  const d2 = new Date(String(v));
+  if (!Number.isNaN(d2.getTime())) return d2.toISOString();
+  return undefined;
+}
+
 async function fetchAccountSummary(userType, userId) {
   const Model = userType === 'live' ? LiveUser : DemoUser;
   const row = await Model.findByPk(parseInt(userId, 10));
@@ -108,7 +123,7 @@ async function fetchOpenOrdersFromRedis(userType, userId) {
         order_status: row.order_status,
         commission: row.commission ?? null,
         swap: row.swap ?? null,
-        created_at: row.created_at ? new Date(Number(row.created_at)).toISOString() : undefined,
+        created_at: toIsoTimeSafe(row.created_at),
       };
     }).filter(Boolean);
   } catch (e) {

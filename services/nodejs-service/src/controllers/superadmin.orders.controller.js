@@ -105,13 +105,16 @@ async function getMarginStatus(req, res) {
 }
 
 // POST /api/superadmin/orders/rebuild/user
-// body: { user_type: 'live'|'demo', user_id: string|number, include_queued?: boolean, backfill?: boolean }
+// body: { user_type: 'live'|'demo', user_id: string|number, include_queued?: boolean, backfill?: boolean, deep?: boolean, prune?: boolean, prune_symbol_holders?: boolean }
 async function rebuildUser(req, res) {
   try {
     const user_type = String(req.body.user_type || '').toLowerCase();
     const user_id = String(req.body.user_id || '').trim();
     const includeQueued = Boolean(req.body.include_queued);
     const backfill = Boolean(req.body.backfill);
+    const deep = (req.body.deep === undefined) ? true : Boolean(req.body.deep);
+    const prune = Boolean(req.body.prune);
+    const pruneSymbolHolders = Boolean(req.body.prune_symbol_holders);
 
     if (!['live', 'demo'].includes(user_type) || !user_id) {
       return bad(res, 'user_type must be live|demo and user_id is required');
@@ -126,9 +129,56 @@ async function rebuildUser(req, res) {
       result = await OrdersIndexRebuildService.rebuildUserIndices(user_type, user_id);
     }
 
-    return ok(res, result, backfill ? 'User holdings backfilled from SQL and indices rebuilt' : 'User indices rebuilt from holdings');
+    // Perform deep rebuild of execution-related caches (pending, triggers, order_data, user config)
+    let deepResult = null;
+    if (deep) {
+      try {
+        deepResult = await OrdersBackfillService.rebuildUserExecutionCaches(user_type, user_id, { includeQueued: true });
+      } catch (e) {
+        logger.warn('Deep execution-cache rebuild failed', { error: e.message, user_type, user_id });
+      }
+    }
+
+    // Optional prune of Redis entries not present in SQL
+    let pruneResult = null;
+    if (prune) {
+      try {
+        pruneResult = await OrdersBackfillService.pruneUserRedisAgainstSql(user_type, user_id, { deep: true, pruneSymbolHolders });
+      } catch (e) {
+        logger.warn('Prune against SQL failed', { error: e.message, user_type, user_id });
+      }
+    }
+
+    const message = backfill
+      ? 'User holdings backfilled from SQL and indices rebuilt'
+      : 'User indices rebuilt from holdings';
+    let data = deep ? { base: result, deep: deepResult } : result;
+    if (prune) data = { ...data, prune: pruneResult };
+    let msg = deep ? `${message}; execution caches rebuilt` : message;
+    if (prune) msg = `${msg}; stale Redis pruned`;
+    return ok(res, data, msg);
   } catch (err) {
     return bad(res, `Failed to rebuild user indices: ${err.message}`, 500);
+  }
+}
+
+// POST /api/superadmin/orders/prune/user
+// body: { user_type: 'live'|'demo', user_id: string|number, deep?: boolean, prune_symbol_holders?: boolean }
+async function pruneUser(req, res) {
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id = String(req.body.user_id || '').trim();
+    const deep = (req.body.deep === undefined) ? true : Boolean(req.body.deep);
+    const pruneSymbolHolders = Boolean(req.body.prune_symbol_holders);
+
+    if (!['live', 'demo'].includes(user_type) || !user_id) {
+      return bad(res, 'user_type must be live|demo and user_id is required');
+    }
+
+    const result = await OrdersBackfillService.pruneUserRedisAgainstSql(user_type, user_id, { deep, pruneSymbolHolders });
+    return ok(res, result, 'Stale Redis entries pruned');
+  } catch (err) {
+    return bad(res, `Failed to prune user Redis: ${err.message}`, 500);
   }
 }
 
@@ -226,4 +276,5 @@ module.exports = {
   rejectQueued,
   getQueuedOrders,
   getMarginStatus,
+  pruneUser,
 };

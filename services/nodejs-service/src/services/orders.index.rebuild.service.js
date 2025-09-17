@@ -96,8 +96,14 @@ class OrdersIndexRebuildService {
     // 5) Ensure symbol_holders has this user for all symbols encountered
     const uniqueSymbols = Array.from(new Set(symbols.filter(Boolean)));
     const holderValue = `${userType}:${userId}`;
-    const shCmds = uniqueSymbols.map(sym => ['sadd', `symbol_holders:${sym}:${userType}`, holderValue]);
-    if (shCmds.length) await this.runPipelined(shCmds, 200);
+    // IMPORTANT: symbol_holders keys are NOT hash-tagged; avoid cross-slot pipeline
+    for (const sym of uniqueSymbols) {
+      try {
+        await this.redis.sadd(`symbol_holders:${sym}:${userType}`, holderValue);
+      } catch (e) {
+        logger.warn(`SADD failed for symbol_holders:${sym}:${userType}: ${e.message}`);
+      }
+    }
 
     return {
       user_type: userType,
