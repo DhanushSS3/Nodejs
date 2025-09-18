@@ -219,7 +219,7 @@ function startPortfolioWSServer(server) {
         const updateStatus = isOrderUpdate && evt.update && evt.update.order_status ? String(evt.update.order_status).toUpperCase() : '';
         const forceDbRefresh = (
           (evt && evt.type === 'order_rejected') ||
-          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled')) ||
+          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'pending_modified')) ||
           (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED'))
         );
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {

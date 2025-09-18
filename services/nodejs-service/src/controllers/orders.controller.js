@@ -881,22 +881,25 @@ async function modifyPendingOrder(req, res) {
         return res.status(500).json({ success: false, message: 'Cache error', operationId });
       }
 
-      // Publish symbol for any monitoring recalculation and WS event
+      // Publish symbol for any monitoring recalculation
       try { await redisCluster.publish('market_price_updates', symbol); } catch (_) {}
-      try {
-        portfolioEvents.emitUserUpdate(user_type, user_id, {
-          type: 'order_update',
-          order_id,
-          update: { order_status: 'PENDING', order_price: String(order_price) },
-        });
-      } catch (_) {}
 
-      // Persist SQL order_price
+      // Persist SQL order_price BEFORE emitting WS event so snapshot reflects new price immediately
       try {
         await OrderModel.update({ order_price: order_price }, { where: { order_id } });
       } catch (dbErr) {
         logger.warn('SQL update failed for pending modify', { error: dbErr.message, order_id });
       }
+
+      // Emit WS event after SQL update; portfolio.ws will force-fetch pending from DB on PENDING updates
+      try {
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'order_update',
+          order_id,
+          update: { order_status: 'PENDING', order_price: String(order_price) },
+          reason: 'pending_modified',
+        });
+      } catch (_) {}
 
       return res.status(200).json({ success: true, order_id, order_status: 'PENDING', compare_price, execution_mode: 'local' });
     }
