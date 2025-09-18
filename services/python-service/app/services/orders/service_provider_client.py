@@ -6,10 +6,15 @@ import time
 from typing import Dict, Any, Tuple, Optional
 
 import msgpack
+import orjson
 
 logger = logging.getLogger(__name__)
 
-from app.services.orders.provider_connection import get_provider_connection_manager, _PROVIDER_RX_LOG
+from app.services.orders.provider_connection import (
+    get_provider_connection_manager,
+    _PROVIDER_RX_LOG,
+    _PROVIDER_TX_LOG,
+)
 
 class ProviderSendError(Exception):
     pass
@@ -53,8 +58,24 @@ async def _send_over_stream(reader: asyncio.StreamReader, writer: asyncio.Stream
     if "ts" not in payload:
         payload["ts"] = int(time.time() * 1000)
 
+    # Measure write+drain
+    t0 = time.perf_counter()
     writer.write(_pack_message(payload))
     await writer.drain()
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    # TX log success
+    try:
+        _PROVIDER_TX_LOG.info(orjson.dumps({
+            "transport": transport,
+            "direction": "out",
+            "status": "sent",
+            "elapsed_ms": round(elapsed_ms, 2),
+            "message": payload,
+        }).decode())
+    except Exception:
+        _PROVIDER_TX_LOG.info(
+            f"transport={transport} dir=out status=sent elapsed_ms={elapsed_ms:.2f} msg={payload!r}"
+        )
 
     # Try to peek an immediate ack without blocking too long (optional)
     try:
@@ -73,18 +94,61 @@ async def _send_over_stream(reader: asyncio.StreamReader, writer: asyncio.Stream
 async def _try_send_uds(payload: Dict[str, Any]) -> Tuple[bool, str]:
     if os.name != "posix":
         # UDS not supported on Windows
+        try:
+            _PROVIDER_TX_LOG.info(orjson.dumps({
+                "transport": "UDS",
+                "direction": "out",
+                "status": "failed",
+                "stage": "connect",
+                "reason": "not_supported",
+                "elapsed_ms": 0.0,
+                "message": payload,
+            }).decode())
+        except Exception:
+            _PROVIDER_TX_LOG.info(
+                f"transport=UDS dir=out status=failed stage=connect reason=not_supported elapsed_ms=0 msg={payload!r}"
+            )
         return False, "uds"
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(UDS_PATH), timeout=CONNECT_TIMEOUT_SEC)
     except Exception as e:
         logger.warning("UDS connect failed (%s): %s", UDS_PATH, e)
+        try:
+            _PROVIDER_TX_LOG.info(orjson.dumps({
+                "transport": "UDS",
+                "direction": "out",
+                "status": "failed",
+                "stage": "connect",
+                "error": str(e),
+                "message": payload,
+            }).decode())
+        except Exception:
+            _PROVIDER_TX_LOG.info(
+                f"transport=UDS dir=out status=failed stage=connect error={e!s} msg={payload!r}"
+            )
         return False, "uds"
 
     try:
+        t0 = time.perf_counter()
         await _send_over_stream(reader, writer, payload, transport="UDS")
         return True, "uds"
     except Exception as e:
         logger.error("UDS send failed: %s", e)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0 if 't0' in locals() else 0.0
+        try:
+            _PROVIDER_TX_LOG.info(orjson.dumps({
+                "transport": "UDS",
+                "direction": "out",
+                "status": "failed",
+                "stage": "send",
+                "elapsed_ms": round(elapsed_ms, 2),
+                "error": str(e),
+                "message": payload,
+            }).decode())
+        except Exception:
+            _PROVIDER_TX_LOG.info(
+                f"transport=UDS dir=out status=failed stage=send elapsed_ms={elapsed_ms:.2f} error={e!s} msg={payload!r}"
+            )
         return False, "uds"
     finally:
         try:
@@ -99,13 +163,42 @@ async def _try_send_tcp(payload: Dict[str, Any]) -> Tuple[bool, str]:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(TCP_HOST, TCP_PORT), timeout=CONNECT_TIMEOUT_SEC)
     except Exception as e:
         logger.error("TCP connect failed (%s:%s): %s", TCP_HOST, TCP_PORT, e)
+        try:
+            _PROVIDER_TX_LOG.info(orjson.dumps({
+                "transport": "TCP",
+                "direction": "out",
+                "status": "failed",
+                "stage": "connect",
+                "error": str(e),
+                "message": payload,
+            }).decode())
+        except Exception:
+            _PROVIDER_TX_LOG.info(
+                f"transport=TCP dir=out status=failed stage=connect error={e!s} msg={payload!r}"
+            )
         return False, "tcp"
 
     try:
+        t0 = time.perf_counter()
         await _send_over_stream(reader, writer, payload, transport="TCP")
         return True, "tcp"
     except Exception as e:
         logger.error("TCP send failed: %s", e)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0 if 't0' in locals() else 0.0
+        try:
+            _PROVIDER_TX_LOG.info(orjson.dumps({
+                "transport": "TCP",
+                "direction": "out",
+                "status": "failed",
+                "stage": "send",
+                "elapsed_ms": round(elapsed_ms, 2),
+                "error": str(e),
+                "message": payload,
+            }).decode())
+        except Exception:
+            _PROVIDER_TX_LOG.info(
+                f"transport=TCP dir=out status=failed stage=send elapsed_ms={elapsed_ms:.2f} error={e!s} msg={payload!r}"
+            )
         return False, "tcp"
     finally:
         try:

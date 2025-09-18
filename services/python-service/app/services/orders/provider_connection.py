@@ -435,10 +435,45 @@ class ProviderConnectionManager:
                 data = _pack(payload)
                 async with self._write_lock:
                     await self._connected.wait()
+                    # Measure send time (write + drain)
+                    t0 = time.perf_counter()
                     self.writer.write(data)
                     await self.writer.drain()
+                    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                    # TX log success
+                    try:
+                        _PROVIDER_TX_LOG.info(orjson.dumps({
+                            "transport": self.transport,
+                            "direction": "out",
+                            "status": "sent",
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "message": payload,
+                        }).decode())
+                    except Exception:
+                        _PROVIDER_TX_LOG.info(
+                            f"transport={self.transport} dir=out status=sent elapsed_ms={elapsed_ms:.2f} msg={payload!r}"
+                        )
             except Exception as e:
                 logger.error("send_loop error: %s", e)
+                # TX log failure
+                try:
+                    elapsed_ms = (time.perf_counter() - t0) * 1000.0 if 't0' in locals() else 0.0
+                except Exception:
+                    elapsed_ms = 0.0
+                try:
+                    _PROVIDER_TX_LOG.info(orjson.dumps({
+                        "transport": self.transport,
+                        "direction": "out",
+                        "status": "failed",
+                        "stage": "send",
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "error": str(e),
+                        "message": payload,
+                    }).decode())
+                except Exception:
+                    _PROVIDER_TX_LOG.info(
+                        f"transport={self.transport} dir=out status=failed stage=send elapsed_ms={elapsed_ms:.2f} error={e!s} msg={payload!r}"
+                    )
                 # Requeue once on failure if disconnected
                 try:
                     if not self._connected.is_set():
@@ -537,3 +572,30 @@ def _get_provider_rx_logger() -> logging.Logger:
 
 
 _PROVIDER_RX_LOG = _get_provider_rx_logger()
+
+# ------------- Dedicated TX file logger -------------
+def _get_provider_tx_logger() -> logging.Logger:
+    lg = logging.getLogger("provider.tx")
+    # Avoid adding duplicate handlers
+    has_handler = False
+    for h in lg.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "_provider_tx", False):
+            has_handler = True
+            break
+    if not has_handler:
+        try:
+            base_dir = Path(__file__).resolve().parents[3]  # .../services/python-service
+        except Exception:
+            base_dir = Path('.')
+        log_dir = base_dir / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / 'provider_tx.log'
+        fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+        fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        fh._provider_tx = True  # marker
+        lg.addHandler(fh)
+        lg.setLevel(logging.INFO)
+    return lg
+
+
+_PROVIDER_TX_LOG = _get_provider_tx_logger()
