@@ -1,7 +1,9 @@
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+import os
 
+import aiomysql
 from redis.exceptions import ResponseError
 
 from app.config.redis_config import redis_cluster
@@ -84,12 +86,46 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
             logger.error("fetch_user_config legacy hgetall failed for %s:%s: %s", user_type, user_id, e)
             data = {}
 
+    # If still missing critical fields, fallback to DB
+    needs_db = (not data) or (data.get("group") in (None, "")) or (data.get("leverage") in (None, "")) or (data.get("sending_orders") in (None, ""))
+    db_cfg: Dict[str, Any] = {}
+    if needs_db:
+        try:
+            db_cfg = await _fetch_user_config_from_db(user_type, user_id)
+        except Exception as dbe:
+            logger.error("fetch_user_config DB fallback failed for %s:%s: %s", user_type, user_id, dbe)
+            db_cfg = {}
+
     # If we used legacy, backfill into tagged to stabilize future reads
     if used_legacy and data:
         try:
             await redis_cluster.hset(tagged_key, mapping=data)
         except Exception as be:
             logger.warning("fetch_user_config backfill to tagged failed for %s:%s: %s", user_type, user_id, be)
+
+    # If DB returned values, backfill minimal fields into tagged key
+    if db_cfg:
+        try:
+            mapping = {}
+            if db_cfg.get("group") is not None:
+                mapping["group"] = db_cfg["group"]
+            if db_cfg.get("leverage") is not None:
+                mapping["leverage"] = str(db_cfg["leverage"])
+            if db_cfg.get("status") is not None:
+                mapping["status"] = str(db_cfg["status"])
+            if db_cfg.get("is_active") is not None:
+                mapping["is_active"] = str(db_cfg["is_active"])
+            if db_cfg.get("wallet_balance") is not None:
+                mapping["wallet_balance"] = str(db_cfg["wallet_balance"])
+            if db_cfg.get("sending_orders") is not None:
+                mapping["sending_orders"] = str(db_cfg["sending_orders"])
+            if mapping:
+                await redis_cluster.hset(tagged_key, mapping=mapping)
+            # Merge DB cfg into data for return
+            # Prefer Redis values when present, else DB
+            data = {**db_cfg, **data}
+        except Exception as be2:
+            logger.warning("fetch_user_config DB-backfill to tagged failed for %s:%s: %s", user_type, user_id, be2)
 
     # Normalize types safely
     def _f(v):
@@ -136,13 +172,10 @@ async def fetch_user_portfolio(user_type: str, user_id: str) -> Dict[str, Any]:
 
 
 async def fetch_group_data(symbol: str, group: str) -> Dict[str, Any]:
-    """Fetch group data for symbol with fallback to Standard."""
+    """Fetch group data for symbol for the requested group ONLY (no Standard fallback)."""
     try:
         k_user = f"groups:{{{group}}}:{symbol}"
-        k_std = f"groups:{{Standard}}:{symbol}"
         data = await redis_cluster.hgetall(k_user)
-        if not data:
-            data = await redis_cluster.hgetall(k_std)
         return data or {}
     except Exception as e:
         logger.error("fetch_group_data error for %s group=%s: %s", symbol, group, e)
@@ -351,6 +384,82 @@ async def place_order_atomic_or_fallback(
     except Exception as e:
         logger.error("place_order_atomic_or_fallback unexpected error: %s", e)
         return False, "exception"
+
+
+# ----------------- Minimal MySQL fallback utilities for user config -----------------
+_MYSQL_POOL: Optional[aiomysql.Pool] = None
+
+
+async def _get_mysql_pool() -> Optional[aiomysql.Pool]:
+    global _MYSQL_POOL
+    if _MYSQL_POOL and not getattr(_MYSQL_POOL, 'closed', False):
+        return _MYSQL_POOL
+
+    host = os.getenv("MYSQL_HOST") or os.getenv("DB_HOST") or "89.117.188.103" or "127.0.0.1"
+    port = int(os.getenv("MYSQL_PORT") or os.getenv("DB_PORT") or 3306) 
+    user = os.getenv("MYSQL_USER") or os.getenv("DB_USER") or os.getenv("DB_USERNAME") or "u436589492_demo_excution" or "u436589492_forex"
+    password = os.getenv("MYSQL_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("DB_PASS") or "Lkj@asd@123" or "Setupdev@1998"
+    db = os.getenv("MYSQL_DB") or os.getenv("DB_NAME") or "u436589492_demo_excution" or "u436589492_forex"
+
+    if not user or not password or not db:
+        logger.warning("MySQL credentials not set; skipping DB fallback for user config (order_repository)")
+        return None
+
+    try:
+        _MYSQL_POOL = await aiomysql.create_pool(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            db=db,
+            minsize=1,
+            maxsize=5,
+            autocommit=True,
+            charset="utf8mb4",
+        )
+        return _MYSQL_POOL
+    except Exception as e:
+        logger.error("Failed to create MySQL pool (order_repository): %s", e)
+        return None
+
+
+async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, Any]:
+    pool = await _get_mysql_pool()
+    if not pool:
+        return {}
+    table = "live_users" if str(user_type).lower() == "live" else "demo_users"
+    # Demo users may not have sending_orders column; handle dynamically
+    select_cols = "`group`, leverage, status, is_active, wallet_balance"
+    if table == "live_users":
+        select_cols += ", sending_orders"
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT {select_cols} FROM {table} WHERE id=%s LIMIT 1",
+                    (int(user_id),),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    return {}
+                # Unpack with optional sending_orders
+                if table == "live_users":
+                    grp, lev, status, is_active, wallet_balance, sending_orders = row
+                else:
+                    grp, lev, status, is_active, wallet_balance = row
+                    sending_orders = None
+                cfg: Dict[str, Any] = {
+                    "group": (grp or "Standard"),
+                    "leverage": float(lev or 0),
+                    "status": int(status) if status is not None else None,
+                    "is_active": int(is_active) if is_active is not None else None,
+                    "wallet_balance": float(wallet_balance or 0),
+                    "sending_orders": (sending_orders or None),
+                }
+                return cfg
+    except Exception as e:
+        logger.error("DB fetch user config (order_repository) failed for %s:%s: %s", user_type, user_id, e)
+        return {}
 
 
 async def _place_order_non_atomic(

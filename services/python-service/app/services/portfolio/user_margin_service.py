@@ -2,6 +2,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, List, Tuple, Set
 import aiomysql
+import aiohttp
 
 import asyncio
 from app.config.redis_config import redis_cluster
@@ -11,6 +12,10 @@ from app.services.portfolio.symbol_margin_aggregator import compute_symbol_margi
 logger = logging.getLogger(__name__)
 
 STRICT_MODE = os.getenv("PORTFOLIO_STRICT_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Internal provider endpoint (Node) for DB fallbacks
+INTERNAL_PROVIDER_URL = os.getenv("INTERNAL_PROVIDER_URL", "http://127.0.0.1:3000/api/internal/provider")
+INTERNAL_PROVIDER_SECRET = os.getenv("INTERNAL_PROVIDER_SECRET", "livefxhub")
 
 
 async def compute_user_total_margin(
@@ -376,11 +381,11 @@ async def _get_mysql_pool() -> Optional[aiomysql.Pool]:
         return _MYSQL_POOL
 
     # Support multiple env var names for flexibility
-    host = os.getenv("MYSQL_HOST") or os.getenv("DB_HOST") or "127.0.0.1"
-    port = int(os.getenv("MYSQL_PORT") or os.getenv("DB_PORT") or 3306)
-    user = os.getenv("MYSQL_USER") or os.getenv("DB_USER") or os.getenv("DB_USERNAME")
-    password = os.getenv("MYSQL_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("DB_PASS")
-    db = os.getenv("MYSQL_DB") or os.getenv("DB_NAME")
+    host = os.getenv("MYSQL_HOST") or os.getenv("DB_HOST") or "89.117.188.103" or "127.0.0.1"
+    port = int(os.getenv("MYSQL_PORT") or os.getenv("DB_PORT") or 3306) 
+    user = os.getenv("MYSQL_USER") or os.getenv("DB_USER") or os.getenv("DB_USERNAME") or "u436589492_demo_excution" or "u436589492_forex"
+    password = os.getenv("MYSQL_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("DB_PASS") or "Lkj@asd@123" or "Setupdev@1998"
+    db = os.getenv("MYSQL_DB") or os.getenv("DB_NAME") or "u436589492_demo_excution" or "u436589492_forex"
 
     if not user or not password or not db:
         logger.warning("MySQL credentials not set; skipping DB fallback for user config")
@@ -440,17 +445,30 @@ async def _fetch_group_data_batch(symbols: List[str], group: str) -> Dict[str, D
         grp_keys = [f"groups:{{{group}}}:{sym}" for sym in symbols]
         grp_results = await _gather_hgetall(grp_keys)
 
-        # Fallback indices
+        # Determine which symbols are missing from Redis for the requested group
         missing_idx = [i for i, data in enumerate(grp_results) if not data]
-        std_map: Dict[int, Dict[str, Any]] = {}
+        db_map: Dict[int, Dict[str, Any]] = {}
+        # For missing ones, fallback to DB via Node internal route (no Standard fallback)
         if missing_idx:
-            std_keys = [f"groups:{{Standard}}:{symbols[i]}" for i in missing_idx]
-            std_results = await _gather_hgetall(std_keys)
-            for i, res in zip(missing_idx, std_results):
-                std_map[i] = res
+            for i in missing_idx:
+                sym = symbols[i]
+                try:
+                    db_norm = await _fetch_group_from_db_via_node(group, sym)
+                except Exception:
+                    db_norm = {}
+                if db_norm:
+                    db_map[i] = db_norm
+                    # Best-effort: cache into Redis for future reads
+                    try:
+                        key = f"groups:{{{group}}}:{sym}"
+                        mapping = {k: str(v) for k, v in db_norm.items() if v is not None}
+                        if mapping:
+                            await redis_cluster.hset(key, mapping=mapping)
+                    except Exception:
+                        pass
 
         for i, sym in enumerate(symbols):
-            data = grp_results[i] if grp_results[i] else std_map.get(i, {})
+            data = grp_results[i] if grp_results[i] else db_map.get(i, {})
             if data:
                 # Parse fields
                 try:
@@ -489,6 +507,42 @@ async def _fetch_group_data_batch(symbols: List[str], group: str) -> Dict[str, D
     except Exception as e:
         logger.error(f"_fetch_group_data_batch error: {e}")
         return group_data
+
+
+async def _fetch_group_from_db_via_node(group: str, symbol: str) -> Dict[str, Any]:
+    """Fetch group config from Node internal DB route and normalize for margin usage."""
+    url = f"{INTERNAL_PROVIDER_URL}/groups/{group}/{symbol.upper()}"
+    timeout = aiohttp.ClientTimeout(total=3.0)
+    headers = {"X-Internal-Auth": INTERNAL_PROVIDER_SECRET} if INTERNAL_PROVIDER_SECRET else {}
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return {}
+                js = await resp.json()
+                raw = js.get("data") or {}
+                # Normalize to expected structure
+                norm: Dict[str, Any] = {}
+                for k in ("type", "contract_size", "profit", "spread", "spread_pip"):
+                    if raw.get(k) is not None:
+                        norm[k] = raw.get(k)
+                # Commission fields (optional)
+                if raw.get("commision") is not None or raw.get("commission") is not None:
+                    norm["commission_rate"] = raw.get("commision") if raw.get("commision") is not None else raw.get("commission")
+                if raw.get("commision_type") is not None:
+                    norm["commission_type"] = raw.get("commision_type")
+                if raw.get("commision_value_type") is not None:
+                    norm["commission_value_type"] = raw.get("commision_value_type")
+                # Margin from groups table doubles as crypto_margin_factor
+                if raw.get("margin") is not None:
+                    norm["group_margin"] = raw.get("margin")
+                    norm["crypto_margin_factor"] = raw.get("margin")
+                    # Keep original margin for parsers that expect it
+                    norm["margin"] = raw.get("margin")
+                return norm
+    except Exception as e:
+        logger.warning("DB fallback via Node failed for group=%s symbol=%s: %s", group, symbol, e)
+        return {}
 
 
 async def _fetch_prices_for_symbols(symbols: List[str]) -> Dict[str, Dict[str, float]]:

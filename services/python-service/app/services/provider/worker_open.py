@@ -13,6 +13,7 @@ from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.commission_calculator import compute_entry_commission
 from app.services.orders.order_repository import fetch_group_data, fetch_user_orders
+from app.services.groups.group_config_helper import get_group_config_with_fallback
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -214,14 +215,39 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
     spread_val = payload.get("spread") or er.get("spread")
     spread_pip_val = payload.get("spread_pip") or er.get("spread_pip")
     g = {}
+    # Resolve missing fields using Redis for the requested group; if still missing, DB fallback via Node
     if spread_val is None or spread_pip_val is None or payload.get("contract_size") is None or profit_currency is None:
-        # Fetch only if we are missing required fields
+        # Attempt Redis first (requested group only)
         g = await fetch_group_data(symbol, group)
-        spread_val = spread_val if spread_val is not None else g.get("spread")
-        spread_pip_val = spread_pip_val if spread_pip_val is not None else g.get("spread_pip")
-        # Fallback for profit currency from group hash when missing
+        if spread_val is None:
+            spread_val = g.get("spread")
+        if spread_pip_val is None:
+            spread_pip_val = g.get("spread_pip")
         if profit_currency is None and g:
             profit_currency = g.get("profit")
+
+        # If any required still missing, use DB fallback via Node internal API
+        needs_db = (
+            spread_val is None or spread_pip_val is None or (payload.get("contract_size") is None and (not g or g.get("contract_size") is None)) or profit_currency is None
+        )
+        if needs_db:
+            gfb = await get_group_config_with_fallback(group, symbol)
+            if gfb:
+                if spread_val is None:
+                    spread_val = gfb.get("spread")
+                if spread_pip_val is None:
+                    spread_pip_val = gfb.get("spread_pip")
+                if profit_currency is None:
+                    profit_currency = gfb.get("profit")
+                # Merge contract_size and crypto margin fields into g so downstream consumers use them
+                if not g:
+                    g = {}
+                if g.get("contract_size") is None and gfb.get("contract_size") is not None:
+                    g["contract_size"] = gfb.get("contract_size")
+                if g.get("crypto_margin_factor") is None and gfb.get("crypto_margin_factor") is not None:
+                    g["crypto_margin_factor"] = gfb.get("crypto_margin_factor")
+                if g.get("group_margin") is None and gfb.get("group_margin") is not None:
+                    g["group_margin"] = gfb.get("group_margin")
     # Compute half_spread = (spread * spread_pip) / 2
     half_spread = None
     try:

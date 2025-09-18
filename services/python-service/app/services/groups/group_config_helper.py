@@ -9,6 +9,8 @@ from app.config.redis_config import redis_cluster
 logger = logging.getLogger(__name__)
 
 INTERNAL_PROVIDER_URL = os.getenv("INTERNAL_PROVIDER_URL", "http://127.0.0.1:3000/api/internal/provider")
+# Optional shared secret for internal routes
+INTERNAL_PROVIDER_SECRET = os.getenv("INTERNAL_PROVIDER_SECRET", "livefxhub")
 
 
 async def _fetch_from_redis(group: str, symbol: str) -> Dict[str, Any]:
@@ -24,9 +26,10 @@ async def _fetch_from_redis(group: str, symbol: str) -> Dict[str, Any]:
 async def _fetch_from_db_via_node(group: str, symbol: str) -> Optional[Dict[str, Any]]:
     url = f"{INTERNAL_PROVIDER_URL}/groups/{group}/{symbol.upper()}"
     timeout = aiohttp.ClientTimeout(total=3.0)
+    headers = {"X-Internal-Auth": INTERNAL_PROVIDER_SECRET} if INTERNAL_PROVIDER_SECRET else {}
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
                     return None
                 js = await resp.json()
@@ -76,23 +79,17 @@ async def get_group_config_with_fallback(group: str, symbol: str) -> Dict[str, A
     Returns a dict possibly containing: type, contract_size, profit, spread, spread_pip,
     commission_rate/commission_type/commission_value_type, group_margin, crypto_margin_factor
     """
-    # 1) Try Redis (group, then Standard)
+    # 1) Try Redis for the requested group only
     data = await _fetch_from_redis(group, symbol)
-    if not data:
-        data = await _fetch_from_redis("Standard", symbol)
 
-    # 2) If required fields missing, fallback to DB via Node for (group, symbol), then (Standard, symbol)
-    required_missing = not data or (data.get("contract_size") is None or data.get("profit") is None or data.get("type") is None)
+    # 2) If required fields missing, fallback to DB via Node for (group, symbol) ONLY
+    required_missing = (not data) or (data.get("contract_size") is None or data.get("profit") is None or data.get("type") is None)
     if required_missing:
         db = await _fetch_from_db_via_node(group, symbol)
-        if not db:
-            db = await _fetch_from_db_via_node("Standard", symbol)
         if db:
             norm = _normalize_group_dict(db)
-            await _cache_into_redis(db.get("name", group) or group, symbol, norm)
-            # If Standard returned and original group missing, also cache under requested group for next time
-            if (db.get("name") or "").strip() != str(group):
-                await _cache_into_redis(group, symbol, norm)
+            # Cache back under the requested group for future stability
+            await _cache_into_redis(group, symbol, norm)
             data = {**data, **norm}
 
     return data or {}

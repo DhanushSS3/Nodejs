@@ -15,6 +15,7 @@ from app.services.orders.commission_calculator import compute_exit_commission
 from app.services.portfolio.conversion_utils import convert_to_usd
 from app.services.orders.service_provider_client import send_provider_order
 from app.services.orders.order_registry import add_lifecycle_id
+from app.services.groups.group_config_helper import get_group_config_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,20 @@ class OrderCloser:
         else:
             return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
 
-        # Resolve group fields
+        # Resolve group fields (Redis-first for requested group; DB fallback via Node if missing)
         g = await fetch_group_data(symbol, group)
+        if not g or g.get("contract_size") is None or g.get("profit") is None or g.get("type") is None:
+            try:
+                gfb = await get_group_config_with_fallback(group, symbol)
+            except Exception:
+                gfb = {}
+            if gfb:
+                # Merge missing fields
+                if not g:
+                    g = {}
+                for k in ("contract_size", "profit", "type", "spread", "spread_pip", "commission_rate", "commission_type", "commission_value_type", "group_margin", "crypto_margin_factor"):
+                    if g.get(k) is None and gfb.get(k) is not None:
+                        g[k] = gfb.get(k)
         contract_size = _safe_float(g.get("contract_size"))
         profit_currency = g.get("profit") or None
         instrument_type = int(g.get("type") or 1)
@@ -514,6 +527,17 @@ class OrderCloser:
         cfg = await fetch_user_config(user_type, user_id)
         group = cfg.get("group") or "Standard"
         g = await fetch_group_data(symbol, group)
+        if not g or g.get("contract_size") is None or g.get("profit") is None:
+            try:
+                gfb = await get_group_config_with_fallback(group, symbol)
+            except Exception:
+                gfb = {}
+            if gfb:
+                if not g:
+                    g = {}
+                for k in ("contract_size", "profit", "spread", "spread_pip", "commission_rate", "commission_type", "commission_value_type", "group_margin", "crypto_margin_factor", "type"):
+                    if g.get(k) is None and gfb.get(k) is not None:
+                        g[k] = gfb.get(k)
         contract_size = _safe_float(g.get("contract_size"))
         profit_currency = g.get("profit") or None
         commission_rate = _safe_float(g.get("commission_rate") or g.get("commission") or g.get("commision"))
