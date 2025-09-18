@@ -619,4 +619,81 @@ router.post('/stoploss/cancel', authenticateJWT, ordersController.cancelStopLoss
  */
 router.post('/takeprofit/cancel', authenticateJWT, ordersController.cancelTakeProfit);
 
+// GET /api/orders/closed
+/**
+ * @swagger
+ * /api/orders/closed:
+ *   get:
+ *     summary: Get authenticated user's CLOSED orders (latest to oldest)
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number (1-based)
+ *       - in: query
+ *         name: page_size
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page (max 100)
+ *     responses:
+ *       200:
+ *         description: Array of closed orders
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   order_id:
+ *                     type: string
+ *                   order_company_name:
+ *                     type: string
+ *                   order_type:
+ *                     type: string
+ *                   order_quantity:
+ *                     type: string
+ *                   order_price:
+ *                     type: string
+ *                   close_price:
+ *                     type: string
+ *                   net_profit:
+ *                     type: string
+ *                   margin:
+ *                     type: string
+ *                   contract_value:
+ *                     type: string
+ *                   stop_loss:
+ *                     type: string
+ *                   take_profit:
+ *                     type: string
+ *                   order_user_id:
+ *                     type: integer
+ *                   order_status:
+ *                     type: string
+ *                     example: CLOSED
+ *                   commission:
+ *                     type: string
+ *                   swap:
+ *                     type: string
+ *                   close_message:
+ *                     type: string
+ *                   created_at:
+ *                     type: string
+ *                     format: date-time
+ *                   updated_at:
+ *                     type: string
+ *                     format: date-time
+ */
+router.get('/closed', authenticateJWT, ordersController.getClosedOrders);
+
 module.exports = router;

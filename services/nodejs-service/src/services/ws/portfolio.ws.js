@@ -75,6 +75,7 @@ async function fetchOrdersFromDB(userType, userId) {
       order_status: r.order_status,
       commission: r.commission?.toString?.() ?? null,
       swap: r.swap?.toString?.() ?? null,
+      close_message: r.close_message,
       created_at: r.created_at?.toISOString?.() ?? undefined,
     };
     if (String(r.order_status).toUpperCase() === 'OPEN') open.push(base);

@@ -2118,4 +2118,63 @@ async function cancelPendingOrder(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit, cancelPendingOrder, modifyPendingOrder };
+async function getClosedOrders(req, res) {
+  const operationId = `closed_orders_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    // JWT user
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    if (!tokenUserId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+    // Block inactive users
+    const userStatus = user.status;
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ success: false, message: 'User status is not allowed' });
+    }
+    // Resolve account type from JWT
+    const userType = String(user.account_type || user.user_type || 'live').toLowerCase();
+    const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+
+    // Pagination
+    const page = Math.max(1, parseInt(req.query.page || req.body?.page || '1', 10));
+    const pageSizeRaw = parseInt(req.query.page_size || req.query.limit || req.body?.page_size || req.body?.limit || '20', 10);
+    const pageSize = Math.min(Math.max(1, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 20), 100);
+    const offset = (page - 1) * pageSize;
+
+    const { count, rows } = await OrderModel.findAndCountAll({
+      where: { order_user_id: parseInt(tokenUserId, 10), order_status: 'CLOSED' },
+      order: [['updated_at', 'DESC']],
+      offset,
+      limit: pageSize,
+    });
+
+    const data = rows.map((r) => ({
+      order_id: r.order_id,
+      order_company_name: String(r.symbol).toUpperCase(),
+      order_type: r.order_type,
+      order_quantity: r.order_quantity?.toString?.() ?? String(r.order_quantity ?? ''),
+      order_price: r.order_price?.toString?.() ?? String(r.order_price ?? ''),
+      close_price: r.close_price?.toString?.() ?? null,
+      net_profit: r.net_profit?.toString?.() ?? null,
+      margin: r.margin?.toString?.() ?? undefined,
+      contract_value: r.contract_value?.toString?.() ?? undefined,
+      stop_loss: r.stop_loss?.toString?.() ?? null,
+      take_profit: r.take_profit?.toString?.() ?? null,
+      order_user_id: r.order_user_id,
+      order_status: r.order_status,
+      commission: r.commission?.toString?.() ?? null,
+      swap: r.swap?.toString?.() ?? null,
+      close_message: r.close_message ?? null,
+      created_at: r.created_at?.toISOString?.() ?? undefined,
+      updated_at: r.updated_at?.toISOString?.() ?? undefined,
+    }));
+
+    return res.status(200).json(data);
+  } catch (error) {
+    logger.error('getClosedOrders internal error', { error: error.message, operationId });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit, cancelPendingOrder, modifyPendingOrder, getClosedOrders };
