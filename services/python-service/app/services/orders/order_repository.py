@@ -77,8 +77,15 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     try:
         cluster_info = await redis_cluster.cluster_info()
         cluster_state = cluster_info.get('cluster_state', 'unknown')
+        cluster_size = cluster_info.get('cluster_size', 0)
+        # Ensure cluster_size is an integer
+        try:
+            cluster_size = int(cluster_size) if cluster_size is not None else 0
+        except (ValueError, TypeError):
+            cluster_size = 0
+            
         _TIMING_LOG.info('{"component":"redis_health_check","user_type":"%s","user_id":"%s","cluster_state":"%s","cluster_size":%d}',
-                        user_type, user_id, cluster_state, cluster_info.get('cluster_size', 0))
+                        user_type, user_id, cluster_state, cluster_size)
         
         if cluster_state != 'ok':
             _TIMING_LOG.info('{"component":"redis_health_warning","user_type":"%s","user_id":"%s","cluster_state":"%s","issue":"cluster_not_ok"}',

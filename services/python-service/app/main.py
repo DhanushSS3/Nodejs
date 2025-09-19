@@ -63,8 +63,9 @@ async def lifespan(app: FastAPI):
     logger.info("Provider connection manager started")
 
     # Start provider pending monitor (continuous margin checks and cancel on insufficient margin)
+    pending_monitor_task = None
     try:
-        start_provider_pending_monitor()
+        pending_monitor_task = asyncio.create_task(start_provider_pending_monitor())
         logger.info("Provider pending monitor started")
     except Exception as e:
         logger.error(f"Failed to start provider pending monitor: {e}")
@@ -88,6 +89,14 @@ async def lifespan(app: FastAPI):
             await provider_task
         except Exception:
             pass
+        
+        # Cancel pending monitor task
+        if pending_monitor_task is not None:
+            pending_monitor_task.cancel()
+            try:
+                await pending_monitor_task
+            except Exception:
+                pass
     except Exception:
         pass
 
