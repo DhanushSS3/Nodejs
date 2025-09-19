@@ -73,14 +73,32 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     tagged_key = f"user:{{{user_type}:{user_id}}}:config"
     legacy_key = f"user:{user_type}:{user_id}:config"
     
+    # Check Redis cluster health before attempting operations
+    try:
+        cluster_info = await redis_cluster.cluster_info()
+        cluster_state = cluster_info.get('cluster_state', 'unknown')
+        _TIMING_LOG.info('{"component":"redis_health_check","user_type":"%s","user_id":"%s","cluster_state":"%s","cluster_size":%d}',
+                        user_type, user_id, cluster_state, cluster_info.get('cluster_size', 0))
+        
+        if cluster_state != 'ok':
+            _TIMING_LOG.info('{"component":"redis_health_warning","user_type":"%s","user_id":"%s","cluster_state":"%s","issue":"cluster_not_ok"}',
+                            user_type, user_id, cluster_state)
+    except Exception as health_err:
+        _TIMING_LOG.info('{"component":"redis_health_check","user_type":"%s","user_id":"%s","success":false,"error":"%s"}',
+                        user_type, user_id, str(health_err))
+    
     
     # Try tagged key first
     data = {}
     used_legacy = False
     try:
         data = await redis_cluster.hgetall(tagged_key)
+        _TIMING_LOG.info('{"component":"redis_tagged_attempt","user_type":"%s","user_id":"%s","tagged_key":"%s","success":true,"data_found":%s,"keys_count":%d}',
+                        user_type, user_id, tagged_key, bool(data), len(data) if data else 0)
     except Exception as e:
         logger.error("fetch_user_config tagged hgetall failed for %s:%s: %s", user_type, user_id, e)
+        _TIMING_LOG.info('{"component":"redis_tagged_attempt","user_type":"%s","user_id":"%s","tagged_key":"%s","success":false,"error":"%s"}',
+                        user_type, user_id, tagged_key, str(e))
         data = {}
     # Fallback to legacy key if empty
     if not data:
@@ -88,8 +106,15 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
             data = await redis_cluster.hgetall(legacy_key)
             if data:
                 used_legacy = True
+                _TIMING_LOG.info('{"component":"redis_legacy_fallback","user_type":"%s","user_id":"%s","legacy_key":"%s","success":true,"keys_count":%d}',
+                                user_type, user_id, legacy_key, len(data))
+            else:
+                _TIMING_LOG.info('{"component":"redis_legacy_fallback","user_type":"%s","user_id":"%s","legacy_key":"%s","success":true,"data_found":false}',
+                                user_type, user_id, legacy_key)
         except Exception as e:
             logger.error("fetch_user_config legacy hgetall failed for %s:%s: %s", user_type, user_id, e)
+            _TIMING_LOG.info('{"component":"redis_legacy_fallback","user_type":"%s","user_id":"%s","legacy_key":"%s","success":false,"error":"%s"}',
+                            user_type, user_id, legacy_key, str(e))
             data = {}
 
     # If still missing critical fields, fallback to DB
@@ -150,11 +175,19 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
                 mapping["sending_orders"] = str(db_cfg["sending_orders"])
             if mapping:
                 await redis_cluster.hset(tagged_key, mapping=mapping)
-            # Merge DB cfg into data for return
-            # Prefer Redis values when present, else DB
-            data = {**db_cfg, **data}
         except Exception as be2:
             logger.warning("fetch_user_config DB-backfill to tagged failed for %s:%s: %s", user_type, user_id, be2)
+        
+        # Merge DB cfg into data for return (ALWAYS do this if we have DB data)
+        # Prefer Redis values when present, else DB
+        data_before_merge = dict(data) if data else {}
+        data = {**db_cfg, **data}
+        _TIMING_LOG.info('{"component":"data_merge","user_type":"%s","user_id":"%s","redis_keys":[%s],"db_keys":[%s],"merged_keys":[%s],"leverage_source":"%s"}',
+                        user_type, user_id, 
+                        ','.join(f'"{k}"' for k in data_before_merge.keys()),
+                        ','.join(f'"{k}"' for k in db_cfg.keys()),
+                        ','.join(f'"{k}"' for k in data.keys()),
+                        "redis" if "leverage" in data_before_merge else "db")
 
     # Normalize types safely
     def _f(v):
@@ -181,13 +214,22 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
                     status_val = 1
 
     # Create final config using merged data
+    # Note: data should contain merged Redis + DB data at this point
     cfg = {
         "wallet_balance": _f(data.get("wallet_balance")) if data else None,
         "leverage": _f(data.get("leverage")) if data else None,
-        "group": (data.get("group") or "Standard") if data else "Standard",
+        "group": data.get("group") or "Standard",
         "status": status_val,
-        "sending_orders": data.get("sending_orders") if data else None,
+        "sending_orders": data.get("sending_orders"),
     }
+    
+    # Debug final config creation
+    _TIMING_LOG.info('{"component":"final_config","user_type":"%s","user_id":"%s","data_exists":%s,"raw_leverage":"%s","final_leverage":%s,"data_keys":[%s]}',
+                    user_type, user_id, bool(data), 
+                    data.get("leverage") if data else "NO_DATA", 
+                    cfg.get("leverage"),
+                    ','.join(f'"{k}"' for k in data.keys()) if data else "")
+    
     return cfg
 
 
