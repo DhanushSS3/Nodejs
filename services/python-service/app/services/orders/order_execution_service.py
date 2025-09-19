@@ -153,10 +153,18 @@ class OrderExecutor:
         t_user_config = time.perf_counter()
         cfg = await fetch_user_config(user_type, user_id)
         timings_ms["fetch_user_config_ms"] = int((time.perf_counter() - t_user_config) * 1000)
+        
+        # Debug logging for leverage issue
+        logger.info("DEBUG: User config for %s:%s - leverage: %s (type: %s), full config: %s", 
+                   user_type, user_id, cfg.get("leverage"), type(cfg.get("leverage")), cfg)
+        
         if int(cfg.get("status") or 0) == 0:
             return {"ok": False, "reason": "user_not_verified"}
         leverage = float(cfg.get("leverage") or 0.0)
+        logger.info("DEBUG: Converted leverage for %s:%s - value: %s (type: %s)", 
+                   user_type, user_id, leverage, type(leverage))
         if leverage <= 0:
+            logger.error("DEBUG: Invalid leverage for %s:%s - leverage: %s <= 0", user_type, user_id, leverage)
             return {"ok": False, "reason": "invalid_leverage"}
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()

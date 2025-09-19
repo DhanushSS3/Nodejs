@@ -90,23 +90,24 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
             data = {}
 
     # If still missing critical fields, fallback to DB
-    # Enhanced validation: check for None, empty string, "0", or invalid values
-    def _is_invalid_field(value):
-        if value is None or value == "":
+    # Enhanced validation: check for None, empty string, or invalid values
+    def _is_invalid_string_field(value):
+        return value is None or str(value).strip() == ""
+    
+    def _is_invalid_leverage(value):
+        if value is None or str(value).strip() == "":
             return True
         try:
-            # For leverage, also check if it's 0 or "0"
-            if str(value).strip() in ("0", "0.0"):
-                return True
-            return False
-        except:
+            leverage_val = float(value)
+            return leverage_val <= 0
+        except (TypeError, ValueError):
             return True
     
     needs_db = (
         (not data) or 
-        _is_invalid_field(data.get("group")) or 
-        _is_invalid_field(data.get("leverage")) or 
-        _is_invalid_field(data.get("sending_orders"))
+        _is_invalid_string_field(data.get("group")) or 
+        _is_invalid_leverage(data.get("leverage")) or 
+        _is_invalid_string_field(data.get("sending_orders"))
     )
     db_cfg: Dict[str, Any] = {}
     if needs_db:
