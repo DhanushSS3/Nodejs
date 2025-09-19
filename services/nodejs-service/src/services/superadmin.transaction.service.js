@@ -83,11 +83,12 @@ class SuperadminTransactionService {
     }
 
     const transaction = await sequelize.transaction();
-    
+
     try {
       // Get user model and find user
       const UserModel = this.getUserModel(userType);
-      const user = await UserModel.findByPk(userId, { transaction });
+      // Lock the row for update to serialize concurrent balance updates
+      const user = await UserModel.findByPk(userId, { transaction, lock: transaction.LOCK.UPDATE });
       
       if (!user) {
         throw new Error(`${userType} user not found with ID: ${userId}`);
@@ -130,8 +131,18 @@ class SuperadminTransactionService {
       // Commit database transaction
       await transaction.commit();
 
-      // Update Redis cache (non-blocking)
-      await this.updateCachedBalance(userId, userType, balanceAfter);
+      // Update Redis caches after commit (best-effort)
+      try {
+        // 1) Short TTL balance cache
+        await this.updateCachedBalance(userId, userType, balanceAfter);
+      } catch (_) {}
+      try {
+        // 2) Primary user config in Redis used by Python services
+        const key = `user:{${String(userType)}:${String(userId)}}:config`;
+        await redisCluster.hset(key, { wallet_balance: String(balanceAfter) });
+      } catch (e2) {
+        logger.warn('Failed to update Redis user config after deposit', { error: e2.message, userId, userType });
+      }
 
       logger.info(`Deposit processed successfully: ${userType} user ${userId}, amount: ${depositAmount}, new balance: ${balanceAfter}`);
 
@@ -181,11 +192,12 @@ class SuperadminTransactionService {
     }
 
     const transaction = await sequelize.transaction();
-    
+
     try {
       // Get user model and find user
       const UserModel = this.getUserModel(userType);
-      const user = await UserModel.findByPk(userId, { transaction });
+      // Lock the row for update to serialize concurrent balance updates
+      const user = await UserModel.findByPk(userId, { transaction, lock: transaction.LOCK.UPDATE });
       
       if (!user) {
         throw new Error(`${userType} user not found with ID: ${userId}`);
@@ -234,8 +246,16 @@ class SuperadminTransactionService {
       // Commit database transaction
       await transaction.commit();
 
-      // Update Redis cache (non-blocking)
-      await this.updateCachedBalance(userId, userType, balanceAfter);
+      // Update Redis caches after commit (best-effort)
+      try {
+        await this.updateCachedBalance(userId, userType, balanceAfter);
+      } catch (_) {}
+      try {
+        const key = `user:{${String(userType)}:${String(userId)}}:config`;
+        await redisCluster.hset(key, { wallet_balance: String(balanceAfter) });
+      } catch (e2) {
+        logger.warn('Failed to update Redis user config after withdrawal', { error: e2.message, userId, userType });
+      }
 
       logger.info(`Withdrawal processed successfully: ${userType} user ${userId}, amount: ${withdrawalAmount}, new balance: ${balanceAfter}`);
 

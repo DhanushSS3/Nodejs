@@ -3,6 +3,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
+import asyncio
 import orjson
 
 from app.services.price_utils import get_execution_price
@@ -10,6 +11,7 @@ from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.orders.commission_calculator import compute_entry_commission
 from app.services.groups.group_config_helper import get_group_config_with_fallback
 from app.services.portfolio.user_margin_service import compute_user_total_margin
+from app.config.redis_config import redis_cluster
 from app.services.orders.order_repository import (
     fetch_user_config,
     fetch_user_portfolio,
@@ -304,55 +306,136 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 9) Recompute overall used margin including new order
-        existing_orders = await fetch_user_orders(user_type, user_id)
-        new_order_for_calc = {
-            "order_id": order_id,
-            "symbol": symbol,
-            "order_type": order_type,
-            "order_quantity": order_qty,
-            "order_status": "QUEUED" if flow == "provider" else "OPEN",
-            "execution_status": "QUEUED" if flow == "provider" else "EXECUTED",
-        }
-        orders_for_calc: List[Dict[str, Any]] = existing_orders + [new_order_for_calc]
-        
-        # Calculate both executed and total margins
-        executed_margin, total_margin_with_queued, meta = await compute_user_total_margin(
-            user_type=user_type,
-            user_id=user_id,
-            orders=orders_for_calc,
-            prices_cache=None,
-            strict=True,
-            include_queued=True,
-        )
-        
-        if total_margin_with_queued is None:
-            result = {"ok": False, "reason": "overall_margin_failed", "meta": meta}
-            if idem_key:
-                await save_idempotency_result(idem_key, result)
-            return result
+        # 9) Recompute overall used margin including new order (with lightweight per-user lock)
+        lock_key = f"lock:user_margin:{user_type}:{user_id}"
+        token = f"exec-{int(time.time()*1000)}-{order_id}"
+        locked = False
+        for _ in range(4):  # ~80ms worst-case
+            try:
+                ok = await redis_cluster.set(lock_key, token, ex=5, nx=True)
+                locked = bool(ok)
+            except Exception:
+                locked = True  # proceed best-effort if Redis unavailable
+            if locked:
+                break
+            try:
+                await asyncio.sleep(0.02)
+            except Exception:
+                pass
 
-        # 10) Compute notional contract value (instrument-dependent; generic formula)
+        # Placement results to optionally reuse after lock release
+        ok_place: Optional[bool] = None
+        reason: str = ""
+
         try:
-            contract_value = float(contract_size) * float(order_qty)
-        except Exception:
-            contract_value = None
+            existing_orders = await fetch_user_orders(user_type, user_id)
+            new_order_for_calc = {
+                "order_id": order_id,
+                "symbol": symbol,
+                "order_type": order_type,
+                "order_quantity": order_qty,
+                "order_status": "QUEUED" if flow == "provider" else "OPEN",
+                "execution_status": "QUEUED" if flow == "provider" else "EXECUTED",
+            }
+            orders_for_calc: List[Dict[str, Any]] = existing_orders + [new_order_for_calc]
 
-        # 11) Prepare order fields for Redis
-        now_ms = int(time.time() * 1000)
-        execution_status = "EXECUTED" if flow == "local" else "QUEUED"
-        displayed_status = "OPEN" if flow == "local" else "QUEUED"
-        # Commission entry for local execution (charged on entry for types [0,1])
-        commission_entry = None
-        if flow == "local":
-            commission_entry = compute_entry_commission(
-                commission_rate=commission_rate,
-                commission_type=commission_type,
-                commission_value_type=commission_value_type,
-                quantity=order_qty,
-                order_price=float(exec_price),
-                contract_size=contract_size,
+            executed_margin, total_margin_with_queued, meta = await compute_user_total_margin(
+                user_type=user_type,
+                user_id=user_id,
+                orders=orders_for_calc,
+                prices_cache=None,
+                strict=True,
+                include_queued=True,
             )
+
+            if total_margin_with_queued is None:
+                result = {"ok": False, "reason": "overall_margin_failed", "meta": meta}
+                if idem_key:
+                    await save_idempotency_result(idem_key, result)
+                return result
+
+            # 10) Compute notional contract value (instrument-dependent; generic formula)
+            try:
+                contract_value = float(contract_size) * float(order_qty)
+            except Exception:
+                contract_value = None
+
+            # 11) Prepare order fields for Redis under lock
+            now_ms = int(time.time() * 1000)
+            execution_status = "EXECUTED" if flow == "local" else "QUEUED"
+            displayed_status = "OPEN" if flow == "local" else "QUEUED"
+            # Commission entry for local execution (charged on entry for types [0,1])
+            commission_entry = None
+            if flow == "local":
+                commission_entry = compute_entry_commission(
+                    commission_rate=commission_rate,
+                    commission_type=commission_type,
+                    commission_value_type=commission_value_type,
+                    quantity=order_qty,
+                    order_price=float(exec_price),
+                    contract_size=contract_size,
+                )
+
+            order_fields: Dict[str, Any] = {
+                "order_id": order_id,
+                "symbol": symbol,
+                "order_type": order_type,
+                "order_status": displayed_status,
+                "status": frontend_status or "OPEN",
+                "order_price": exec_price,
+                "order_quantity": order_qty,
+                # For provider flow we reserve margin; for local immediate execution we set final margin
+                **({"margin": float(margin_usd)} if flow == "local" else {}),
+                **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
+                "contract_value": float(contract_value) if contract_value is not None else None,
+                "execution": flow,
+                "execution_status": execution_status,
+                "created_at": now_ms,
+                # Persist commission config snapshot for the order (immutable at open)
+                **({"commission_rate": commission_rate} if commission_rate is not None else {}),
+                **({"commission_type": commission_type} if commission_type is not None else {}),
+                **({"commission_value_type": commission_value_type} if commission_value_type is not None else {}),
+                **({"group_margin": group_margin_cfg} if group_margin_cfg is not None else {}),
+                **({"commission_entry": commission_entry} if commission_entry is not None else {}),
+                **({"commission": commission_entry} if (commission_entry is not None and flow == "local") else {}),
+            }
+            if pricing_meta.get("pricing"):
+                price_info = pricing_meta["pricing"]
+                order_fields.update({
+                    "raw_price": price_info.get("raw_price"),
+                    "half_spread": price_info.get("half_spread"),
+                    "group": price_info.get("group"),
+                })
+
+            # 12) Place order in Redis (atomic Lua or fallback) UNDER LOCK
+            ok_place, reason = await place_order_atomic_or_fallback(
+                user_type=user_type,
+                user_id=user_id,
+                order_id=order_id,
+                symbol=symbol,
+                order_fields=order_fields,
+                single_order_margin_usd=float(margin_usd),
+                recomputed_user_used_margin_executed=float(executed_margin),
+                recomputed_user_used_margin_all=float(total_margin_with_queued),
+            )
+            if not ok_place:
+                result = {"ok": False, "reason": f"place_order_failed:{reason}"}
+                if idem_key:
+                    await save_idempotency_result(idem_key, result)
+                return result
+        finally:
+            # Safe release: only delete if value matches token
+            try:
+                lua = """
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                else
+                    return 0
+                end
+                """
+                await redis_cluster.eval(lua, 1, lock_key, token)
+            except Exception:
+                pass
 
         # Log calculated local execution into orders_calculated.log
         if flow == "local":
@@ -382,36 +465,7 @@ class OrderExecutor:
             except Exception:
                 pass
 
-        order_fields: Dict[str, Any] = {
-            "order_id": order_id,
-            "symbol": symbol,
-            "order_type": order_type,
-            "order_status": displayed_status,
-            "status": frontend_status or "OPEN",
-            "order_price": exec_price,
-            "order_quantity": order_qty,
-            # For provider flow we reserve margin; for local immediate execution we set final margin
-            **({"margin": float(margin_usd)} if flow == "local" else {}),
-            **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
-            "contract_value": float(contract_value) if contract_value is not None else None,
-            "execution": flow,
-            "execution_status": execution_status,
-            "created_at": now_ms,
-            # Persist commission config snapshot for the order (immutable at open)
-            **({"commission_rate": commission_rate} if commission_rate is not None else {}),
-            **({"commission_type": commission_type} if commission_type is not None else {}),
-            **({"commission_value_type": commission_value_type} if commission_value_type is not None else {}),
-            **({"group_margin": group_margin_cfg} if group_margin_cfg is not None else {}),
-            **({"commission_entry": commission_entry} if commission_entry is not None else {}),
-            **({"commission": commission_entry} if (commission_entry is not None and flow == "local") else {}),
-        }
-        if pricing_meta.get("pricing"):
-            price_info = pricing_meta["pricing"]
-            order_fields.update({
-                "raw_price": price_info.get("raw_price"),
-                "half_spread": price_info.get("half_spread"),
-                "group": price_info.get("group"),
-            })
+        # order_fields already prepared under lock for placement
 
         # 12) Provider async send payload (API layer will dispatch in background)
         provider_send_payload = None
@@ -430,17 +484,19 @@ class OrderExecutor:
                 "ts": now_ms,
             }
 
-        # 13) Place order in Redis (atomic Lua or fallback), update used_margin
-        ok_place, reason = await place_order_atomic_or_fallback(
-            user_type=user_type,
-            user_id=user_id,
-            order_id=order_id,
-            symbol=symbol,
-            order_fields=order_fields,
-            single_order_margin_usd=float(margin_usd),
-            recomputed_user_used_margin_executed=float(executed_margin),
-            recomputed_user_used_margin_all=float(total_margin_with_queued),
-        )
+        # 13) Place order (already executed under lock above). Guard to avoid double placement in case the
+        #     lock acquisition failed and we skipped the inner placement due to Redis issues.
+        if ok_place is None:
+            ok_place, reason = await place_order_atomic_or_fallback(
+                user_type=user_type,
+                user_id=user_id,
+                order_id=order_id,
+                symbol=symbol,
+                order_fields=order_fields,
+                single_order_margin_usd=float(margin_usd),
+                recomputed_user_used_margin_executed=float(executed_margin),
+                recomputed_user_used_margin_all=float(total_margin_with_queued),
+            )
         if not ok_place:
             result = {"ok": False, "reason": f"place_order_failed:{reason}"}
             if idem_key:

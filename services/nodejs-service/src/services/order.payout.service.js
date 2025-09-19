@@ -4,6 +4,7 @@ const { LiveUser, DemoUser } = require('../models');
 const UserTransaction = require('../models/userTransaction.model');
 const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
+const { redisCluster } = require('../../config/redis');
 
 function getUserModel(userType) {
   return userType === 'live' ? LiveUser : DemoUser;
@@ -46,7 +47,7 @@ async function applyOrderClosePayout({
 
   const UserModel = getUserModel(String(userType));
 
-  return await sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async (t) => {
+  const txResult = await sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async (t) => {
     // Lock the user row for update to serialize wallet updates
     const user = await UserModel.findByPk(parseInt(String(userId), 10), {
       transaction: t,
@@ -139,6 +140,16 @@ async function applyOrderClosePayout({
 
     return { ok: true, balance_before: balanceBefore, balance_after: finalBalance };
   });
+
+  // After successful commit, sync Redis user config wallet_balance (best-effort)
+  try {
+    const key = `user:{${String(userType)}:${String(userId)}}:config`;
+    await redisCluster.hset(key, { wallet_balance: String(txResult.balance_after) });
+  } catch (e) {
+    logger.warn('Failed to sync Redis wallet_balance after payout', { error: e.message, userId: String(userId), userType: String(userType) });
+  }
+
+  return txResult;
 }
 
 module.exports = { applyOrderClosePayout };
