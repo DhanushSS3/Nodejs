@@ -54,13 +54,13 @@ class StartupCacheService {
   }
 
   /**
-   * Refresh all caches
+   * Refresh all caches (safe - no service interruption)
    */
   async refreshCaches() {
     try {
-      logger.info('Refreshing all caches...');
+      logger.info('Refreshing all caches (safe mode)...');
       
-      // Refresh user cache
+      // Safe refresh user cache (no clearing)
       await redisUserCache.populateCache();
       
       // Refresh groups cache
@@ -69,10 +69,34 @@ class StartupCacheService {
       logger.info('All caches refreshed successfully');
       return {
         success: true,
-        message: 'All caches refreshed successfully'
+        message: 'All caches refreshed successfully (safe mode)'
       };
     } catch (error) {
       logger.error('Failed to refresh caches:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Force full cache rebuild (admin only - causes brief service interruption)
+   */
+  async forceFullRebuild() {
+    try {
+      logger.warn('ADMIN ACTION: Force full cache rebuild initiated');
+      
+      // Force full rebuild of user cache
+      await redisUserCache.forceFullRebuild();
+      
+      // Refresh groups cache
+      await groupsCacheService.syncAllGroupsToRedis();
+      
+      logger.info('Force full cache rebuild completed');
+      return {
+        success: true,
+        message: 'Force full cache rebuild completed successfully'
+      };
+    } catch (error) {
+      logger.error('Failed to force full cache rebuild:', error);
       throw error;
     }
   }

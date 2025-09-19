@@ -90,11 +90,32 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
             data = {}
 
     # If still missing critical fields, fallback to DB
-    needs_db = (not data) or (data.get("group") in (None, "")) or (data.get("leverage") in (None, "")) or (data.get("sending_orders") in (None, ""))
+    # Enhanced validation: check for None, empty string, "0", or invalid values
+    def _is_invalid_field(value):
+        if value is None or value == "":
+            return True
+        try:
+            # For leverage, also check if it's 0 or "0"
+            if str(value).strip() in ("0", "0.0"):
+                return True
+            return False
+        except:
+            return True
+    
+    needs_db = (
+        (not data) or 
+        _is_invalid_field(data.get("group")) or 
+        _is_invalid_field(data.get("leverage")) or 
+        _is_invalid_field(data.get("sending_orders"))
+    )
     db_cfg: Dict[str, Any] = {}
     if needs_db:
+        logger.warning("fetch_user_config triggering DB fallback for %s:%s - Redis data: %s", 
+                      user_type, user_id, {k: v for k, v in (data or {}).items() if k in ["group", "leverage", "sending_orders"]})
         try:
             db_cfg = await _fetch_user_config_from_db(user_type, user_id)
+            if db_cfg:
+                logger.info("fetch_user_config DB fallback successful for %s:%s", user_type, user_id)
         except Exception as dbe:
             logger.error("fetch_user_config DB fallback failed for %s:%s: %s", user_type, user_id, dbe)
             db_cfg = {}

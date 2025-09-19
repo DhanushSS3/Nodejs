@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { cacheHealthCheck, refreshCaches } = require('../middleware/cache.initialization.middleware');
+const { cacheHealthCheck, refreshCaches, forceFullRebuild } = require('../middleware/cache.initialization.middleware');
 const { authenticateJWT, requirePermissions } = require('../middlewares/auth.middleware');
 
 /**
@@ -16,13 +16,24 @@ router.get('/health',
 
 /**
  * @route POST /api/cache/refresh
- * @desc Manually refresh all caches
+ * @desc Manually refresh all caches (safe mode - no service interruption)
  * @access Private (Admin only)
  */
 router.post('/refresh',
   authenticateJWT,
   requirePermissions(['system:manage']),
   refreshCaches
+);
+
+/**
+ * @route POST /api/cache/force-rebuild
+ * @desc Force full cache rebuild (admin only - causes brief service interruption)
+ * @access Private (Superadmin only)
+ */
+router.post('/force-rebuild',
+  authenticateJWT,
+  requirePermissions(['system:admin']),
+  forceFullRebuild
 );
 
 module.exports = router;

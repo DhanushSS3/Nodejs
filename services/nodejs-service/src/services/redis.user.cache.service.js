@@ -22,8 +22,20 @@ class RedisUserCacheService {
       // Redis cluster is already connected, no need to connect again
       logger.info('Using existing Redis cluster connection');
       
-      // Populate cache with all users on startup
-      await this.populateCache();
+      // Check if cache already exists and is healthy
+      const cacheStats = await this.getCacheStats();
+      const hasExistingCache = cacheStats.total_users > 0;
+      
+      if (hasExistingCache) {
+        logger.info(`Found existing cache with ${cacheStats.total_users} users, performing safe refresh...`);
+        // Safe refresh without clearing - just update existing keys
+        await this.populateCache();
+      } else {
+        logger.info('No existing cache found, performing full initialization...');
+        // Only clear cache if no existing data (true cold start)
+        await this.clearAllUserCache();
+        await this.populateCache();
+      }
       
       this.isInitialized = true;
       logger.info('Redis User Cache Service initialized successfully');
@@ -118,13 +130,12 @@ class RedisUserCacheService {
   }
 
   /**
-   * Populate Redis cache with all users from database
+   * Clear all user cache entries (only used on initial startup)
    */
-  async populateCache() {
+  async clearAllUserCache() {
     try {
-      logger.info('Starting cache population...');
+      logger.info('Clearing all user cache entries...');
       
-      // Clear existing cache across ALL cluster masters (both legacy and tagged patterns)
       const patterns = ['user:*:*:config', 'user:{*}:config'];
       let cleared = 0;
       try {
@@ -156,6 +167,21 @@ class RedisUserCacheService {
       } catch (clearErr) {
         logger.warn('Failed to clear existing user config cache across cluster:', clearErr.message);
       }
+    } catch (error) {
+      logger.error('Error clearing user cache:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Populate Redis cache with all users from database
+   */
+  async populateCache() {
+    try {
+      logger.info('Starting cache population...');
+      
+      // SAFE CACHE REFRESH: Update existing keys instead of clearing all
+      // This prevents race conditions where orders fail during cache refresh
 
       // Cache live users
       const liveUsers = await LiveUser.findAll({
@@ -435,6 +461,25 @@ class RedisUserCacheService {
       return user !== null;
     } catch (error) {
       logger.error(`Error refreshing user ${userType}:${userId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Force full cache rebuild (admin use only - will cause brief service interruption)
+   */
+  async forceFullRebuild() {
+    try {
+      logger.warn('ADMIN ACTION: Force full cache rebuild initiated - this will cause brief service interruption');
+      await this.clearAllUserCache();
+      await this.populateCache();
+      logger.info('Force full cache rebuild completed');
+      return {
+        success: true,
+        message: 'Full cache rebuild completed successfully'
+      };
+    } catch (error) {
+      logger.error('Error during force full cache rebuild:', error);
       throw error;
     }
   }

@@ -51,7 +51,7 @@ const cacheHealthCheck = async (req, res) => {
 };
 
 /**
- * Endpoint to manually refresh caches
+ * Endpoint to manually refresh caches (safe mode)
  */
 const refreshCaches = async (req, res) => {
   try {
@@ -59,7 +59,7 @@ const refreshCaches = async (req, res) => {
     
     return res.status(200).json({
       success: true,
-      message: 'Caches refreshed successfully',
+      message: 'Caches refreshed successfully (safe mode)',
       data: result
     });
   } catch (error) {
@@ -72,8 +72,37 @@ const refreshCaches = async (req, res) => {
   }
 };
 
+/**
+ * Endpoint to force full cache rebuild (admin only - causes brief service interruption)
+ */
+const forceFullRebuild = async (req, res) => {
+  try {
+    logger.warn('ADMIN ACTION: Force full cache rebuild requested by user', {
+      user: req.user?.id || 'unknown',
+      ip: req.ip
+    });
+    
+    const result = await startupCacheService.forceFullRebuild();
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Force full cache rebuild completed successfully',
+      warning: 'This operation caused brief service interruption',
+      data: result
+    });
+  } catch (error) {
+    logger.error('Force full cache rebuild failed:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to force full cache rebuild',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 module.exports = {
   ensureCacheInitialized,
   cacheHealthCheck,
-  refreshCaches
+  refreshCaches,
+  forceFullRebuild
 };

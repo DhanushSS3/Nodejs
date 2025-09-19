@@ -26,6 +26,7 @@ from app.services.orders.order_registry import (
     create_canonical_order,
     add_lifecycle_id,
 )
+from app.services.logging.timing_logger import get_orders_timing_logger
 """
 Order execution orchestration service.
 
@@ -59,6 +60,7 @@ def _get_orders_calc_logger() -> logging.Logger:
     return lg
 
 _ORDERS_CALC_LOG = _get_orders_calc_logger()
+_ORDERS_TIMING_LOG = get_orders_timing_logger()
 
 
 class BaseExecutionStrategy:
@@ -104,6 +106,16 @@ class OrderExecutor:
         pass
 
     async def execute_instant_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Start overall timing
+        t_exec_start = time.perf_counter()
+        timings_ms: Dict[str, Any] = {}
+        
+        # Extract key fields for logging (with defaults for safety)
+        order_id = str(payload.get("order_id") or f"PY{int(time.time()*1000)}")
+        user_id = str(payload.get("user_id", ""))
+        user_type = str(getattr(payload.get("user_type"), "value", payload.get("user_type", ""))).lower()
+        symbol = str(payload.get("symbol", "")).upper()
+        flow = None  # Will be set later
         # 1) Basic validation
         missing = [k for k in ("symbol", "order_type", "order_price", "order_quantity", "user_id", "user_type") if k not in payload]
         if missing:
@@ -138,7 +150,9 @@ class OrderExecutor:
             return {"ok": False, "reason": "invalid_order_status"}
 
         # 2) Fetch user config
+        t_user_config = time.perf_counter()
         cfg = await fetch_user_config(user_type, user_id)
+        timings_ms["fetch_user_config_ms"] = int((time.perf_counter() - t_user_config) * 1000)
         if int(cfg.get("status") or 0) == 0:
             return {"ok": False, "reason": "user_not_verified"}
         leverage = float(cfg.get("leverage") or 0.0)
@@ -160,22 +174,29 @@ class OrderExecutor:
         # 4) Idempotency
         idem_key = None
         if idempotency_key:
+            t_idempotency = time.perf_counter()
             idem_key = f"idempotency:{user_type}:{user_id}:{idempotency_key}"
             prev = await get_idempotency(idem_key)
             if prev:
+                timings_ms["idempotency_ms"] = int((time.perf_counter() - t_idempotency) * 1000)
                 return prev
             placed = await set_idempotency_placeholder(idem_key, ttl_sec=60)
             if not placed:
                 # Someone else placed it; return stored or generic response
                 prev2 = await get_idempotency(idem_key)
                 if prev2:
+                    timings_ms["idempotency_ms"] = int((time.perf_counter() - t_idempotency) * 1000)
                     return prev2
+                timings_ms["idempotency_ms"] = int((time.perf_counter() - t_idempotency) * 1000)
                 return {"ok": False, "reason": "idempotency_in_progress"}
+            timings_ms["idempotency_ms"] = int((time.perf_counter() - t_idempotency) * 1000)
 
         # 5) Fetch group data
+        t_group = time.perf_counter()
         g = await fetch_group_data(symbol, group)
         # Resolve required fields with Redis-first and DB fallback
         gfb = await get_group_config_with_fallback(group, symbol)
+        timings_ms["group_fetch_ms"] = int((time.perf_counter() - t_group) * 1000)
         # Prefer Redis group values; fallback to DB response
         # contract_size
         contract_size = None
@@ -251,7 +272,9 @@ class OrderExecutor:
             return result
 
         # 6) Determine execution price based on strategy
+        t_pricing = time.perf_counter()
         ok_px, exec_price, pricing_meta = await strategy.determine_exec_price(group)
+        timings_ms["pricing_ms"] = int((time.perf_counter() - t_pricing) * 1000)
         if not ok_px or exec_price is None:
             result = {"ok": False, "reason": pricing_meta.get("reason", "pricing_failed")}
             if idem_key:
@@ -259,6 +282,7 @@ class OrderExecutor:
             return result
 
         # 7) Compute single order margin in USD
+        t_single_margin = time.perf_counter()
         margin_usd = await compute_single_order_margin(
             contract_size=contract_size,
             order_quantity=order_qty,
@@ -271,6 +295,7 @@ class OrderExecutor:
             crypto_margin_factor=crypto_margin_factor,
             strict=True,
         )
+        timings_ms["single_margin_ms"] = int((time.perf_counter() - t_single_margin) * 1000)
         if margin_usd is None:
             result = {"ok": False, "reason": "margin_calculation_failed"}
             if idem_key:
@@ -278,7 +303,9 @@ class OrderExecutor:
             return result
 
         # 8) Free margin / balance check
+        t_portfolio = time.perf_counter()
         portfolio = await fetch_user_portfolio(user_type, user_id)
+        timings_ms["portfolio_fetch_ms"] = int((time.perf_counter() - t_portfolio) * 1000)
         
         # Get current used_margin_all (includes queued orders)
         current_used_margin_all = 0.0
@@ -310,7 +337,10 @@ class OrderExecutor:
         lock_key = f"lock:user_margin:{user_type}:{user_id}"
         token = f"exec-{int(time.time()*1000)}-{order_id}"
         locked = False
+        lock_attempts = 0
+        t_lock = time.perf_counter()
         for _ in range(4):  # ~80ms worst-case
+            lock_attempts += 1
             try:
                 ok = await redis_cluster.set(lock_key, token, ex=5, nx=True)
                 locked = bool(ok)
@@ -322,13 +352,18 @@ class OrderExecutor:
                 await asyncio.sleep(0.02)
             except Exception:
                 pass
+        timings_ms["lock_acquire_ms"] = int((time.perf_counter() - t_lock) * 1000)
+        timings_ms["lock_attempts"] = lock_attempts
+        timings_ms["lock_acquired"] = bool(locked)
 
         # Placement results to optionally reuse after lock release
         ok_place: Optional[bool] = None
         reason: str = ""
 
         try:
+            t_orders_fetch = time.perf_counter()
             existing_orders = await fetch_user_orders(user_type, user_id)
+            timings_ms["orders_fetch_ms"] = int((time.perf_counter() - t_orders_fetch) * 1000)
             new_order_for_calc = {
                 "order_id": order_id,
                 "symbol": symbol,
@@ -339,6 +374,7 @@ class OrderExecutor:
             }
             orders_for_calc: List[Dict[str, Any]] = existing_orders + [new_order_for_calc]
 
+            t_total_margin = time.perf_counter()
             executed_margin, total_margin_with_queued, meta = await compute_user_total_margin(
                 user_type=user_type,
                 user_id=user_id,
@@ -347,6 +383,7 @@ class OrderExecutor:
                 strict=True,
                 include_queued=True,
             )
+            timings_ms["total_margin_ms"] = int((time.perf_counter() - t_total_margin) * 1000)
 
             if total_margin_with_queued is None:
                 result = {"ok": False, "reason": "overall_margin_failed", "meta": meta}
@@ -408,6 +445,7 @@ class OrderExecutor:
                 })
 
             # 12) Place order in Redis (atomic Lua or fallback) UNDER LOCK
+            t_place = time.perf_counter()
             ok_place, reason = await place_order_atomic_or_fallback(
                 user_type=user_type,
                 user_id=user_id,
@@ -418,6 +456,7 @@ class OrderExecutor:
                 recomputed_user_used_margin_executed=float(executed_margin),
                 recomputed_user_used_margin_all=float(total_margin_with_queued),
             )
+            timings_ms["place_atomic_ms"] = int((time.perf_counter() - t_place) * 1000)
             if not ok_place:
                 result = {"ok": False, "reason": f"place_order_failed:{reason}"}
                 if idem_key:
@@ -487,6 +526,7 @@ class OrderExecutor:
         # 13) Place order (already executed under lock above). Guard to avoid double placement in case the
         #     lock acquisition failed and we skipped the inner placement due to Redis issues.
         if ok_place is None:
+            t_place2 = time.perf_counter()
             ok_place, reason = await place_order_atomic_or_fallback(
                 user_type=user_type,
                 user_id=user_id,
@@ -497,6 +537,7 @@ class OrderExecutor:
                 recomputed_user_used_margin_executed=float(executed_margin),
                 recomputed_user_used_margin_all=float(total_margin_with_queued),
             )
+            timings_ms["place_atomic2_ms"] = int((time.perf_counter() - t_place2) * 1000)
         if not ok_place:
             result = {"ok": False, "reason": f"place_order_failed:{reason}"}
             if idem_key:
@@ -506,6 +547,7 @@ class OrderExecutor:
         # 14) For provider flow, create/update canonical order hash and global lookups
         if flow == "provider":
             try:
+                t_canonical = time.perf_counter()
                 # Build canonical order record with required fields
                 # Merge spread/spread_pip from fallback config when available
                 spread_val = g.get("spread") or gfb.get("spread")
@@ -584,6 +626,7 @@ class OrderExecutor:
                         await add_lifecycle_id(order_id, the_id, field_name)
                     except Exception as id_err:
                         logger.warning("add_lifecycle_id failed for %s=%s on %s: %s", field_name, the_id, order_id, id_err)
+                timings_ms["canonical_create_ms"] = int((time.perf_counter() - t_canonical) * 1000)
             except Exception as reg_err:
                 # Non-fatal; continue flow, but log for observability
                 logger.error("canonical order registry update failed for %s: %s", order_id, reg_err)
@@ -605,6 +648,26 @@ class OrderExecutor:
             # Return payload to API layer for background dispatch
             resp["provider_send_payload"] = provider_send_payload
 
+        # Calculate total execution time and log detailed timing breakdown
+        timings_ms["executor_total_ms"] = int((time.perf_counter() - t_exec_start) * 1000)
+        
+        # Log detailed timing breakdown to orders_timing.log
+        try:
+            timing_log = {
+                "component": "python_executor",
+                "endpoint": "execute_instant_order",
+                "status": "success",
+                "order_id": order_id,
+                "user_type": user_type,
+                "user_id": user_id,
+                "symbol": symbol,
+                "flow": flow,
+                "durations_ms": timings_ms
+            }
+            _ORDERS_TIMING_LOG.info(orjson.dumps(timing_log).decode())
+        except Exception:
+            pass  # Don't fail the order if logging fails
+        
         # Sanitize result for idempotency storage to avoid re-triggering async send
         idem_resp = dict(resp)
         idem_resp.pop("provider_send_payload", None)
