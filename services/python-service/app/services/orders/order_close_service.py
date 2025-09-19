@@ -1,5 +1,6 @@
 import time
 import logging
+import asyncio
 from typing import Any, Dict, Optional, Tuple, List
 
 import orjson
@@ -18,6 +19,18 @@ from app.services.orders.order_registry import add_lifecycle_id
 from app.services.groups.group_config_helper import get_group_config_with_fallback
 
 logger = logging.getLogger(__name__)
+
+# User-level locks to prevent race conditions during order operations
+_user_locks = {}
+_locks_lock = asyncio.Lock()
+
+async def _get_user_lock(user_type: str, user_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific user to prevent race conditions."""
+    user_key = f"{user_type}:{user_id}"
+    async with _locks_lock:
+        if user_key not in _user_locks:
+            _user_locks[user_key] = asyncio.Lock()
+        return _user_locks[user_key]
 
 
 def _safe_float(v) -> Optional[float]:
@@ -434,63 +447,66 @@ class OrderCloser:
             time.sleep(ms / 1000.0)
 
     async def _cleanup_after_close(self, user_type: str, user_id: str, order_id: str, symbol: Optional[str]) -> Dict[str, Any]:
-        try:
-            hash_tag = f"{user_type}:{user_id}"
-            order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
-            order_data_key = f"order_data:{order_id}"
-            index_key = f"user_orders_index:{{{hash_tag}}}"
-            portfolio_key = f"user_portfolio:{{{hash_tag}}}"
-
-            # Fetch all orders to recompute margins excluding closed
-            orders = await fetch_user_orders(user_type, user_id)
-            remaining = [od for od in orders if str(od.get("order_id")) != str(order_id)]
-
-            executed_margin, total_margin, _ = await compute_user_total_margin(
-                user_type=user_type,
-                user_id=user_id,
-                orders=remaining,
-                prices_cache=None,
-                strict=False,
-                include_queued=True,
-            )
-
-            # Remove keys and update margins using same-slot pipeline for user-scoped keys
-            p_user = redis_cluster.pipeline()
-            p_user.srem(index_key, order_id)
-            p_user.delete(order_key)
-            if executed_margin is not None:
-                p_user.hset(portfolio_key, mapping={
-                    "used_margin_executed": str(float(executed_margin)),
-                    "used_margin": str(float(executed_margin)),
-                })
-            if total_margin is not None:
-                p_user.hset(portfolio_key, mapping={
-                    "used_margin_all": str(float(total_margin)),
-                })
-            await p_user.execute()
-            # Delete canonical in separate call to avoid cross-slot pipeline
+        # Use user-level lock to prevent race conditions during cleanup
+        user_lock = await _get_user_lock(user_type, user_id)
+        async with user_lock:
             try:
-                await redis_cluster.delete(order_data_key)
-            except Exception:
-                pass
+                hash_tag = f"{user_type}:{user_id}"
+                order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+                order_data_key = f"order_data:{order_id}"
+                index_key = f"user_orders_index:{{{hash_tag}}}"
+                portfolio_key = f"user_portfolio:{{{hash_tag}}}"
 
-            # Symbol holders cleanup if no more orders for same symbol
-            if symbol:
-                any_same_symbol = any(str(od.get("symbol", "")).upper() == str(symbol).upper() for od in remaining)
-                if not any_same_symbol:
-                    try:
-                        await redis_cluster.srem(f"symbol_holders:{symbol}:{user_type}", f"{user_type}:{user_id}")
-                    except Exception:
-                        pass
+                # Fetch all orders to recompute margins excluding closed
+                orders = await fetch_user_orders(user_type, user_id)
+                remaining = [od for od in orders if str(od.get("order_id")) != str(order_id)]
 
-            return {
-                "ok": True,
-                "used_margin_executed": float(executed_margin or 0.0) if executed_margin is not None else None,
-                "used_margin_all": float(total_margin or 0.0) if total_margin is not None else None,
-            }
-        except Exception as e:
-            logger.error("cleanup_after_close error for %s:%s order=%s: %s", user_type, user_id, order_id, e)
-            return {"ok": False, "reason": "cleanup_exception"}
+                executed_margin, total_margin, _ = await compute_user_total_margin(
+                    user_type=user_type,
+                    user_id=user_id,
+                    orders=remaining,
+                    prices_cache=None,
+                    strict=False,
+                    include_queued=True,
+                )
+
+                # Remove keys and update margins using same-slot pipeline for user-scoped keys
+                p_user = redis_cluster.pipeline()
+                p_user.srem(index_key, order_id)
+                p_user.delete(order_key)
+                if executed_margin is not None:
+                    p_user.hset(portfolio_key, mapping={
+                        "used_margin_executed": str(float(executed_margin)),
+                        "used_margin": str(float(executed_margin)),
+                    })
+                if total_margin is not None:
+                    p_user.hset(portfolio_key, mapping={
+                        "used_margin_all": str(float(total_margin)),
+                    })
+                await p_user.execute()
+                # Delete canonical in separate call to avoid cross-slot pipeline
+                try:
+                    await redis_cluster.delete(order_data_key)
+                except Exception:
+                    pass
+
+                # Symbol holders cleanup if no more orders for same symbol
+                if symbol:
+                    any_same_symbol = any(str(od.get("symbol", "")).upper() == str(symbol).upper() for od in remaining)
+                    if not any_same_symbol:
+                        try:
+                            await redis_cluster.srem(f"symbol_holders:{symbol}:{user_type}", f"{user_type}:{user_id}")
+                        except Exception:
+                            pass
+
+                return {
+                    "ok": True,
+                    "used_margin_executed": float(executed_margin or 0.0) if executed_margin is not None else None,
+                    "used_margin_all": float(total_margin or 0.0) if total_margin is not None else None,
+                }
+            except Exception as e:
+                logger.error("cleanup_after_close error for %s:%s order=%s: %s", user_type, user_id, order_id, e)
+                return {"ok": False, "reason": "cleanup_exception"}
 
     async def finalize_close(self, *, user_type: str, user_id: str, order_id: str, close_price: Optional[float] = None,
                              fallback_symbol: Optional[str] = None,

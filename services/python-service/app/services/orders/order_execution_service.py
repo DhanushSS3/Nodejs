@@ -1,16 +1,10 @@
 import time
 import logging
+import asyncio
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
-import asyncio
-import orjson
 
-from app.services.price_utils import get_execution_price
-from app.services.portfolio.margin_calculator import compute_single_order_margin
-from app.services.orders.commission_calculator import compute_entry_commission
-from app.services.groups.group_config_helper import get_group_config_with_fallback
-from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_repository import (
     fetch_user_config,
@@ -22,6 +16,11 @@ from app.services.orders.order_repository import (
     set_idempotency_placeholder,
     save_idempotency_result,
 )
+from app.services.price_utils import get_execution_price
+from app.services.portfolio.margin_calculator import compute_single_order_margin
+from app.services.orders.commission_calculator import compute_entry_commission
+from app.services.groups.group_config_helper import get_group_config_with_fallback
+from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.order_registry import (
     create_canonical_order,
     add_lifecycle_id,
@@ -38,6 +37,18 @@ idempotent replays.
 """
 
 logger = logging.getLogger(__name__)
+
+# User-level locks to prevent race conditions during order operations
+_user_locks = {}
+_locks_lock = asyncio.Lock()
+
+async def _get_user_lock(user_type: str, user_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific user to prevent race conditions."""
+    user_key = f"{user_type}:{user_id}"
+    async with _locks_lock:
+        if user_key not in _user_locks:
+            _user_locks[user_key] = asyncio.Lock()
+        return _user_locks[user_key]
 
 def _get_orders_calc_logger() -> logging.Logger:
     lg = logging.getLogger("orders.calculated")
@@ -362,35 +373,38 @@ class OrderExecutor:
         reason: str = ""
 
         try:
-            t_orders_fetch = time.perf_counter()
-            existing_orders = await fetch_user_orders(user_type, user_id)
-            timings_ms["orders_fetch_ms"] = int((time.perf_counter() - t_orders_fetch) * 1000)
-            new_order_for_calc = {
-                "order_id": order_id,
-                "symbol": symbol,
-                "order_type": order_type,
-                "order_quantity": order_qty,
-                "order_status": "QUEUED" if flow == "provider" else "OPEN",
-                "execution_status": "QUEUED" if flow == "provider" else "EXECUTED",
-            }
-            orders_for_calc: List[Dict[str, Any]] = existing_orders + [new_order_for_calc]
+            # Use user-level lock to prevent race conditions during order fetching and margin calculations
+            user_lock = await _get_user_lock(user_type, user_id)
+            async with user_lock:
+                t_orders_fetch = time.perf_counter()
+                existing_orders = await fetch_user_orders(user_type, user_id)
+                timings_ms["orders_fetch_ms"] = int((time.perf_counter() - t_orders_fetch) * 1000)
+                new_order_for_calc = {
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "order_type": order_type,
+                    "order_quantity": order_qty,
+                    "order_status": "QUEUED" if flow == "provider" else "OPEN",
+                    "execution_status": "QUEUED" if flow == "provider" else "EXECUTED",
+                }
+                orders_for_calc: List[Dict[str, Any]] = existing_orders + [new_order_for_calc]
 
-            t_total_margin = time.perf_counter()
-            executed_margin, total_margin_with_queued, meta = await compute_user_total_margin(
-                user_type=user_type,
-                user_id=user_id,
-                orders=orders_for_calc,
-                prices_cache=None,
-                strict=True,
-                include_queued=True,
-            )
-            timings_ms["total_margin_ms"] = int((time.perf_counter() - t_total_margin) * 1000)
+                t_total_margin = time.perf_counter()
+                executed_margin, total_margin_with_queued, meta = await compute_user_total_margin(
+                    user_type=user_type,
+                    user_id=user_id,
+                    orders=orders_for_calc,
+                    prices_cache=None,
+                    strict=True,
+                    include_queued=True,
+                )
+                timings_ms["total_margin_ms"] = int((time.perf_counter() - t_total_margin) * 1000)
 
-            if total_margin_with_queued is None:
-                result = {"ok": False, "reason": "overall_margin_failed", "meta": meta}
-                if idem_key:
-                    await save_idempotency_result(idem_key, result)
-                return result
+                if total_margin_with_queued is None:
+                    result = {"ok": False, "reason": "overall_margin_failed", "meta": meta}
+                    if idem_key:
+                        await save_idempotency_result(idem_key, result)
+                    return result
 
             # 10) Compute notional contract value (instrument-dependent; generic formula)
             try:
