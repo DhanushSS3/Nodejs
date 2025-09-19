@@ -97,8 +97,15 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
         data = await redis_cluster.hgetall(tagged_key)
         logger.info("DEBUG: Redis hgetall result for %s:%s (tagged_key: %s) - data: %s", 
                    user_type, user_id, tagged_key, data)
+        
+        # Add to timing log for immediate visibility
+        _TIMING_LOG.info('{"component":"python_redis_debug","user_type":"%s","user_id":"%s","tagged_key":"%s","data_found":%s,"data_keys":[%s]}',
+                        user_type, user_id, tagged_key, bool(data), ','.join(f'"{k}"' for k in (data.keys() if data else [])))
+        
     except Exception as e:
         logger.error("fetch_user_config tagged hgetall failed for %s:%s: %s", user_type, user_id, e)
+        _TIMING_LOG.info('{"component":"python_redis_error","user_type":"%s","user_id":"%s","tagged_key":"%s","error":"%s"}',
+                        user_type, user_id, tagged_key, str(e))
         data = {}
     # Fallback to legacy key if empty
     if not data:
@@ -134,12 +141,24 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     if needs_db:
         logger.warning("fetch_user_config triggering DB fallback for %s:%s - Redis data: %s", 
                       user_type, user_id, {k: v for k, v in (data or {}).items() if k in ["group", "leverage", "sending_orders"]})
+        
+        # Add to timing log
+        _TIMING_LOG.info('{"component":"python_db_fallback","user_type":"%s","user_id":"%s","reason":"redis_data_missing","redis_data":%s}',
+                        user_type, user_id, json.dumps({k: v for k, v in (data or {}).items() if k in ["group", "leverage", "sending_orders"]}))
+        
         try:
             db_cfg = await _fetch_user_config_from_db(user_type, user_id)
             if db_cfg:
                 logger.info("fetch_user_config DB fallback successful for %s:%s", user_type, user_id)
+                _TIMING_LOG.info('{"component":"python_db_success","user_type":"%s","user_id":"%s","db_leverage":"%s"}',
+                                user_type, user_id, db_cfg.get("leverage"))
+            else:
+                _TIMING_LOG.info('{"component":"python_db_empty","user_type":"%s","user_id":"%s","reason":"no_db_data"}',
+                                user_type, user_id)
         except Exception as dbe:
             logger.error("fetch_user_config DB fallback failed for %s:%s: %s", user_type, user_id, dbe)
+            _TIMING_LOG.info('{"component":"python_db_error","user_type":"%s","user_id":"%s","error":"%s"}',
+                            user_type, user_id, str(dbe))
             db_cfg = {}
 
     # If we used legacy, backfill into tagged to stabilize future reads
