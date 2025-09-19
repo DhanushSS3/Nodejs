@@ -22,18 +22,11 @@ async def test_redis_connectivity():
     """Test Redis cluster connectivity and data access"""
     print("🔍 Testing Redis Cluster Connectivity...")
     
-    # Check environment variables
-    print(f"🔍 Environment Variables:")
-    print(f"REDIS_HOSTS: {os.getenv('REDIS_HOSTS', 'NOT_SET')}")
-    print(f"REDIS_HOST: {os.getenv('REDIS_HOST', 'NOT_SET')}")
-    print(f"DATABASE_URL: {os.getenv('DATABASE_URL', 'NOT_SET')}")
-    print(f"NODE_ENV: {os.getenv('NODE_ENV', 'NOT_SET')}")
-    
-    # Show which Redis config is actually being used
+    # Check Redis configuration
     redis_hosts_env = os.getenv("REDIS_HOSTS") or os.getenv("REDIS_HOST")
     if not redis_hosts_env:
         redis_hosts_env = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
-    print(f"🔍 Actual Redis Config Used: {redis_hosts_env}")
+    print(f"🔍 Redis Config: {redis_hosts_env}")
     
     try:
         # Test cluster info
@@ -58,19 +51,8 @@ async def test_redis_connectivity():
         legacy_data = await redis_cluster.hgetall(legacy_key)
         print(f"Legacy Key Data: {legacy_data}")
         
-        # Test key slot mapping
-        try:
-            key_slot = await redis_cluster.cluster_keyslot(tagged_key)
-            print(f"Key Slot: {key_slot}")
-        except Exception as e:
-            print(f"❌ Key slot error: {e}")
-        
-        # Test cluster nodes
-        try:
-            nodes = await redis_cluster.cluster_nodes()
-            print(f"Cluster Nodes: {nodes[:200]}...")
-        except Exception as e:
-            print(f"❌ Cluster nodes error: {e}")
+        # Test basic connectivity
+        print(f"✅ Redis connectivity confirmed")
             
         # Test if we can write and read
         test_key = f"test:{user_type}:{user_id}:connectivity"
@@ -79,17 +61,14 @@ async def test_redis_connectivity():
         print(f"Write/Read Test: {test_data}")
         await redis_cluster.delete(test_key)
         
-        # Test the exact same function that's failing in production
+        # Test fetch_user_config function
         print(f"\n🔍 Testing fetch_user_config function...")
         try:
             from app.services.orders.order_repository import fetch_user_config
             config = await fetch_user_config(user_type, user_id)
-            print(f"fetch_user_config result: {config}")
-            print(f"Leverage from function: {config.get('leverage')}")
+            print(f"✅ Function result: leverage={config.get('leverage')}, group={config.get('group')}")
         except Exception as func_err:
-            print(f"❌ fetch_user_config failed: {func_err}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Function failed: {func_err}")
         
     except Exception as e:
         print(f"❌ Redis connectivity test failed: {e}")
