@@ -7,11 +7,33 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
+# Load .env file explicitly for testing
+from dotenv import load_dotenv
+env_paths = [".env", "../.env", "../../.env"]
+for env_path in env_paths:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"✅ Test loaded .env from: {os.path.abspath(env_path)}")
+        break
+
 from app.config.redis_config import redis_cluster
 
 async def test_redis_connectivity():
     """Test Redis cluster connectivity and data access"""
     print("🔍 Testing Redis Cluster Connectivity...")
+    
+    # Check environment variables
+    print(f"🔍 Environment Variables:")
+    print(f"REDIS_HOSTS: {os.getenv('REDIS_HOSTS', 'NOT_SET')}")
+    print(f"REDIS_HOST: {os.getenv('REDIS_HOST', 'NOT_SET')}")
+    print(f"DATABASE_URL: {os.getenv('DATABASE_URL', 'NOT_SET')}")
+    print(f"NODE_ENV: {os.getenv('NODE_ENV', 'NOT_SET')}")
+    
+    # Show which Redis config is actually being used
+    redis_hosts_env = os.getenv("REDIS_HOSTS") or os.getenv("REDIS_HOST")
+    if not redis_hosts_env:
+        redis_hosts_env = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
+    print(f"🔍 Actual Redis Config Used: {redis_hosts_env}")
     
     try:
         # Test cluster info
@@ -56,6 +78,18 @@ async def test_redis_connectivity():
         test_data = await redis_cluster.hgetall(test_key)
         print(f"Write/Read Test: {test_data}")
         await redis_cluster.delete(test_key)
+        
+        # Test the exact same function that's failing in production
+        print(f"\n🔍 Testing fetch_user_config function...")
+        try:
+            from app.services.orders.order_repository import fetch_user_config
+            config = await fetch_user_config(user_type, user_id)
+            print(f"fetch_user_config result: {config}")
+            print(f"Leverage from function: {config.get('leverage')}")
+        except Exception as func_err:
+            print(f"❌ fetch_user_config failed: {func_err}")
+            import traceback
+            traceback.print_exc()
         
     except Exception as e:
         print(f"❌ Redis connectivity test failed: {e}")

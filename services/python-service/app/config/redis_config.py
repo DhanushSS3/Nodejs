@@ -9,10 +9,12 @@ class RedisConfig:
     
     def __init__(self):
         # Redis cluster nodes from environment
-        redis_hosts = os.getenv(
-            "REDIS_HOSTS", 
-            "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
-        ).split(",")
+        # Support both REDIS_HOSTS (plural) and REDIS_HOST (singular) for compatibility
+        redis_hosts_env = os.getenv("REDIS_HOSTS") or os.getenv("REDIS_HOST")
+        if not redis_hosts_env:
+            redis_hosts_env = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
+        
+        redis_hosts = redis_hosts_env.split(",")
 
         # Parse all hosts for startup nodes using ClusterNode objects
         startup_nodes = []

@@ -6,7 +6,27 @@ import asyncio
 import os
 from dotenv import load_dotenv
 # Load environment variables from .env early
-load_dotenv()
+# Try multiple possible .env locations
+env_paths = [
+    ".env",  # Current directory
+    "../.env",  # Parent directory
+    "../../.env",  # Root directory
+    os.path.join(os.path.dirname(__file__), ".env"),  # Same as main.py
+    os.path.join(os.path.dirname(__file__), "../.env"),  # Parent of app/
+    os.path.join(os.path.dirname(__file__), "../../.env"),  # Root
+]
+
+loaded = False
+for env_path in env_paths:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"✅ Loaded .env from: {os.path.abspath(env_path)}")
+        loaded = True
+        break
+
+if not loaded:
+    print("⚠️  No .env file found in expected locations")
+    load_dotenv()  # Fallback to default behavior
 from .api.market_api import router as market_router
 from .api.orders_api import router as orders_router
 from .api.admin_orders_api import router as admin_orders_router

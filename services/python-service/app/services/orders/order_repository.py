@@ -189,6 +189,9 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
             # Merge DB cfg into data for return
             # Prefer Redis values when present, else DB
             data = {**db_cfg, **data}
+            # Add debug log to see merged data
+            _TIMING_LOG.info('{"component":"python_data_merged","user_type":"%s","user_id":"%s","merged_leverage":"%s","data_keys":[%s]}',
+                            user_type, user_id, data.get("leverage"), ','.join(f'"{k}"' for k in data.keys()))
         except Exception as be2:
             logger.warning("fetch_user_config DB-backfill to tagged failed for %s:%s: %s", user_type, user_id, be2)
 
@@ -216,6 +219,7 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
                 except (TypeError, ValueError):
                     status_val = 1
 
+    # Create final config using merged data
     cfg = {
         "wallet_balance": _f(data.get("wallet_balance")) if data else None,
         "leverage": _f(data.get("leverage")) if data else None,
@@ -223,6 +227,10 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
         "status": status_val,
         "sending_orders": data.get("sending_orders") if data else None,
     }
+    
+    # Debug log final config
+    _TIMING_LOG.info('{"component":"python_final_config","user_type":"%s","user_id":"%s","final_leverage":"%s","cfg_leverage":"%s"}',
+                    user_type, user_id, data.get("leverage") if data else "NO_DATA", cfg.get("leverage"))
     return cfg
 
 
