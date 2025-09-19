@@ -74,7 +74,7 @@ async function getUserTransactions(req, res) {
     logger.transactionSuccess('user_transactions_get', { operationId, userId, count: transactions.length, total: count });
 
     // Minimal response similar to favorites simplification
-    return res.status(200).json({ transactions, total: count, limit, offset, hasMore });
+    return res.status(200).json(transactions);
   } catch (error) {
     logger.transactionFailure('user_transactions_get', error, {});
     return res.status(500).json({ success: false, message: 'Internal server error' });

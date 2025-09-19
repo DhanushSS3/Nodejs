@@ -163,8 +163,16 @@ class OrderExecutor:
         leverage = float(cfg.get("leverage") or 0.0)
         logger.info("DEBUG: Converted leverage for %s:%s - value: %s (type: %s)", 
                    user_type, user_id, leverage, type(leverage))
+        
+        # Add leverage debug to timing logs
+        _ORDERS_TIMING_LOG.info('{"component":"python_leverage_debug","user_type":"%s","user_id":"%s","raw_leverage":"%s","converted_leverage":%s,"leverage_valid":%s}',
+                               user_type, user_id, cfg.get("leverage"), leverage, leverage > 0)
+        
         if leverage <= 0:
             logger.error("DEBUG: Invalid leverage for %s:%s - leverage: %s <= 0", user_type, user_id, leverage)
+            # Log the invalid leverage to timing log
+            _ORDERS_TIMING_LOG.info('{"component":"python_leverage_error","user_type":"%s","user_id":"%s","raw_leverage":"%s","converted_leverage":%s,"reason":"leverage_zero_or_negative"}',
+                                   user_type, user_id, cfg.get("leverage"), leverage)
             return {"ok": False, "reason": "invalid_leverage"}
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()

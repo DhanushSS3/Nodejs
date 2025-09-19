@@ -1,6 +1,41 @@
+# Redis data and cluster files
 redis-cluster/data/*
 !redis-cluster/data/.gitkeep
-# Ignore all node_modules folders
-**/node_modules
-.env
+data/
 data/*
+*.rdb
+*.aof
+nodes.conf
+appendonlydir/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+*.env
+
+# Node modules
+**/node_modules
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+*.so
+
+# Logs
+logs/
+*.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

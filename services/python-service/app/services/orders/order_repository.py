@@ -69,15 +69,36 @@ async def save_idempotency_result(key: str, result: Dict[str, Any], ttl_sec: int
 
 
 async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
+    """Fetch user config from Redis with DB fallback."""
     tagged_key = f"user:{{{user_type}:{user_id}}}:config"
     legacy_key = f"user:{user_type}:{user_id}:config"
-    data: Dict[str, Any] = {}
-    used_legacy = False
-    # Attempt tagged key first
+    
+    # Debug: Log Redis cluster info
     try:
-        data = await redis_cluster.hgetall(tagged_key)
+        cluster_info = await redis_cluster.cluster_info()
+        cluster_nodes = await redis_cluster.cluster_nodes()
+        logger.info("DEBUG: Redis cluster info for %s:%s - cluster_state: %s, nodes_count: %s", 
+                   user_type, user_id, cluster_info.get('cluster_state'), len(cluster_nodes.split('\n')))
     except Exception as e:
-        logger.warning("fetch_user_config tagged hgetall failed for %s:%s: %s", user_type, user_id, e)
+        logger.warning("DEBUG: Could not get Redis cluster info: %s", e)
+    
+    # Try tagged key first
+    data = {}
+    used_legacy = False
+    try:
+        # Debug: Check which node this key maps to
+        try:
+            key_slot = await redis_cluster.cluster_keyslot(tagged_key)
+            nodes_info = await redis_cluster.cluster_nodes()
+            logger.info("DEBUG: Key %s maps to slot %s, cluster nodes: %s", tagged_key, key_slot, nodes_info[:200])
+        except Exception as slot_err:
+            logger.warning("DEBUG: Could not get key slot info: %s", slot_err)
+        
+        data = await redis_cluster.hgetall(tagged_key)
+        logger.info("DEBUG: Redis hgetall result for %s:%s (tagged_key: %s) - data: %s", 
+                   user_type, user_id, tagged_key, data)
+    except Exception as e:
+        logger.error("fetch_user_config tagged hgetall failed for %s:%s: %s", user_type, user_id, e)
         data = {}
     # Fallback to legacy key if empty
     if not data:
