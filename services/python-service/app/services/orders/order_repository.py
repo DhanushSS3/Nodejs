@@ -2,13 +2,16 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 import os
+import time
 
 import aiomysql
 from redis.exceptions import ResponseError
 
 from app.config.redis_config import redis_cluster
+from app.services.logging.timing_logger import get_orders_timing_logger
 
 logger = logging.getLogger(__name__)
+_TIMING_LOG = get_orders_timing_logger()
 
 # Module-level cache for script text
 _ORDER_PLACE_SCRIPT_TEXT: Optional[str] = None
@@ -307,6 +310,34 @@ async def place_order_atomic_or_fallback(
             data = json.loads(raw) if isinstance(raw, str) else raw
         except Exception:
             data = {"ok": False, "reason": "invalid_script_response", "raw": raw}
+        # Log timing details from Lua if present
+        try:
+            if isinstance(data, dict) and data.get("timing_us"):
+                _TIMING_LOG.info(__import__("orjson").dumps({
+                    "component": "python_repo_lua",
+                    "event": "order_place_eval",
+                    "user_type": user_type,
+                    "user_id": user_id,
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "ok": bool(data.get("ok")),
+                    "reason": data.get("reason"),
+                    "timing_us": data.get("timing_us"),
+                }).decode())
+            else:
+                # still log outcome without timing
+                _TIMING_LOG.info(__import__("orjson").dumps({
+                    "component": "python_repo_lua",
+                    "event": "order_place_eval",
+                    "user_type": user_type,
+                    "user_id": user_id,
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "ok": bool(data.get("ok")) if isinstance(data, dict) else False,
+                    "reason": (data or {}).get("reason") if isinstance(data, dict) else "unknown",
+                }).decode())
+        except Exception:
+            pass
         if data and data.get("ok"):
             # Perform non-user-scoped updates outside Lua to avoid cross-slot access
             try:
@@ -473,6 +504,7 @@ async def _place_order_non_atomic(
     recomputed_user_used_margin_all: Optional[float],
 ) -> Tuple[bool, str]:
     """Best-effort non-atomic placement when Lua cannot be used on cluster."""
+    t0 = time.perf_counter()
     try:
         # Use same hash-tagged keys as atomic path
         hash_tag = f"{user_type}:{user_id}"
@@ -500,6 +532,19 @@ async def _place_order_non_atomic(
             margin_updates["used_margin_all"] = str(float(recomputed_user_used_margin_all))
         if margin_updates:
             await redis_cluster.hset(portfolio_key, mapping=margin_updates)
+        # Log total duration for non-atomic path
+        try:
+            _TIMING_LOG.info(__import__("orjson").dumps({
+                "component": "python_repo",
+                "event": "order_place_non_atomic",
+                "user_type": user_type,
+                "user_id": user_id,
+                "order_id": order_id,
+                "symbol": symbol,
+                "total_ms": int((time.perf_counter() - t0) * 1000),
+            }).decode())
+        except Exception:
+            pass
         return True, ""
     except Exception as e:
         logger.error("_place_order_non_atomic error: %s", e)

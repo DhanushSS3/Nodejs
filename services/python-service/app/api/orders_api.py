@@ -2,6 +2,7 @@ import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Header
 from typing import Dict, Any
 import logging
+import time
 
 from ..services.orders.order_execution_service import OrderExecutor
 from ..services.orders.order_close_service import OrderCloser
@@ -12,6 +13,7 @@ from ..services.orders.order_repository import fetch_user_orders, save_idempoten
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
+from ..services.logging.timing_logger import get_orders_timing_logger
 from .schemas.orders import (
     InstantOrderRequest,
     InstantOrderResponse,
@@ -27,6 +29,7 @@ from .schemas.orders import (
 )
 
 logger = logging.getLogger(__name__)
+timing_log = get_orders_timing_logger()
 
 # Internal provider secret guard (header: X-Internal-Auth)
 def _require_internal_auth(x_internal_auth: str = Header(None, alias="X-Internal-Auth")):
@@ -49,25 +52,81 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
     Unified endpoint for instant order execution.
     Supports local (demo/Rock) and provider (barclays) flows.
     """
+    t0 = time.perf_counter()
+    exec_done = None
+    provider_send_done = None
+    cleanup_done = None
     try:
         # Dump in JSON mode so Enum fields (order_type, user_type) are converted to their string values
         result = await _executor.execute_instant_order(payload.model_dump(mode="json"))
+        exec_done = time.perf_counter()
         if not result.get("ok"):
             # Map common reasons to HTTP codes if needed
             reason = result.get("reason", "execution_failed")
             # For validation errors, return 400
             if reason in ("missing_fields", "invalid_order_type", "invalid_numeric_fields", "invalid_order_quantity", "invalid_order_status"):
+                # timing log (error)
+                try:
+                    timing_log.info(__import__("orjson").dumps({
+                        "component": "python_api",
+                        "endpoint": "orders/instant/execute",
+                        "status": "error",
+                        "reason": reason,
+                        "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
+                    }).decode())
+                except Exception:
+                    pass
                 raise HTTPException(status_code=400, detail=result)
             # For margin/user issues and unsupported flow, return 400
             if reason in ("user_not_verified", "invalid_leverage", "missing_group_data", "insufficient_margin", "unsupported_flow"):
+                try:
+                    timing_log.info(__import__("orjson").dumps({
+                        "component": "python_api",
+                        "endpoint": "orders/instant/execute",
+                        "status": "error",
+                        "reason": reason,
+                        "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
+                    }).decode())
+                except Exception:
+                    pass
                 raise HTTPException(status_code=400, detail=result)
             # For idempotency in-progress, 409 could be used
             if reason in ("idempotency_in_progress",):
+                try:
+                    timing_log.info(__import__("orjson").dumps({
+                        "component": "python_api",
+                        "endpoint": "orders/instant/execute",
+                        "status": "error",
+                        "reason": reason,
+                        "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
+                    }).decode())
+                except Exception:
+                    pass
                 raise HTTPException(status_code=409, detail=result)
             # Duplicate order_id attempts
             if reason == "place_order_failed:order_exists":
+                try:
+                    timing_log.info(__import__("orjson").dumps({
+                        "component": "python_api",
+                        "endpoint": "orders/instant/execute",
+                        "status": "error",
+                        "reason": reason,
+                        "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
+                    }).decode())
+                except Exception:
+                    pass
                 raise HTTPException(status_code=409, detail=result)
             # Otherwise server error
+            try:
+                timing_log.info(__import__("orjson").dumps({
+                    "component": "python_api",
+                    "endpoint": "orders/instant/execute",
+                    "status": "error",
+                    "reason": reason,
+                    "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
+                }).decode())
+            except Exception:
+                pass
             raise HTTPException(status_code=500, detail=result)
 
         # If provider flow, send via persistent connection. If not connected within wait window, auto-reject.
@@ -79,6 +138,7 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
             symbol = str(provider_payload.get("symbol") or "").upper()
             try:
                 ok, via = await send_provider_order(provider_payload)
+                provider_send_done = time.perf_counter()
             except Exception as e:
                 logger.error(f"Persistent provider send exception for {order_id}: {e}")
                 ok, via = False, "error"
@@ -148,6 +208,25 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
                     "provider_unreachable" if via in ("unavailable", "none", "error")
                     else ("provider_send_timeout" if via == "timeout" else f"provider_via_{via}_failed")
                 )
+                cleanup_done = time.perf_counter()
+                # timing log (provider failed path)
+                try:
+                    timing_log.info(__import__("orjson").dumps({
+                        "component": "python_api",
+                        "endpoint": "orders/instant/execute",
+                        "status": "provider_send_failed",
+                        "order_id": order_id,
+                        "user_type": user_type,
+                        "user_id": user_id,
+                        "symbol": symbol,
+                        "durations_ms": {
+                            "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000),
+                            "provider_send_ms": int(((provider_send_done or time.perf_counter()) - (exec_done or t0)) * 1000) if provider_send_done and exec_done else None,
+                            "cleanup_ms": int(((cleanup_done or time.perf_counter()) - (provider_send_done or exec_done or t0)) * 1000),
+                        }
+                    }).decode())
+                except Exception:
+                    pass
                 raise HTTPException(status_code=503, detail={
                     "ok": False,
                     "reason": reason,
@@ -156,6 +235,21 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
                     "user_type": user_type,
                 })
 
+        # Success timing log
+        try:
+            timing_log.info(__import__("orjson").dumps({
+                "component": "python_api",
+                "endpoint": "orders/instant/execute",
+                "status": "success",
+                "order_id": result.get("order_id"),
+                "flow": result.get("flow"),
+                "durations_ms": {
+                    "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000),
+                    "provider_send_ms": int(((provider_send_done or time.perf_counter()) - (exec_done or t0)) * 1000) if provider_send_done and exec_done else None,
+                }
+            }).decode())
+        except Exception:
+            pass
         return {
             "success": True,
             "message": "Order processed",
@@ -165,6 +259,16 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
         raise
     except Exception as e:
         logger.error(f"instant_execute_order error: {e}")
+        try:
+            timing_log.info(__import__("orjson").dumps({
+                "component": "python_api",
+                "endpoint": "orders/instant/execute",
+                "status": "exception",
+                "error": str(e),
+                "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
+            }).decode())
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
 
 

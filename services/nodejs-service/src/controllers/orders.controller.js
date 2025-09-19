@@ -1,6 +1,7 @@
 const axios = require('axios');
 const logger = require('../services/logger.service');
 const orderReqLogger = require('../services/order.request.logger');
+const timingLogger = require('../services/perf.timing.logger');
 const idGenerator = require('../services/idGenerator.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
@@ -68,6 +69,12 @@ function validatePayload(body) {
 async function placeInstantOrder(req, res) {
   const operationId = `instant_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Timing start
+    const t0 = process.hrtime.bigint();
+    const marks = {};
+    const mark = (name) => { try { marks[name] = process.hrtime.bigint(); } catch (_) {} };
+    const msBetween = (a, b) => Number((b - a) / 1000000n);
+
     // Structured request log (fire-and-forget)
     orderReqLogger.logOrderRequest({
       endpoint: 'placeInstantOrder',
@@ -101,6 +108,7 @@ async function placeInstantOrder(req, res) {
     if (errors.length) {
       return res.status(400).json({ success: false, message: 'Invalid payload fields', fields: errors });
     }
+    mark('after_validate');
 
     // Ensure user places orders only for themselves (if token has id)
     if (tokenUserId && normalizeStr(parsed.user_id) !== normalizeStr(tokenUserId)) {
@@ -109,6 +117,7 @@ async function placeInstantOrder(req, res) {
 
     // Generate order_id in ord_YYYYMMDD_seq format using IdGeneratorService
     const order_id = await idGenerator.generateOrderId();
+    mark('after_id_generated');
     const hasIdempotency = !!req.body.idempotency_key;
 
     // Persist initial order (QUEUED) unless request is idempotent
@@ -128,6 +137,7 @@ async function placeInstantOrder(req, res) {
           status: normalizeStr(req.body.status || 'OPEN'),
           placed_by: 'user'
         });
+        mark('after_db_preinsert');
       } catch (dbErr) {
         logger.error('Order DB create failed', { error: dbErr.message, fields: {
           order_id,
@@ -166,7 +176,10 @@ async function placeInstantOrder(req, res) {
     logger.transactionStart('instant_place', { operationId, order_id, userId: parsed.user_id });
 
     let pyResp;
+    let pyReqStarted = false;
     try {
+      mark('py_req_start');
+      pyReqStarted = true;
       pyResp = await axios.post(
         `${baseUrl}/api/orders/instant/execute`,
         pyPayload,
@@ -175,10 +188,12 @@ async function placeInstantOrder(req, res) {
           headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' },
         }
       );
+      mark('py_req_end');
     } catch (err) {
       // Python returned error (4xx/5xx)
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      if (pyReqStarted) mark('py_req_end');
 
       // Update DB as REJECTED with reason
       try {
@@ -214,6 +229,25 @@ async function placeInstantOrder(req, res) {
 
       // Map 409 specially if duplicate
       if (statusCode === 409) {
+        try {
+          const tEnd = process.hrtime.bigint();
+          const durations = {
+            total_ms: msBetween(t0, tEnd),
+            validate_ms: marks.after_validate ? msBetween(t0, marks.after_validate) : undefined,
+            id_generate_ms: marks.after_id_generated ? msBetween(marks.after_validate || t0, marks.after_id_generated) : undefined,
+            db_preinsert_ms: marks.after_db_preinsert ? msBetween(marks.after_id_generated || t0, marks.after_db_preinsert) : undefined,
+            py_roundtrip_ms: (marks.py_req_start && marks.py_req_end) ? msBetween(marks.py_req_start, marks.py_req_end) : undefined,
+          };
+          await timingLogger.logTiming({
+            endpoint: 'placeInstantOrder',
+            operationId,
+            order_id,
+            status: 'error_conflict',
+            py_status: statusCode,
+            py_reason: detail?.detail?.reason || detail?.reason,
+            durations_ms: durations,
+          });
+        } catch (_) {}
         return res.status(409).json({
           success: false,
           order_id,
@@ -221,6 +255,25 @@ async function placeInstantOrder(req, res) {
         });
       }
 
+      try {
+        const tEnd = process.hrtime.bigint();
+        const durations = {
+          total_ms: msBetween(t0, tEnd),
+          validate_ms: marks.after_validate ? msBetween(t0, marks.after_validate) : undefined,
+          id_generate_ms: marks.after_id_generated ? msBetween(marks.after_validate || t0, marks.after_id_generated) : undefined,
+          db_preinsert_ms: marks.after_db_preinsert ? msBetween(marks.after_id_generated || t0, marks.after_db_preinsert) : undefined,
+          py_roundtrip_ms: (marks.py_req_start && marks.py_req_end) ? msBetween(marks.py_req_start, marks.py_req_end) : undefined,
+        };
+        await timingLogger.logTiming({
+          endpoint: 'placeInstantOrder',
+          operationId,
+          order_id,
+          status: 'error',
+          py_status: statusCode,
+          py_reason: detail?.detail?.reason || detail?.reason,
+          durations_ms: durations,
+        });
+      } catch (_) {}
       return res.status(statusCode).json({
         success: false,
         order_id,
@@ -316,6 +369,7 @@ async function placeInstantOrder(req, res) {
         logger.error('Failed to upsert order after success', { error: uErr.message, order_id: finalOrderId });
       }
     }
+    mark('after_db_post_success');
 
     // Emit WS event for local execution order update
     if (flow === 'local') {
@@ -357,8 +411,29 @@ async function placeInstantOrder(req, res) {
         // Do not fail the request; SQL margin is an eventual-consistency mirror of Redis
       }
     }
+    mark('after_user_margin');
 
     // Build frontend response
+    try {
+      const tEnd = process.hrtime.bigint();
+      const durations = {
+        total_ms: msBetween(t0, tEnd),
+        validate_ms: marks.after_validate ? msBetween(t0, marks.after_validate) : undefined,
+        id_generate_ms: marks.after_id_generated ? msBetween(marks.after_validate || t0, marks.after_id_generated) : undefined,
+        db_preinsert_ms: marks.after_db_preinsert ? msBetween(marks.after_id_generated || t0, marks.after_db_preinsert) : undefined,
+        py_roundtrip_ms: (marks.py_req_start && marks.py_req_end) ? msBetween(marks.py_req_start, marks.py_req_end) : undefined,
+        db_post_success_ms: marks.after_db_post_success ? msBetween(marks.py_req_end || marks.after_id_generated || t0, marks.after_db_post_success) : undefined,
+        user_margin_ms: marks.after_user_margin ? msBetween(marks.after_db_post_success || marks.py_req_end || t0, marks.after_user_margin) : undefined,
+      };
+      await timingLogger.logTiming({
+        endpoint: 'placeInstantOrder',
+        operationId,
+        order_id: finalOrderId,
+        status: 'success',
+        flow,
+        durations_ms: durations,
+      });
+    } catch (_) {}
     return res.status(201).json({
       success: true,
       order_id: finalOrderId,
