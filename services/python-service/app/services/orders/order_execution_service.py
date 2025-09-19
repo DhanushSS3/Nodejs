@@ -345,28 +345,8 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 9) Recompute overall used margin including new order (with lightweight per-user lock)
-        lock_key = f"lock:user_margin:{user_type}:{user_id}"
-        token = f"exec-{int(time.time()*1000)}-{order_id}"
-        locked = False
-        lock_attempts = 0
-        t_lock = time.perf_counter()
-        for _ in range(4):  # ~80ms worst-case
-            lock_attempts += 1
-            try:
-                ok = await redis_cluster.set(lock_key, token, ex=5, nx=True)
-                locked = bool(ok)
-            except Exception:
-                locked = True  # proceed best-effort if Redis unavailable
-            if locked:
-                break
-            try:
-                await asyncio.sleep(0.02)
-            except Exception:
-                pass
-        timings_ms["lock_acquire_ms"] = int((time.perf_counter() - t_lock) * 1000)
-        timings_ms["lock_attempts"] = lock_attempts
-        timings_ms["lock_acquired"] = bool(locked)
+        # 9) Recompute overall used margin including new order
+        # Note: User-level asyncio lock (added below) replaces Redis lock to prevent deadlocks
 
         # Placement results to optionally reuse after lock release
         ok_place: Optional[bool] = None
@@ -478,18 +458,8 @@ class OrderExecutor:
                     await save_idempotency_result(idem_key, result)
                 return result
         finally:
-            # Safe release: only delete if value matches token
-            try:
-                lua = """
-                if redis.call('get', KEYS[1]) == ARGV[1] then
-                    return redis.call('del', KEYS[1])
-                else
-                    return 0
-                end
-                """
-                await redis_cluster.eval(lua, 1, lock_key, token)
-            except Exception:
-                pass
+            # No Redis lock cleanup needed - using asyncio locks only
+            pass
 
         # Log calculated local execution into orders_calculated.log
         if flow == "local":

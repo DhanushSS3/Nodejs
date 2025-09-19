@@ -3,6 +3,43 @@ const logger = require('../services/logger.service');
 const orderReqLogger = require('../services/order.request.logger');
 const timingLogger = require('../services/perf.timing.logger');
 const idGenerator = require('../services/idGenerator.service');
+
+// User-level locks to prevent race conditions during order operations
+const userLocks = new Map();
+async function getUserLock(userType, userId) {
+  const userKey = `${userType}:${userId}`;
+  if (!userLocks.has(userKey)) {
+    userLocks.set(userKey, { locked: false, queue: [] });
+  }
+  return userLocks.get(userKey);
+}
+
+async function acquireUserLock(userType, userId) {
+  const lockObj = await getUserLock(userType, userId);
+  return new Promise((resolve) => {
+    if (!lockObj.locked) {
+      lockObj.locked = true;
+      resolve(() => {
+        lockObj.locked = false;
+        if (lockObj.queue.length > 0) {
+          const next = lockObj.queue.shift();
+          next();
+        }
+      });
+    } else {
+      lockObj.queue.push(() => {
+        lockObj.locked = true;
+        resolve(() => {
+          lockObj.locked = false;
+          if (lockObj.queue.length > 0) {
+            const next = lockObj.queue.shift();
+            next();
+          }
+        });
+      });
+    }
+  });
+}
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
@@ -119,6 +156,11 @@ async function placeInstantOrder(req, res) {
     const order_id = await idGenerator.generateOrderId();
     mark('after_id_generated');
     const hasIdempotency = !!req.body.idempotency_key;
+
+    // Acquire user-level lock to prevent race conditions
+    const releaseUserLock = await acquireUserLock(parsed.user_type, parsed.user_id);
+    
+    try {
 
     // Persist initial order (QUEUED) unless request is idempotent
     const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
@@ -447,6 +489,11 @@ async function placeInstantOrder(req, res) {
   } catch (error) {
     logger.transactionFailure('instant_place', error, { operationId });
     return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  } finally {
+    // Always release the user lock
+    if (releaseUserLock) {
+      releaseUserLock();
+    }
   }
 }
 
