@@ -1,324 +1,237 @@
-# version: '3.8'
-# services:
-#   redis-node-1:
-#     image: redis:7.0
-#     container_name: redis-node-1
-#     ports:
-#       - "7001:7001"
-#       - "17001:17001"
-#     volumes:
-#       - ./data/node-1:/data
-#       # - ./data/node-1/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.2
-#     depends_on: []
-
-#   redis-node-2:
-#     image: redis:7.0
-#     container_name: redis-node-2
-#     ports:
-#       - "7002:7002"
-#       - "17002:17002"
-#     volumes:
-#       - ./data/node-2:/data
-#       - ./data/node-2/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.3
-
-#   redis-node-3:
-#     image: redis:7.0
-#     container_name: redis-node-3
-#     ports:
-#       - "7003:7003"
-#       - "17003:17003"
-#     volumes:
-#       - ./data/node-3:/data
-#       - ./data/node-3/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.4
-
-#   redis-node-4:
-#     image: redis:7.0
-#     container_name: redis-node-4
-#     ports:
-#       - "7004:7004"
-#       - "17004:17004"
-#     volumes:
-#       - ./data/node-4:/data
-#       - ./data/node-4/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.5
-
-#   redis-node-5:
-#     image: redis:7.0
-#     container_name: redis-node-5
-#     ports:
-#       - "7005:7005"
-#       - "17005:17005"
-#     volumes:
-#       - ./data/node-5:/data
-#       - ./data/node-5/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.6
-
-#   redis-node-6:
-#     image: redis:7.0
-#     container_name: redis-node-6
-#     ports:
-#       - "7006:7006"
-#       - "17006:17006"
-#     volumes:
-#       - ./data/node-6:/data
-#       - ./data/node-6/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.7
-
-#   redis-node-7:
-#     image: redis:7.0
-#     container_name: redis-node-7
-#     ports:
-#       - "7007:7007"
-#       - "17007:17007"
-#     volumes:
-#       - ./data/node-7:/data
-#       - ./data/node-7/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.8
-
-#   redis-node-8:
-#     image: redis:7.0
-#     container_name: redis-node-8
-#     ports:
-#       - "7008:7008"
-#       - "17008:17008"
-#     volumes:
-#       - ./data/node-8:/data
-#       - ./data/node-8/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.9
-
-#   redis-node-9:
-#     image: redis:7.0
-#     container_name: redis-node-9
-#     ports:
-#       - "7009:7009"
-#       - "17009:17009"
-#     volumes:
-#       - ./data/node-9:/data
-#       - ./data/node-9/redis.conf:/usr/local/etc/redis/redis.conf
-#     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-#     networks:
-#       redis-cluster:
-#         ipv4_address: 172.28.0.10
-
-# networks:
-#   redis-cluster:
-#     driver: bridge
-#     ipam:
-#       config:
-#         - subnet: 172.28.0.0/16
-
-
-version: '3.8'
+# The "version" attribute is removed as it's obsolete
 services:
   redis-node-1:
     image: redis:7.0
     container_name: redis-node-1
+    restart: always
     ports:
       - "7001:7001"
       - "17001:17001"
     volumes:
       - ./data/node-1:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7001"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7001"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.2
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7001 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-2:
     image: redis:7.0
     container_name: redis-node-2
+    restart: always
     ports:
       - "7002:7002"
       - "17002:17002"
     volumes:
       - ./data/node-2:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7002"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7002"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.3
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7002 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-3:
     image: redis:7.0
     container_name: redis-node-3
+    restart: always
     ports:
       - "7003:7003"
       - "17003:17003"
     volumes:
       - ./data/node-3:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7003"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7003"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.4
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7003 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-4:
     image: redis:7.0
     container_name: redis-node-4
+    restart: always
     ports:
       - "7004:7004"
       - "17004:17004"
     volumes:
       - ./data/node-4:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7004"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7004"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.5
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7004 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-5:
     image: redis:7.0
     container_name: redis-node-5
+    restart: always
     ports:
       - "7005:7005"
       - "17005:17005"
     volumes:
       - ./data/node-5:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7005"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7005"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.6
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7005 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-6:
     image: redis:7.0
     container_name: redis-node-6
+    restart: always
     ports:
       - "7006:7006"
       - "17006:17006"
     volumes:
       - ./data/node-6:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7006"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7006"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.7
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7006 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-7:
     image: redis:7.0
     container_name: redis-node-7
+    restart: always
     ports:
       - "7007:7007"
       - "17007:17007"
     volumes:
       - ./data/node-7:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7007"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7007"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.8
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7007 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-8:
     image: redis:7.0
     container_name: redis-node-8
+    restart: always
     ports:
       - "7008:7008"
       - "17008:17008"
     volumes:
       - ./data/node-8:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7008"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7008"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.9
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7008 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
   redis-node-9:
     image: redis:7.0
     container_name: redis-node-9
+    restart: always
     ports:
       - "7009:7009"
       - "17009:17009"
     volumes:
       - ./data/node-9:/data
       - ./redis-cluster:/usr/local/etc/redis/
-    command: ["sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh", "7009"]
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-cluster-entrypoint.sh"]
+    command: ["7009"]
     networks:
       redis-cluster:
         ipv4_address: 172.28.0.10
-
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a admin@livefxhub@123 -h 127.0.0.1 -p 7009 ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+  
+  redis-cluster-creator:
+    image: redis:7.0
+    container_name: redis-cluster-creator
+    networks:
+      - redis-cluster
+    depends_on:
+      redis-node-1:
+        condition: service_healthy
+      redis-node-2:
+        condition: service_healthy
+      redis-node-3:
+        condition: service_healthy
+      redis-node-4:
+        condition: service_healthy
+      redis-node-5:
+        condition: service_healthy
+      redis-node-6:
+        condition: service_healthy
+      redis-node-7:
+        condition: service_healthy
+      redis-node-8:
+        condition: service_healthy
+      redis-node-9:
+        condition: service_healthy
+    command: >
+      redis-cli -a admin@livefxhub@123 --cluster create
+      172.28.0.2:7001 172.28.0.3:7002 172.28.0.4:7003
+      172.28.0.5:7004 172.28.0.6:7005 172.28.0.7:7006
+      172.28.0.8:7007 172.28.0.9:7008 172.28.0.10:7009
+      --cluster-replicas 2 --cluster-yes
+    
 networks:
   redis-cluster:
     driver: bridge
     ipam:
       config:
         - subnet: 172.28.0.0/16
-
-
-# Add this service at the same level as your redis-node-9 service
-  redis-cluster-creator:
-    image: redis:7.0
-    container_name: redis-cluster-creator
-    networks:
-      - redis-cluster
-    command: >
-      sh -c "
-        sleep 10 &&
-        echo 'yes' | redis-cli \
-          --cluster create \
-          172.28.0.2:7001 172.28.0.3:7002 172.28.0.4:7003 \
-          172.28.0.5:7004 172.28.0.6:7005 172.28.0.7:7006 \
-          172.28.0.8:7007 172.28.0.9:7008 172.28.0.10:7009 \
-          --cluster-replicas 2
-      "
-    depends_on:
-      - redis-node-1
-      - redis-node-2
-      - redis-node-3
-      - redis-node-4
-      - redis-node-5
-      - redis-node-6
-      - redis-node-7
-      - redis-node-8
-      - redis-node-9# Add this service at the same level as your redis-node-9 service
-  redis-cluster-creator:
-    image: redis:7.0
-    container_name: redis-cluster-creator
-    networks:
-      - redis-cluster
-    command: >
-      sh -c "
-        sleep 10 &&
-        echo 'yes' | redis-cli \
-          --cluster create \
-          172.28.0.2:7001 172.28.0.3:7002 172.28.0.4:7003 \
-          172.28.0.5:7004 172.28.0.6:7005 172.28.0.7:7006 \
-          172.28.0.8:7007 172.28.0.9:7008 172.28.0.10:7009 \
-          --cluster-replicas 2
-      "
-    depends_on:
-      - redis-node-1
-      - redis-node-2
-      - redis-node-3
-      - redis-node-4
-      - redis-node-5
-      - redis-node-6
-      - redis-node-7
-      - redis-node-8
-      - redis-node-9

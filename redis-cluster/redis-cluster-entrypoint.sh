@@ -1,7 +1,22 @@
-# echo "Creating Redis Cluster..."yes yes | docker exec -i redis-node-1 redis-cli --cluster create \172.28.0.2:7001 172.28.0.3:7002 172.28.0.4:7003 \172.28.0.5:7004 172.28.0.6:7005 172.28.0.7:7006 \172.28.0.8:7007 172.28.0.9:7008 172.28.0.10:7009 \--cluster-replicas 2echo "Cluster created!"
-
 #!/bin/sh
+set -e
 PORT=$1
-echo "port $PORT" > /data/redis.conf
-cat /usr/local/etc/redis/redis-cluster.tmpl.conf | sed "s/PORT/$PORT/g" >> /data/redis.conf
-redis-server /data/redis.conf
+
+# Paths
+CONF_DIR="/usr/local/etc/redis"
+CONF_FILE="/data/redis.conf"
+TEMPLATE_FILE="$CONF_DIR/redis-cluster.tmpl.conf"
+
+# Ensure directories exist
+mkdir -p "$CONF_DIR" /data
+
+# Build redis.conf: set port and data dir first, then append template
+{
+  echo "port $PORT"
+  echo "dir /data"
+} > "$CONF_FILE"
+
+cat "$TEMPLATE_FILE" >> "$CONF_FILE"
+
+# Start Redis with the explicit config file (unique per node)
+exec redis-server "$CONF_FILE"
