@@ -269,3 +269,56 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
+
+
+# Add this service at the same level as your redis-node-9 service
+  redis-cluster-creator:
+    image: redis:7.0
+    container_name: redis-cluster-creator
+    networks:
+      - redis-cluster
+    command: >
+      sh -c "
+        sleep 10 &&
+        echo 'yes' | redis-cli \
+          --cluster create \
+          172.28.0.2:7001 172.28.0.3:7002 172.28.0.4:7003 \
+          172.28.0.5:7004 172.28.0.6:7005 172.28.0.7:7006 \
+          172.28.0.8:7007 172.28.0.9:7008 172.28.0.10:7009 \
+          --cluster-replicas 2
+      "
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+      - redis-node-7
+      - redis-node-8
+      - redis-node-9# Add this service at the same level as your redis-node-9 service
+  redis-cluster-creator:
+    image: redis:7.0
+    container_name: redis-cluster-creator
+    networks:
+      - redis-cluster
+    command: >
+      sh -c "
+        sleep 10 &&
+        echo 'yes' | redis-cli \
+          --cluster create \
+          172.28.0.2:7001 172.28.0.3:7002 172.28.0.4:7003 \
+          172.28.0.5:7004 172.28.0.6:7005 172.28.0.7:7006 \
+          172.28.0.8:7007 172.28.0.9:7008 172.28.0.10:7009 \
+          --cluster-replicas 2
+      "
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+      - redis-node-7
+      - redis-node-8
+      - redis-node-9
