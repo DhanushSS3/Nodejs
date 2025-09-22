@@ -70,7 +70,10 @@ class CryptoPaymentController {
         settledCurrency,
         networkSymbol,
         customerName,
-        comments
+        comments,
+        // Add request context for logging
+        _ip: req.ip,
+        _userAgent: req.get('User-Agent')
       });
 
       // Log the Tylt API response
@@ -233,6 +236,12 @@ class CryptoPaymentController {
       // Extract webhook data - handle nested data structure
       const webhookData = req.body.data || req.body;
       const { merchantOrderId } = webhookData;
+
+      // Add request context to webhook data for detailed logging
+      webhookData._ip = req.ip;
+      webhookData._userAgent = req.get('User-Agent');
+      webhookData._signature = signature;
+      webhookData._signatureValid = isValidSignature;
 
       // Log webhook callback
       cryptoPaymentLogger.logWebhookCallback(

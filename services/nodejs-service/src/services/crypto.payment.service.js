@@ -5,6 +5,7 @@ const axios = require('axios');
 const logger = require('./logger.service');
 const redisUserCache = require('./redis.user.cache.service');
 const idGenerator = require('./idGenerator.service');
+const { cryptoPaymentLogger } = require('./logging');
 
 class CryptoPaymentService {
   constructor() {
@@ -55,8 +56,11 @@ class CryptoPaymentService {
    * @returns {Object} Payment response with URL and order details
    */
   async createDepositRequest(paymentData) {
+    const flowId = `flow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const startTime = Date.now();
+    
     try {
-      const { user_id, baseAmount, baseCurrency, settledCurrency, networkSymbol, customerName, comments } = paymentData;
+      const { user_id, baseAmount, baseCurrency, settledCurrency, networkSymbol, customerName, comments, _ip, _userAgent } = paymentData;
 
       // Validate required fields
       if (!user_id || !baseAmount || !baseCurrency || !settledCurrency || !networkSymbol) {
@@ -89,7 +93,8 @@ class CryptoPaymentService {
       const headers = {
         'X-TLP-APIKEY': this.apiKey,
         'X-TLP-SIGNATURE': signature,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'LiveFXHub-CryptoGateway/1.0'
       };
 
       logger.info('Creating Tylt payment request', { 
@@ -99,8 +104,32 @@ class CryptoPaymentService {
         currency: baseCurrency 
       });
 
-      // Call Tylt API
+      // Log outgoing request details
+      const apiRequestTimestamp = new Date().toISOString();
+      cryptoPaymentLogger.logOutgoingRequest(
+        'POST',
+        this.tyltApiUrl,
+        headers,
+        requestBody,
+        merchantOrderId,
+        parseInt(user_id)
+      );
+
+      // Call Tylt API with timing
+      const apiStartTime = Date.now();
       const response = await axios.post(this.tyltApiUrl, raw, { headers });
+      const responseTime = Date.now() - apiStartTime;
+
+      // Log incoming response details
+      const apiResponseTimestamp = new Date().toISOString();
+      cryptoPaymentLogger.logIncomingResponse(
+        response.status,
+        response.headers,
+        response.data,
+        merchantOrderId,
+        parseInt(user_id),
+        responseTime
+      );
 
       if (!response.data || !response.data.data) {
         throw new Error('Invalid response from Tylt API');
@@ -135,6 +164,35 @@ class CryptoPaymentService {
         userId: user_id 
       });
 
+      // Log complete WebSocket flow
+      const totalFlowTime = Date.now() - startTime;
+      const userResponseTimestamp = new Date().toISOString();
+      
+      cryptoPaymentLogger.logWebSocketFlow({
+        flowId,
+        userId: parseInt(user_id),
+        merchantOrderId,
+        userRequestedAmount: parseFloat(baseAmount),
+        userRequestedCurrency: baseCurrency,
+        networkSymbol,
+        userRequestTimestamp: new Date(startTime).toISOString(),
+        apiRequestTimestamp,
+        apiResponseTimestamp,
+        userResponseTimestamp,
+        apiEndpoint: this.tyltApiUrl,
+        apiStatusCode: response.status,
+        responseTime,
+        requestSize: raw.length,
+        responseSize: JSON.stringify(response.data).length,
+        apiSuccess: !!tyltData.paymentURL,
+        paymentUrl: tyltData.paymentURL,
+        expiresAt: tyltData.expiresAt,
+        totalFlowTime,
+        success: true,
+        ip: _ip || 'unknown',
+        userAgent: _userAgent || 'unknown'
+      });
+
       // Return success response
       return {
         status: true,
@@ -147,6 +205,13 @@ class CryptoPaymentService {
       };
 
     } catch (error) {
+      // Log WebSocket error
+      cryptoPaymentLogger.logWebSocketError('payment_creation', error, {
+        userId: paymentData.user_id,
+        merchantOrderId: paymentData.merchantOrderId,
+        requestedAmount: paymentData.baseAmount
+      });
+
       logger.error('Error creating crypto payment deposit', { 
         error: error.message, 
         userId: paymentData.user_id,
@@ -231,6 +296,7 @@ class CryptoPaymentService {
    */
   async updatePaymentFromWebhook(merchantOrderId, webhookData) {
     const transaction = await sequelize.transaction();
+    const processingStartTime = Date.now();
     
     try {
       const payment = await CryptoPayment.findOne({
@@ -247,6 +313,10 @@ class CryptoPaymentService {
       // Map Tylt status to internal status
       const internalStatus = this.mapTyltStatusToInternal(status);
       
+      // Get user's current wallet balance for logging
+      const user = await LiveUser.findByPk(payment.userId, { transaction });
+      const previousWalletBalance = user ? parseFloat(user.wallet_balance) || 0 : 0;
+      
       // Update payment with webhook data
       const updatedPayment = await payment.update({
         status: internalStatus,
@@ -261,19 +331,56 @@ class CryptoPaymentService {
         }
       }, { transaction });
 
+      let walletCreditSuccess = false;
+      let walletCreditAmount = 0;
+      let newWalletBalance = previousWalletBalance;
+      let transactionId = null;
+
       // Credit user wallet if payment is successful (completed, underpayment, or overpayment)
       if (['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived) {
-        await this.creditUserWallet(payment.userId, parseFloat(baseAmountReceived), webhookData, transaction);
+        try {
+          const creditResult = await this.creditUserWallet(payment.userId, parseFloat(baseAmountReceived), webhookData, transaction);
+          walletCreditSuccess = true;
+          walletCreditAmount = parseFloat(baseAmountReceived);
+          newWalletBalance = previousWalletBalance + walletCreditAmount;
+          transactionId = creditResult.transactionId;
+        } catch (creditError) {
+          logger.error('Failed to credit user wallet', { 
+            merchantOrderId, 
+            userId: payment.userId,
+            amount: baseAmountReceived,
+            error: creditError.message 
+          });
+          // Don't fail the entire webhook processing if wallet credit fails
+        }
       }
 
       await transaction.commit();
+      
+      const processingTime = Date.now() - processingStartTime;
+
+      // Log detailed webhook processing
+      cryptoPaymentLogger.logWebhookProcessing(webhookData, {
+        receivedAt: new Date().toISOString(),
+        ip: webhookData._ip || 'unknown',
+        userAgent: webhookData._userAgent || 'unknown',
+        signature: webhookData._signature || 'unknown',
+        signatureValid: webhookData._signatureValid || false,
+        dbUpdateSuccess: true,
+        walletCreditSuccess,
+        walletCreditAmount,
+        previousWalletBalance,
+        newWalletBalance,
+        transactionId,
+        processingTime
+      });
       
       logger.info('Payment updated from webhook', { 
         merchantOrderId, 
         status: internalStatus,
         paymentId: payment.id,
         baseAmountReceived,
-        walletCredited: ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus)
+        walletCredited: walletCreditSuccess
       });
 
       // Return updated payment with previous status for logging
@@ -283,6 +390,26 @@ class CryptoPaymentService {
       };
     } catch (error) {
       await transaction.rollback();
+      
+      const processingTime = Date.now() - processingStartTime;
+      
+      // Log webhook processing failure
+      cryptoPaymentLogger.logWebhookProcessing(webhookData, {
+        receivedAt: new Date().toISOString(),
+        ip: webhookData._ip || 'unknown',
+        userAgent: webhookData._userAgent || 'unknown',
+        signature: webhookData._signature || 'unknown',
+        signatureValid: webhookData._signatureValid || false,
+        dbUpdateSuccess: false,
+        walletCreditSuccess: false,
+        walletCreditAmount: 0,
+        previousWalletBalance: 0,
+        newWalletBalance: 0,
+        transactionId: null,
+        processingTime,
+        error: error.message
+      });
+      
       logger.error('Error updating payment from webhook', { 
         merchantOrderId, 
         error: error.message,
@@ -402,6 +529,8 @@ class CryptoPaymentService {
         transactionId,
         merchantOrderId: webhookData.merchantOrderId
       });
+
+      return { transactionId, previousBalance: currentBalance, newBalance };
 
     } catch (error) {
       logger.error('Error crediting user wallet', {
