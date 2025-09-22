@@ -192,6 +192,24 @@ class PendingMonitor:
                 "group": group,
             }
             await self._publish(OPEN_QUEUE, payload)
+            
+            # Immediately update DB to change order status from PENDING to OPEN
+            # This prevents the 5-second delay in UI where order appears in both sections
+            try:
+                db_update_payload = {
+                    "type": "ORDER_PENDING_TRIGGERED",
+                    "order_id": str(order_id),
+                    "user_id": str(user_id),
+                    "user_type": str(user_type),
+                    "order_status": "OPEN",
+                    "order_type": side,
+                    "order_price": str(exec_px),
+                }
+                await self._publish(DB_UPDATE_QUEUE, db_update_payload)
+                logger.info(f"Sent immediate DB update for pending order trigger: {order_id}")
+            except Exception as e:
+                logger.exception("Failed to send immediate DB update for pending trigger %s: %s", order_id, e)
+                
         except Exception:
             logger.exception("execute_pending publish failed for %s", order_id)
 

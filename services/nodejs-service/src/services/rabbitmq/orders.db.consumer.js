@@ -473,6 +473,15 @@ async function applyDbUpdate(msg) {
             order_id: String(order_id),
           });
         }
+        // Emit immediate event for pending order triggers to refresh UI instantly
+        if (String(type) === 'ORDER_PENDING_TRIGGERED') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'order_update',
+            order_id: String(order_id),
+            reason: 'pending_triggered',
+            update: updateForWs,
+          });
+        }
       } catch (e) {
         logger.warn('Failed to emit portfolio event after order update', { error: e.message });
       }

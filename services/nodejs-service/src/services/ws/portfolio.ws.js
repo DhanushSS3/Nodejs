@@ -9,7 +9,7 @@ const DemoUserOrder = require('../../models/demoUserOrder.model');
 const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
 
-// In-memory connection tracking: limit to 2 connections per user
+// Connection tracking for logging purposes only (no limits)
 const userConnCounts = new Map(); // key: user_type:user_id -> count
 
 function getUserKey(userType, userId) {
@@ -174,13 +174,8 @@ function startPortfolioWSServer(server) {
     const userType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
     const userKey = getUserKey(userType, userId);
 
-    // Rate limit: max 2 concurrent per user
+    // Track connections for logging (no limits enforced)
     const cnt = incConn(userKey);
-    if (cnt > 2) {
-      decConn(userKey);
-      ws.close(4429, 'Too many connections for this user');
-      return;
-    }
 
     logger.info('WS portfolio connected', { userId, userType, connections: cnt });
 
@@ -220,7 +215,7 @@ function startPortfolioWSServer(server) {
         const updateStatus = isOrderUpdate && evt.update && evt.update.order_status ? String(evt.update.order_status).toUpperCase() : '';
         const forceDbRefresh = (
           (evt && evt.type === 'order_rejected') ||
-          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'pending_modified')) ||
+          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered')) ||
           (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED'))
         );
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
