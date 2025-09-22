@@ -5,7 +5,7 @@ const idGeneratorService = require('./idGenerator.service');
 const walletService = require('./wallet.service');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
-const sequelize = require('../config/database');
+const sequelize = require('../config/db');
 
 class MoneyRequestService {
   /**
@@ -14,11 +14,14 @@ class MoneyRequestService {
    * @param {number} requestData.userId - User ID
    * @param {string} requestData.type - 'deposit' or 'withdraw'
    * @param {number} requestData.amount - Amount requested
-   * @param {string} requestData.currency - Currency (default: USD)
+   * @param {string} [requestData.currency] - Currency (default: USD)
+   * @param {string} [requestData.methodType] - Withdrawal method type when type==='withdraw' (BANK|UPI|SWIFT|IBAN|PAYPAL|CRYPTO|OTHER)
+   * @param {Object} [requestData.methodDetails] - Arbitrary JSON payload with user-provided payout details
+   * @param {string} [requestData.accountNumber] - Platform account number snapshot
    * @returns {Promise<Object>} Created money request
    */
   async createRequest(requestData) {
-    const { userId, type, amount, currency = 'USD' } = requestData;
+    const { userId, type, amount, currency = 'USD', methodType, methodDetails = null, accountNumber = null } = requestData;
     const operationId = `create_money_request_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     try {
@@ -41,6 +44,12 @@ class MoneyRequestService {
         if (currentBalance < amount) {
           throw new Error('Insufficient balance for withdrawal request');
         }
+
+        // Validate method type
+        const allowedMethods = ['BANK', 'UPI', 'SWIFT', 'IBAN', 'PAYPAL', 'CRYPTO', 'OTHER'];
+        if (!methodType || !allowedMethods.includes(methodType)) {
+          throw new Error('Invalid or missing withdrawal method_type');
+        }
       }
 
       // Generate unique request ID
@@ -50,6 +59,9 @@ class MoneyRequestService {
       const moneyRequest = await MoneyRequest.create({
         request_id: requestId,
         user_id: userId,
+        account_number: accountNumber || user.account_number,
+        method_type: type === 'withdraw' ? methodType : null,
+        method_details: type === 'withdraw' ? methodDetails : null,
         type,
         amount: parseFloat(amount),
         currency,
@@ -58,7 +70,8 @@ class MoneyRequestService {
 
       logger.info(`[${operationId}] Money request created successfully: ${requestId}`);
 
-      return await this.getRequestById(moneyRequest.id);
+      // Return plain object without associations to avoid coupling
+      return moneyRequest;
     } catch (error) {
       logger.error(`[${operationId}] Error creating money request:`, error);
       throw error;
@@ -77,7 +90,7 @@ class MoneyRequestService {
           {
             model: LiveUser,
             as: 'user',
-            attributes: ['id', 'first_name', 'last_name', 'email', 'account_number']
+            attributes: ['id', 'name', 'email', 'account_number']
           },
           {
             model: Admin,
@@ -112,7 +125,7 @@ class MoneyRequestService {
           {
             model: LiveUser,
             as: 'user',
-            attributes: ['id', 'first_name', 'last_name', 'email', 'account_number']
+            attributes: ['id', 'name', 'email', 'account_number']
           },
           {
             model: Admin,
@@ -144,9 +157,9 @@ class MoneyRequestService {
    */
   async getPendingRequests(filters = {}) {
     try {
-      const { type, limit = 50, offset = 0 } = filters;
+      const { type, status = 'pending', limit = 50, offset = 0 } = filters;
       
-      const whereClause = { status: 'pending' };
+      const whereClause = { status };
       if (type) {
         whereClause.type = type;
       }
@@ -157,7 +170,7 @@ class MoneyRequestService {
           {
             model: LiveUser,
             as: 'user',
-            attributes: ['id', 'first_name', 'last_name', 'email', 'account_number']
+            attributes: ['id', 'name', 'email', 'account_number']
           }
         ],
         order: [['created_at', 'ASC']], // Oldest first for FIFO processing
@@ -234,8 +247,8 @@ class MoneyRequestService {
         throw new Error('Money request not found');
       }
 
-      if (request.status !== 'pending') {
-        throw new Error(`Request is already ${request.status}`);
+      if (!['pending', 'on_hold'].includes(request.status)) {
+        throw new Error(`Request cannot be approved from status: ${request.status}`);
       }
 
       // For withdrawals, double-check balance
@@ -304,8 +317,8 @@ class MoneyRequestService {
         throw new Error('Money request not found');
       }
 
-      if (request.status !== 'pending') {
-        throw new Error(`Request is already ${request.status}`);
+      if (!['pending', 'on_hold'].includes(request.status)) {
+        throw new Error(`Request cannot be rejected from status: ${request.status}`);
       }
 
       await request.update({

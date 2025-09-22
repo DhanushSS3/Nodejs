@@ -139,6 +139,8 @@ const {
 
 // Import transaction routes
 const transactionRoutes = require('./superadmin.transaction.routes');
+// Import money requests routes
+const moneyRequestsRoutes = require('./superadmin.money.requests.routes');
 
 // All endpoints in this router require the user to be authenticated as a superadmin
 router.use(authenticateAdmin);
@@ -154,5 +156,8 @@ router.get('/permissions/dropdown', requireRole(['superadmin']), getPermissionsF
 
 // Transaction management routes (all routes in transactionRoutes already have superadmin protection)
 router.use('/', transactionRoutes);
+
+// Money requests review routes (superadmin only)
+router.use('/', moneyRequestsRoutes);
 
 module.exports = router;

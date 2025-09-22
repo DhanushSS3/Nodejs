@@ -9,6 +9,15 @@ const Country = require('./country.model');
 const CryptoPayment = require('./cryptoPayment.model');
 const UserTransaction = require('./userTransaction.model');
 const Group = require('./group.model');
+const MoneyRequest = require('./moneyRequest.model');
+const { defineAssociations } = require('./associations');
+
+// Initialize associations once
+try {
+  defineAssociations();
+} catch (e) {
+  // No-op if associations already defined or if any optional models are missing
+}
 
 module.exports = {
   DemoUser,
@@ -22,4 +31,5 @@ module.exports = {
   CryptoPayment,
   UserTransaction,
   Group,
+  MoneyRequest,
 };

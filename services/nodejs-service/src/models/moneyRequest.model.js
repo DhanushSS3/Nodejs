@@ -1,5 +1,5 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../config/database');
+const sequelize = require('../config/db');
 
 const MoneyRequest = sequelize.define('MoneyRequest', {
   id: {
@@ -20,6 +20,21 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     allowNull: false,
     comment: 'Reference to live_users.id',
   },
+  account_number: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    comment: 'Platform account number snapshot at time of request',
+  },
+  method_type: {
+    type: DataTypes.ENUM('BANK', 'UPI', 'SWIFT', 'IBAN', 'PAYPAL', 'CRYPTO', 'OTHER'),
+    allowNull: true,
+    comment: 'Withdrawal method type',
+  },
+  method_details: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    comment: 'Arbitrary details provided by user (e.g., upi_id, iban, swift, bank_account_number, ifsc, paypal_email, crypto_address, etc.)',
+  },
   type: {
     type: DataTypes.ENUM('deposit', 'withdraw'),
     allowNull: false,
@@ -37,7 +52,7 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     comment: 'Currency code (expandable for future)',
   },
   status: {
-    type: DataTypes.ENUM('pending', 'approved', 'rejected'),
+    type: DataTypes.ENUM('pending', 'approved', 'rejected', 'on_hold'),
     allowNull: false,
     defaultValue: 'pending',
     comment: 'Review state',
@@ -89,6 +104,12 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     },
     {
       fields: ['created_at']
+    },
+    {
+      fields: ['method_type']
+    },
+    {
+      fields: ['account_number']
     },
     {
       fields: ['user_id', 'status']
