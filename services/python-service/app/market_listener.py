@@ -176,6 +176,7 @@ class MarketListener:
                         merged_market_prices[symbol] = {}
                     
                     # Merge buy/sell prices (partial updates)
+                    # buy -> ask (price users pay to buy), sell -> bid (price users get when selling)
                     if 'buy' in price_data:
                         merged_market_prices[symbol]['buy'] = price_data['buy']
                     if 'sell' in price_data:

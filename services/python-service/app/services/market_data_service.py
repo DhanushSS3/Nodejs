@@ -126,6 +126,8 @@ class MarketDataService:
         Handles cases where only 'buy' or 'sell' is provided. Any provided side is accepted
         and written as-is after float parsing.
         
+        Price mapping: buy -> ask (price users pay to buy), sell -> bid (price users get when selling)
+        
         Args:
             symbol: Trading symbol (e.g., 'EURUSD')
             price_data: Dict with optional 'buy' and/or 'sell' price strings
@@ -145,17 +147,17 @@ class MarketDataService:
 
             update_fields = {}
 
-            # Parse buy price if provided (buy -> bid)
+            # Parse buy price if provided (buy -> ask)
             if buy_str is not None:
                 try:
-                    update_fields['bid'] = float(buy_str)
+                    update_fields['ask'] = float(buy_str)
                 except (ValueError, TypeError) as e:
                     logger.debug(f"Failed to parse buy price for {symbol}: {e}")
 
-            # Parse sell price if provided (sell -> ask)
+            # Parse sell price if provided (sell -> bid)
             if sell_str is not None:
                 try:
-                    update_fields['ask'] = float(sell_str)
+                    update_fields['bid'] = float(sell_str)
                 except (ValueError, TypeError) as e:
                     logger.debug(f"Failed to parse sell price for {symbol}: {e}")
 

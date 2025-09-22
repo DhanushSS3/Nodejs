@@ -1,7 +1,28 @@
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from redis.asyncio.cluster import RedisCluster
 from redis.asyncio.cluster import ClusterNode
 import redis.asyncio as redis
+
+# Load environment variables from root .env file
+# Path: services/python-service/app/config/redis_config.py -> root
+# __file__ = .../services/python-service/app/config/redis_config.py
+# .parent = .../services/python-service/app/config
+# .parent.parent = .../services/python-service/app
+# .parent.parent.parent = .../services/python-service
+# .parent.parent.parent.parent = .../services
+# We need one more .parent to get to root
+root_dir = Path(__file__).parent.parent.parent.parent.parent
+env_path = root_dir / '.env'
+load_dotenv(env_path)
+
+# Debug logging
+import logging
+logger = logging.getLogger(__name__)
+logger.info("Redis config loading .env from: %s", env_path.resolve())
+logger.info("Redis config .env file exists: %s", env_path.exists())
+logger.info("REDIS_PASSWORD loaded: %s", "Yes" if os.getenv("REDIS_PASSWORD") else "No")
 
 class RedisConfig:
     """Redis Cluster configuration for market data storage"""
@@ -12,7 +33,7 @@ class RedisConfig:
         redis_hosts = redis_hosts_env.split(",")
         
         # Get password from environment
-        redis_password = os.getenv("REDIS_PASSWORD") or None
+        redis_password = os.getenv("REDIS_PASSWORD") or "admin@livefxhub@123"
 
         # Parse all hosts for startup nodes using ClusterNode objects
         startup_nodes = []
@@ -55,7 +76,7 @@ class RedisConfig:
 redis_cluster = RedisConfig().get_cluster()
 
 # Single Redis connection for pub/sub operations
-redis_password = os.getenv("REDIS_PASSWORD") or None
+redis_password = os.getenv("REDIS_PASSWORD") or "admin@livefxhub@123"
 redis_pubsub_client = redis.Redis(
     host='127.0.0.1', 
     port=7001, 
