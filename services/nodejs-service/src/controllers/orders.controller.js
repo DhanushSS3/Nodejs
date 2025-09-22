@@ -2144,7 +2144,25 @@ async function cancelPendingOrder(req, res) {
         const rowNow = await OrderModel.findOne({ where: { order_id } });
         if (rowNow) await rowNow.update({ order_status: 'CANCELLED', close_message: cancel_message });
       } catch (e3) { logger.warn('SQL update failed for pending cancel', { error: e3.message, order_id }); }
-      try { portfolioEvents.emitUserUpdate(user_type, user_id, { type: 'order_update', order_id, update: { order_status: 'CANCELLED' }, reason: 'local_pending_cancel' }); } catch (_) {}
+      
+      // Small delay to ensure database transaction is committed before WebSocket update
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Emit immediate WebSocket update for local pending cancellation
+      try { 
+        portfolioEvents.emitUserUpdate(user_type, user_id, { 
+          type: 'order_update', 
+          order_id, 
+          update: { order_status: 'CANCELLED' }, 
+          reason: 'local_pending_cancel' 
+        }); 
+        // Also emit a dedicated pending_cancelled event for immediate UI refresh
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'pending_cancelled',
+          order_id,
+          reason: 'local_pending_cancel'
+        });
+      } catch (_) {}
       return res.status(200).json({ success: true, order_id, order_status: 'CANCELLED' });
     }
 

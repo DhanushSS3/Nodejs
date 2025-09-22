@@ -78,9 +78,12 @@ async function fetchOrdersFromDB(userType, userId) {
       close_message: r.close_message,
       created_at: r.created_at?.toISOString?.() ?? undefined,
     };
-    if (String(r.order_status).toUpperCase() === 'OPEN') open.push(base);
-    else if (String(r.order_status).toUpperCase() === 'PENDING') pending.push(base);
-    else if (String(r.order_status).toUpperCase() === 'REJECTED') rejected.push(base);
+    const status = String(r.order_status).toUpperCase();
+    if (status === 'OPEN') open.push(base);
+    else if (status === 'PENDING') pending.push(base);
+    else if (status === 'REJECTED') rejected.push(base);
+    // Note: CANCELLED orders are not included in any category (they're removed from UI)
+    // Note: CLOSED orders are not included in any category (they're in order history)
   }
   return { open, pending, rejected };
 }
@@ -215,8 +218,9 @@ function startPortfolioWSServer(server) {
         const updateStatus = isOrderUpdate && evt.update && evt.update.order_status ? String(evt.update.order_status).toUpperCase() : '';
         const forceDbRefresh = (
           (evt && evt.type === 'order_rejected') ||
-          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered')) ||
-          (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED'))
+          (evt && evt.type === 'pending_cancelled') ||
+          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'local_pending_cancel' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered')) ||
+          (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED' || updateStatus === 'CANCELLED'))
         );
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           const dbOrders = await fetchOrdersFromDB(userType, userId);
