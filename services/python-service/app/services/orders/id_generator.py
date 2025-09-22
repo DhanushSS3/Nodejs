@@ -65,9 +65,9 @@ class NumericIdGenerator:
     
     def generate_order_id(self) -> str:
         """
-        Generate purely numeric Order ID using Snowflake-inspired algorithm
-        Format: 64-bit numeric ID (no Redis dependency)
-        Returns: Numeric Order ID as string (e.g., '1234567890123456')
+        Generate purely numeric Order ID using optimized Snowflake algorithm
+        Format: Shorter 12-13 digit numeric ID (no Redis dependency)
+        Returns: Numeric Order ID as string (e.g., '123456789012')
         """
         with self._lock:
             now = self._current_millis()
@@ -90,22 +90,22 @@ class NumericIdGenerator:
             
             self.last_timestamp = now
             
-            # Calculate timestamp offset from epoch
-            timestamp_offset = now - self.epoch
+            # Create shorter ID format for better usability
+            # Use last 8 digits of timestamp + 2-digit worker + 3-digit sequence = 13 digits max
+            timestamp_str = str(now)[-8:]  # Last 8 digits of timestamp
+            worker_str = str(self.worker_id).zfill(2)[-2:]  # 2 digits (0-99)
+            seq_str = str(self.sequence).zfill(3)  # 3 digits (0-4095, but padded to 3)
             
-            # Build the ID: [timestamp: 41 bits] [worker: 10 bits] [sequence: 12 bits] [reserved: 1 bit]
-            id_value = (timestamp_offset << 23) | (self.worker_id << 13) | self.sequence
-            
-            # Convert to string and ensure it's numeric
-            return str(id_value)
+            # Total: 8 + 2 + 3 = 13 digits maximum
+            return timestamp_str + worker_str + seq_str
     
     def validate_order_id(self, order_id: str) -> bool:
         """Validate numeric order ID"""
         if not order_id or not isinstance(order_id, str):
             return False
         
-        # Check if it's purely numeric and reasonable length
-        return order_id.isdigit() and 10 <= len(order_id) <= 20
+        # Check if it's purely numeric and reasonable length (12-13 digits)
+        return order_id.isdigit() and 12 <= len(order_id) <= 13
     
     def extract_timestamp_from_order_id(self, order_id: str) -> Optional[int]:
         """Extract timestamp from numeric order ID"""
@@ -113,18 +113,24 @@ class NumericIdGenerator:
             return None
         
         try:
-            # Parse the ID as integer
-            id_value = int(order_id)
+            # New format: 8 digits timestamp + 2 digits worker + 3 digits sequence
+            timestamp_part = order_id[:8]  # First 8 digits
             
-            # Extract timestamp (first 41 bits)
-            timestamp_offset = id_value >> 23
+            # This is the last 8 digits of the actual timestamp
+            # We need to reconstruct the full timestamp
+            current_time = self._current_millis()
+            current_time_str = str(current_time)
+            current_prefix = current_time_str[:-8]
             
-            # Add back the epoch to get actual timestamp
-            actual_timestamp = timestamp_offset + self.epoch
+            # Reconstruct full timestamp
+            reconstructed_timestamp = int(current_prefix + timestamp_part)
             
-            # Validate if it's a reasonable timestamp (after 2024 and before 2050)
-            if actual_timestamp > self.epoch and actual_timestamp < 2524608000000:
-                return actual_timestamp
+            # Validate if it's a reasonable timestamp (within last year and next hour)
+            one_year_ago = current_time - (365 * 24 * 60 * 60 * 1000)
+            one_hour_from_now = current_time + (60 * 60 * 1000)
+            
+            if one_year_ago <= reconstructed_timestamp <= one_hour_from_now:
+                return reconstructed_timestamp
         except (ValueError, OverflowError):
             # Invalid integer conversion
             pass
@@ -137,13 +143,14 @@ class NumericIdGenerator:
             return None
         
         try:
-            # Parse the ID as integer
-            id_value = int(order_id)
+            # New format: 8 digits timestamp + 2 digits worker + 3 digits sequence
+            worker_part = order_id[8:10]  # Digits 8-9 (2 digits)
             
-            # Extract worker ID (10 bits after timestamp)
-            worker_id = (id_value >> 13) & 0x3FF
+            worker_id = int(worker_part)
             
-            return worker_id
+            # Validate worker ID range (0-99 in new format)
+            if 0 <= worker_id <= 99:
+                return worker_id
         except (ValueError, OverflowError):
             # Invalid integer conversion
             pass

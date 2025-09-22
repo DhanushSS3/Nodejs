@@ -8,10 +8,10 @@ const UserTransaction = sequelize.define('UserTransaction', {
     primaryKey: true,
   },
   transaction_id: {
-    type: DataTypes.STRING(20),
+    type: DataTypes.STRING(30),
     allowNull: false,
     unique: true,
-    comment: 'Unique transaction ID with prefix (e.g., TXN1234567890)',
+    comment: 'Unique transaction ID with prefix (e.g., TXN1234567890123456)',
   },
   user_id: {
     type: DataTypes.BIGINT,
