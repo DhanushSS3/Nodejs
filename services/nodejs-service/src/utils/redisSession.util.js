@@ -142,7 +142,7 @@ async function checkOTPRateLimit(email, userType) {
     pipeline.expire(key, OTP_RATE_LIMIT_WINDOW, 'NX'); // Set expiry only if key is new
     const results = await pipeline.exec();
     const count = results[0][1];
-    return count > OTP_RATE_LIMIT_MAX;
+    return count > OTP_RATE_LIMIT_MAX_REQUESTS;
   } catch (error) {
     console.error('OTP rate limit check failed:', error);
     return true; // Fail closed
@@ -355,6 +355,16 @@ async function deleteResetToken(email, userType) {
   }
 }
 
+async function clearOTPRateLimit(email, userType) {
+  const key = getOTPRateLimitKey(email, userType);
+  try {
+    await redisCluster.del(key);
+    console.log(`Cleared OTP rate limit for ${email} (${userType})`);
+  } catch (error) {
+    console.error('Failed to clear OTP rate limit:', error);
+  }
+}
+
 module.exports = {
   // OTP Functions
   storeOTP,
@@ -362,6 +372,7 @@ module.exports = {
   incrementOTPTries,
   deleteOTP,
   checkOTPRateLimit,
+  clearOTPRateLimit,
   OTP_MAX_TRIES,
   // Password Reset
   storePasswordResetOTP,

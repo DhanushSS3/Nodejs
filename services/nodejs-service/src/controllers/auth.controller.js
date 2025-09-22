@@ -8,6 +8,7 @@ const {
   incrementOTPTries,
   deleteOTP,
   checkOTPRateLimit,
+  clearOTPRateLimit,
   OTP_MAX_TRIES,
   // Password Reset Utilities
   storePasswordResetOTP,
@@ -175,10 +176,33 @@ async function resetPassword(req, res) {
   }
 }
 
+async function clearOTPRateLimitForUser(req, res) {
+  const { email, userType } = req.body;
+
+  if (!['live', 'demo'].includes(userType)) {
+    return res.status(400).json({ success: false, message: 'Invalid user type specified.' });
+  }
+
+  try {
+    await clearOTPRateLimit(email, userType);
+    return res.status(200).json({ 
+      success: true, 
+      message: `OTP rate limit cleared for ${email} (${userType})` 
+    });
+  } catch (error) {
+    logger.error('Failed to clear OTP rate limit', { email, userType, error: error.message });
+    return res.status(500).json({ 
+      success: false, 
+      message: 'An unexpected error occurred. Please try again.' 
+    });
+  }
+}
+
 module.exports = {
   requestEmailOTP,
   verifyEmailOTP,
   requestPasswordReset,
   verifyPasswordResetOTP,
   resetPassword,
+  clearOTPRateLimitForUser,
 };
