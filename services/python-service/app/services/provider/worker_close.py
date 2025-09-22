@@ -4,6 +4,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
+import time
 
 import orjson
 import aio_pika
@@ -11,8 +12,19 @@ import aiohttp
 
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_close_service import OrderCloser
+from app.services.logging.provider_logger import (
+    get_worker_close_logger,
+    get_orders_calculated_logger,
+    get_provider_errors_logger,
+    log_provider_stats
+)
 
-logger = logging.getLogger(__name__)
+# Initialize dedicated loggers
+logger = get_worker_close_logger()
+calc_logger = get_orders_calculated_logger()
+error_logger = get_provider_errors_logger()
+
+# Keep basic logging for compatibility
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
@@ -53,29 +65,8 @@ async def release_lock(lock_key: str, token: str) -> None:
         logger.error("release_lock error: %s", e)
 
 
-# ------------- Dedicated calculated orders file logger -------------
-def _get_orders_calc_logger() -> logging.Logger:
-    lg = logging.getLogger("orders.calculated")
-    # Avoid duplicate handlers
-    for h in lg.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
-            return lg
-    try:
-        base_dir = Path(__file__).resolve().parents[3]
-    except Exception:
-        base_dir = Path('.')
-    log_dir = base_dir / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'orders_calculated.log'
-    fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
-    fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
-    fh._orders_calc = True
-    lg.addHandler(fh)
-    lg.setLevel(logging.INFO)
-    return lg
-
-
-_ORDERS_CALC_LOG = _get_orders_calc_logger()
+# Use centralized calculated orders logger
+_ORDERS_CALC_LOG = calc_logger
 
 
 class CloseWorker:
@@ -86,6 +77,21 @@ class CloseWorker:
         self._ex = None
         self._db_queue: Optional[aio_pika.abc.AbstractQueue] = None
         self._closer = OrderCloser()
+        
+        # Statistics tracking
+        self._stats = {
+            'start_time': time.time(),
+            'messages_processed': 0,
+            'orders_closed': 0,
+            'orders_failed': 0,
+            'close_calculations': 0,
+            'context_enrichments': 0,
+            'redis_errors': 0,
+            'db_publishes': 0,
+            'last_message_time': None,
+            'total_processing_time_ms': 0,
+            'finalize_retries': 0
+        }
 
     async def connect(self):
         self._conn = await aio_pika.connect_robust(RABBITMQ_URL)
@@ -95,7 +101,7 @@ class CloseWorker:
         # ensure DB update queue exists
         self._db_queue = await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
-        logger.info("CloseWorker connected. Waiting on %s", CLOSE_QUEUE)
+        logger.info("[CLOSE:CONNECTED] Worker connected to %s", CLOSE_QUEUE)
 
     async def _ack(self, message: aio_pika.abc.AbstractIncomingMessage):
         try:
@@ -110,14 +116,21 @@ class CloseWorker:
             logger.exception("nack failed")
 
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
+        start_time = time.time()
+        order_id_dbg = None
+        
         try:
+            self._stats['messages_processed'] += 1
+            self._stats['last_message_time'] = start_time
+            
             payload = orjson.loads(message.body)
             er = payload.get("execution_report") or {}
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
             order_id_dbg = str(payload.get("order_id"))
             side_dbg = str(payload.get("order_type") or payload.get("side") or "").upper()
+            
             logger.info(
-                "[CLOSE:received] order_id=%s ord_status=%s side=%s avgpx=%s",
+                "[CLOSE:RECEIVED] order_id=%s ord_status=%s side=%s avgpx=%s",
                 order_id_dbg, ord_status, side_dbg,
                 er.get("avgpx") or (er.get("raw") or {}).get("6"),
             )
@@ -125,8 +138,8 @@ class CloseWorker:
             # Only process close EXECUTED
             if ord_status not in ("EXECUTED", "2"):
                 logger.warning(
-                    "[CLOSE:skip] order_id=%s ord_status=%s not handled (only EXECUTED/2).",
-                    order_id_dbg, ord_status,
+                    "[CLOSE:SKIP] order_id=%s ord_status=%s reason=not_executed",
+                    order_id_dbg, ord_status
                 )
                 await self._ack(message)
                 return
@@ -142,7 +155,7 @@ class CloseWorker:
                 ).strip()
                 if idem:
                     if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info("[CLOSE:skip:provider_idempotent] order_id=%s idem=%s", order_id_dbg, idem)
+                        logger.info("[CLOSE:SKIP] order_id=%s idem=%s reason=provider_idempotent", order_id_dbg, idem)
                         await self._ack(message)
                         return
             except Exception:
@@ -155,14 +168,25 @@ class CloseWorker:
             except Exception:
                 got_processing = True  # if Redis failed, proceed best-effort
             if not got_processing:
-                logger.warning("[CLOSE:processing_exists] order_id=%s; ACK duplicate", order_id_dbg)
+                logger.warning("[CLOSE:SKIP] order_id=%s reason=already_processing", order_id_dbg)
                 await self._ack(message)
                 return
 
             # Ensure we have enough context to finalize: backfill order_data and user info from Node if needed
+            context_start = time.time()
             try:
                 await self._ensure_order_context(payload, er)
-            except Exception:
+                context_time = (time.time() - context_start) * 1000
+                self._stats['context_enrichments'] += 1
+                logger.debug(
+                    "[CLOSE:CONTEXT_ENRICHED] order_id=%s context_time=%.2fms",
+                    order_id_dbg, context_time
+                )
+            except Exception as e:
+                logger.debug(
+                    "[CLOSE:CONTEXT_FAILED] order_id=%s error=%s",
+                    order_id_dbg, str(e)
+                )
                 # Best-effort; continue
                 pass
 
@@ -171,7 +195,7 @@ class CloseWorker:
             token = f"{os.getpid()}-{id(message)}"
             got_lock = await acquire_lock(lock_key, token, ttl_sec=8)
             if not got_lock:
-                logger.warning("Could not acquire lock %s; NACK and requeue", lock_key)
+                logger.warning("[CLOSE:LOCK_FAILED] order_id=%s lock_key=%s", order_id_dbg, lock_key)
                 try:
                     await redis_cluster.delete(processing_key)
                 except Exception:
@@ -181,11 +205,14 @@ class CloseWorker:
 
             try:
                 # Finalize close using OrderCloser logic
+                close_start = time.time()
                 avgpx = er.get("avgpx") or (er.get("raw") or {}).get("6")
                 try:
                     close_price = float(avgpx) if avgpx is not None else None
                 except Exception:
                     close_price = None
+                    
+                self._stats['close_calculations'] += 1
                 result = await self._closer.finalize_close(
                     user_type=str(payload.get("user_type")),
                     user_id=str(payload.get("user_id")),
@@ -196,25 +223,44 @@ class CloseWorker:
                     fallback_entry_price=payload.get("order_price"),
                     fallback_qty=payload.get("order_quantity"),
                 )
+                
+                close_time = (time.time() - close_start) * 1000
+                logger.debug(
+                    "[CLOSE:FINALIZED] order_id=%s close_time=%.2fms close_price=%s profit=%s",
+                    order_id_dbg, close_time, close_price, result.get('net_profit')
+                )
                 if not result.get("ok"):
                     reason = str(result.get("reason"))
-                    logger.error("[CLOSE:finalize_failed] order_id=%s reason=%s", order_id_dbg, reason)
+                    error_logger.error(
+                        "[CLOSE:FINALIZE_FAILED] order_id=%s reason=%s", 
+                        order_id_dbg, reason
+                    )
+                    
                     # Bounded retries to avoid infinite loop on unrecoverable context
                     try:
                         rkey = f"close_finalize_retries:{payload.get('order_id')}"
                         cnt = await redis_cluster.incr(rkey)
                         # expire retry counter in 10 minutes to avoid leaks
                         await redis_cluster.expire(rkey, 600)
+                        self._stats['finalize_retries'] += 1
                     except Exception:
                         cnt = 1
+                        
                     if cnt <= 3 and reason.startswith("cleanup_failed:") is False:
+                        logger.warning(
+                            "[CLOSE:RETRY] order_id=%s attempt=%d reason=%s",
+                            order_id_dbg, cnt, reason
+                        )
                         try:
                             await redis_cluster.delete(processing_key)
                         except Exception:
                             pass
                         await self._nack(message, requeue=True)
                     else:
-                        logger.warning("[CLOSE:dropping] order_id=%s after %s retries due to %s", order_id_dbg, cnt, reason)
+                        logger.warning(
+                            "[CLOSE:DROPPED] order_id=%s retries=%d reason=%s", 
+                            order_id_dbg, cnt, reason
+                        )
                         await self._ack(message)
                     return
 
@@ -247,7 +293,9 @@ class CloseWorker:
                     pass
 
                 # Publish DB update intent
+                db_start = time.time()
                 try:
+                    self._stats['db_publishes'] += 1
                     # Prefer provider's original lifecycle id (from ER raw payload) to infer close reason on Node
                     trigger_lifecycle_id = None
                     try:
@@ -278,8 +326,18 @@ class CloseWorker:
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
-                except Exception:
-                    logger.exception("Failed to publish DB update message for close")
+                    
+                    db_time = (time.time() - db_start) * 1000
+                    logger.debug(
+                        "[CLOSE:DB_PUBLISHED] order_id=%s db_time=%.2fms queue=%s",
+                        order_id_dbg, db_time, DB_UPDATE_QUEUE
+                    )
+                    
+                except Exception as e:
+                    error_logger.exception(
+                        "[CLOSE:DB_PUBLISH_ERROR] order_id=%s error=%s", 
+                        order_id_dbg, str(e)
+                    )
             finally:
                 await release_lock(lock_key, token)
                 try:
@@ -287,9 +345,27 @@ class CloseWorker:
                 except Exception:
                     pass
 
+            # Record successful processing
+            processing_time = (time.time() - start_time) * 1000
+            self._stats['orders_closed'] += 1
+            self._stats['total_processing_time_ms'] += processing_time
+            
+            logger.info(
+                "[CLOSE:SUCCESS] order_id=%s processing_time=%.2fms total_closed=%d profit=%s",
+                order_id_dbg, processing_time, self._stats['orders_closed'],
+                result.get('net_profit') if 'result' in locals() else None
+            )
+            
             await self._ack(message)
         except Exception as e:
-            logger.exception("CloseWorker handle error: %s", e)
+            processing_time = (time.time() - start_time) * 1000
+            self._stats['orders_failed'] += 1
+            self._stats['total_processing_time_ms'] += processing_time
+            
+            error_logger.exception(
+                "[CLOSE:ERROR] order_id=%s processing_time=%.2fms error=%s",
+                order_id_dbg or "unknown", processing_time, str(e)
+            )
             await self._nack(message, requeue=True)
 
     async def _ensure_order_context(self, payload: dict, er: dict) -> None:
@@ -388,20 +464,86 @@ class CloseWorker:
         except Exception:
             return None
 
+    async def _log_stats(self):
+        """Log worker statistics."""
+        try:
+            uptime = time.time() - self._stats['start_time']
+            avg_processing_time = (
+                self._stats['total_processing_time_ms'] / self._stats['messages_processed']
+                if self._stats['messages_processed'] > 0 else 0
+            )
+            
+            stats = {
+                **self._stats,
+                'uptime_seconds': uptime,
+                'uptime_hours': uptime / 3600,
+                'messages_per_second': self._stats['messages_processed'] / uptime if uptime > 0 else 0,
+                'success_rate': (
+                    (self._stats['orders_closed'] / self._stats['messages_processed']) * 100
+                    if self._stats['messages_processed'] > 0 else 0
+                ),
+                'avg_processing_time_ms': avg_processing_time
+            }
+            
+            log_provider_stats('worker_close', stats)
+            logger.info(
+                "[CLOSE:STATS] processed=%d closed=%d failed=%d uptime=%.1fh rate=%.2f/s avg_time=%.2fms",
+                stats['messages_processed'],
+                stats['orders_closed'],
+                stats['orders_failed'],
+                stats['uptime_hours'],
+                stats['messages_per_second'],
+                avg_processing_time
+            )
+        except Exception as e:
+            logger.error("[CLOSE:STATS_ERROR] Failed to log stats: %s", e)
+
     async def run(self):
-        await self.connect()
-        await self._queue.consume(self.handle, no_ack=False)
-        while True:
-            await asyncio.sleep(3600)
+        logger.info("[CLOSE:STARTING] Worker initializing...")
+        
+        try:
+            await self.connect()
+            await self._queue.consume(self.handle, no_ack=False)
+            logger.info("[CLOSE:READY] Worker started consuming messages")
+            
+            # Log stats periodically
+            stats_interval = 0
+            while True:
+                await asyncio.sleep(300)  # 5 minutes
+                stats_interval += 300
+                
+                # Log stats every 15 minutes
+                if stats_interval >= 900:
+                    await self._log_stats()
+                    stats_interval = 0
+        except Exception as e:
+            error_logger.exception("[CLOSE:RUN_ERROR] Worker run error: %s", e)
+            raise
 
 
 async def main():
     w = CloseWorker()
-    await w.run()
+    try:
+        logger.info("[CLOSE:MAIN] Starting close worker service...")
+        await w.run()
+    except KeyboardInterrupt:
+        logger.info("[CLOSE:MAIN] Received keyboard interrupt, shutting down...")
+    except Exception as e:
+        error_logger.exception("[CLOSE:MAIN] Unhandled exception in main: %s", e)
+    finally:
+        # Log final stats
+        try:
+            await w._log_stats()
+        except Exception:
+            pass
+        logger.info("[CLOSE:MAIN] Worker shutdown complete")
 
 
 if __name__ == "__main__":
     try:
+        logger.info("[CLOSE:APP] Starting close worker application...")
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        logger.info("[CLOSE:APP] Application interrupted by user")
+    except Exception as e:
+        error_logger.exception("[CLOSE:APP] Application failed: %s", e)

@@ -4,6 +4,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
+import time
 
 import orjson
 import aio_pika
@@ -14,8 +15,19 @@ from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.commission_calculator import compute_entry_commission
 from app.services.orders.order_repository import fetch_group_data, fetch_user_orders
 from app.services.groups.group_config_helper import get_group_config_with_fallback
+from app.services.logging.provider_logger import (
+    get_worker_open_logger,
+    get_orders_calculated_logger,
+    get_provider_errors_logger,
+    log_provider_stats
+)
 
-logger = logging.getLogger(__name__)
+# Initialize dedicated loggers
+logger = get_worker_open_logger()
+calc_logger = get_orders_calculated_logger()
+error_logger = get_provider_errors_logger()
+
+# Keep basic logging for compatibility
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
@@ -51,29 +63,8 @@ async def release_lock(lock_key: str, token: str) -> None:
     except Exception as e:
         logger.error("release_lock error: %s", e)
 
-# ------------- Dedicated calculated orders file logger -------------
-def _get_orders_calc_logger() -> logging.Logger:
-    lg = logging.getLogger("orders.calculated")
-    # Avoid duplicate handlers
-    for h in lg.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
-            return lg
-    try:
-        base_dir = Path(__file__).resolve().parents[3]
-    except Exception:
-        base_dir = Path('.')
-    log_dir = base_dir / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'orders_calculated.log'
-    fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
-    fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
-    fh._orders_calc = True
-    lg.addHandler(fh)
-    lg.setLevel(logging.INFO)
-    return lg
-
-
-_ORDERS_CALC_LOG = _get_orders_calc_logger()
+# Use centralized calculated orders logger
+_ORDERS_CALC_LOG = calc_logger
 
 
 def _normalize_side(side_or_type: Optional[str]) -> str:
@@ -370,6 +361,20 @@ class OpenWorker:
         self._queue: Optional[aio_pika.abc.AbstractQueue] = None
         self._ex = None
         self._db_queue: Optional[aio_pika.abc.AbstractQueue] = None
+        
+        # Statistics tracking
+        self._stats = {
+            'start_time': time.time(),
+            'messages_processed': 0,
+            'orders_opened': 0,
+            'orders_failed': 0,
+            'margin_calculations': 0,
+            'commission_calculations': 0,
+            'redis_errors': 0,
+            'db_publishes': 0,
+            'last_message_time': None,
+            'total_processing_time_ms': 0
+        }
 
     async def connect(self):
         self._conn = await aio_pika.connect_robust(RABBITMQ_URL)
@@ -379,7 +384,7 @@ class OpenWorker:
         # ensure DB update queue exists
         self._db_queue = await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
-        logger.info("OpenWorker connected. Waiting on %s", OPEN_QUEUE)
+        logger.info("[OPEN:CONNECTED] Worker connected to %s", OPEN_QUEUE)
 
     async def _ack(self, message: aio_pika.abc.AbstractIncomingMessage):
         try:
@@ -394,15 +399,23 @@ class OpenWorker:
             logger.exception("nack failed")
 
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
+        start_time = time.time()
+        order_id_dbg = None
+        
         try:
+            self._stats['messages_processed'] += 1
+            self._stats['last_message_time'] = start_time
+            
             payload = orjson.loads(message.body)
+            
             # Basic debug context
             er = (payload.get("execution_report") or {})
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip()
             order_id_dbg = str(payload.get("order_id"))
             side_dbg = str(payload.get("order_type") or payload.get("side") or "").upper()
+            
             logger.info(
-                "[OPEN:received] order_id=%s ord_status=%s side=%s avgpx=%s cumqty=%s",
+                "[OPEN:RECEIVED] order_id=%s ord_status=%s side=%s avgpx=%s cumqty=%s",
                 order_id_dbg,
                 ord_status,
                 side_dbg,
@@ -413,7 +426,8 @@ class OpenWorker:
             # Only process filled: accept new format 'EXECUTED' and legacy '2'.
             if str(ord_status).upper() not in ("2", "EXECUTED"):
                 logger.warning(
-                    "[OPEN:skip] order_id=%s ord_status=%s not handled (only EXECUTED/2).", order_id_dbg, ord_status
+                    "[OPEN:SKIP] order_id=%s ord_status=%s reason=not_executed", 
+                    order_id_dbg, ord_status
                 )
                 await self._ack(message)
                 return
@@ -428,7 +442,7 @@ class OpenWorker:
                 ).strip()
                 if idem:
                     if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info("[OPEN:skip:provider_idempotent] order_id=%s idem=%s", order_id_dbg, idem)
+                        logger.info("[OPEN:SKIP] order_id=%s idem=%s reason=provider_idempotent", order_id_dbg, idem)
                         await self._ack(message)
                         return
             except Exception:
@@ -438,17 +452,25 @@ class OpenWorker:
             token = f"{os.getpid()}-{id(message)}"
             got_lock = await acquire_lock(lock_key, token, ttl_sec=8)
             if not got_lock:
-                logger.warning("Could not acquire lock %s; NACK and requeue", lock_key)
+                logger.warning("[OPEN:LOCK_FAILED] order_id=%s lock_key=%s", order_id_dbg, lock_key)
                 await self._nack(message, requeue=True)
                 return
 
             try:
                 # Step 1: update provider OPEN markers
                 ctx = await _update_redis_for_open(payload)
-                logger.debug("[OPEN:update_redis_done] ctx=%s", ctx)
+                logger.debug("[OPEN:REDIS_UPDATED] order_id=%s ctx_keys=%s", order_id_dbg, list(ctx.keys()))
+                
                 # Step 2: recompute margins
+                margin_start = time.time()
                 margins = await _recompute_margins(ctx, payload)
-                logger.debug("[OPEN:recompute_done] margins=%s", margins)
+                margin_time = (time.time() - margin_start) * 1000
+                self._stats['margin_calculations'] += 1
+                
+                logger.debug(
+                    "[OPEN:MARGINS_COMPUTED] order_id=%s margin_time=%.2fms single_margin=%s", 
+                    order_id_dbg, margin_time, margins.get('single_margin_usd')
+                )
 
                 # Step 3: persist recalculated fields (best-effort)
                 upd_map = {}
@@ -522,7 +544,7 @@ class OpenWorker:
                 pipe.hset(portfolio_key, mapping=margin_updates)
                 await pipe.execute()
                 logger.info(
-                    "[OPEN:updated] order_id=%s price=%s qty=%s margin=%s used_margin_executed=%s used_margin_all=%s",
+                    "[OPEN:UPDATED] order_id=%s price=%s qty=%s margin=%s used_margin_executed=%s used_margin_all=%s",
                     ctx.get("order_id"),
                     upd_map.get("order_price"),
                     upd_map.get("order_quantity"),
@@ -532,7 +554,10 @@ class OpenWorker:
                 )
 
                 # Step 3b: compute and persist ENTRY commission for provider EXECUTED (open)
+                commission_start = time.time()
+                commission_entry = 0.0
                 try:
+                    self._stats['commission_calculations'] += 1
                     # Fetch commission snapshot from canonical order_data; fallback to group hash
                     rate_raw = await redis_cluster.hget(ctx["order_data_key"], "commission_rate")
                     if rate_raw is None:
@@ -600,7 +625,6 @@ class OpenWorker:
                     exec_px = _to_float(margins.get("final_exec_price") or (payload.get("execution_report") or {}).get("avgpx"))
                     cs_val = _to_float(margins.get("contract_size"))
 
-                    commission_entry = 0.0
                     if rate is not None and ctype is not None and vtype is not None and qty is not None and exec_px is not None:
                         commission_entry = compute_entry_commission(
                             commission_rate=rate,
@@ -609,6 +633,12 @@ class OpenWorker:
                             quantity=qty,
                             order_price=exec_px,
                             contract_size=cs_val,
+                        )
+                        
+                        commission_time = (time.time() - commission_start) * 1000
+                        logger.debug(
+                            "[OPEN:COMMISSION] order_id=%s commission=%.4f time=%.2fms rate=%s type=%s",
+                            order_id_dbg, commission_entry, commission_time, rate, ctype
                         )
 
                     # Persist commission: user holdings gets 'commission' for UI; canonical gets 'commission_entry'
@@ -624,8 +654,11 @@ class OpenWorker:
                         await pipe_c.execute()
                     except Exception:
                         pass
-                except Exception:
-                    logger.exception("[OPEN:commission] failed to compute/persist entry commission")
+                except Exception as e:
+                    error_logger.exception(
+                        "[OPEN:COMMISSION_ERROR] order_id=%s error=%s", 
+                        order_id_dbg, str(e)
+                    )
 
                 # Log calculated order data to dedicated file
                 try:
@@ -656,7 +689,9 @@ class OpenWorker:
                     pass
 
                 # Step 4: publish DB update intent for Node consumer (decoupled persistence)
+                db_start = time.time()
                 try:
+                    self._stats['db_publishes'] += 1
                     # Derive executed side for DB from computed margins or payload (normalized)
                     side_for_db = _normalize_side(margins.get("side") or payload.get("order_type") or payload.get("side"))
                     db_msg = {
@@ -703,30 +738,123 @@ class OpenWorker:
                         pass
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
-                except Exception:
-                    logger.exception("Failed to publish DB update message")
+                    
+                    db_time = (time.time() - db_start) * 1000
+                    logger.debug(
+                        "[OPEN:DB_PUBLISHED] order_id=%s db_time=%.2fms queue=%s",
+                        order_id_dbg, db_time, DB_UPDATE_QUEUE
+                    )
+                    
+                except Exception as e:
+                    error_logger.exception(
+                        "[OPEN:DB_PUBLISH_ERROR] order_id=%s error=%s", 
+                        order_id_dbg, str(e)
+                    )
             finally:
                 await release_lock(lock_key, token)
 
+            # Record successful processing
+            processing_time = (time.time() - start_time) * 1000
+            self._stats['orders_opened'] += 1
+            self._stats['total_processing_time_ms'] += processing_time
+            
+            logger.info(
+                "[OPEN:SUCCESS] order_id=%s processing_time=%.2fms total_orders=%d",
+                order_id_dbg, processing_time, self._stats['orders_opened']
+            )
+            
             await self._ack(message)
         except Exception as e:
-            logger.exception("OpenWorker handle error: %s", e)
+            processing_time = (time.time() - start_time) * 1000
+            self._stats['orders_failed'] += 1
+            self._stats['total_processing_time_ms'] += processing_time
+            
+            error_logger.exception(
+                "[OPEN:ERROR] order_id=%s processing_time=%.2fms error=%s",
+                order_id_dbg or "unknown", processing_time, str(e)
+            )
             await self._nack(message, requeue=True)
 
+    async def _log_stats(self):
+        """Log worker statistics."""
+        try:
+            uptime = time.time() - self._stats['start_time']
+            avg_processing_time = (
+                self._stats['total_processing_time_ms'] / self._stats['messages_processed']
+                if self._stats['messages_processed'] > 0 else 0
+            )
+            
+            stats = {
+                **self._stats,
+                'uptime_seconds': uptime,
+                'uptime_hours': uptime / 3600,
+                'messages_per_second': self._stats['messages_processed'] / uptime if uptime > 0 else 0,
+                'success_rate': (
+                    (self._stats['orders_opened'] / self._stats['messages_processed']) * 100
+                    if self._stats['messages_processed'] > 0 else 0
+                ),
+                'avg_processing_time_ms': avg_processing_time
+            }
+            
+            log_provider_stats('worker_open', stats)
+            logger.info(
+                "[OPEN:STATS] processed=%d opened=%d failed=%d uptime=%.1fh rate=%.2f/s avg_time=%.2fms",
+                stats['messages_processed'],
+                stats['orders_opened'],
+                stats['orders_failed'],
+                stats['uptime_hours'],
+                stats['messages_per_second'],
+                avg_processing_time
+            )
+        except Exception as e:
+            logger.error("[OPEN:STATS_ERROR] Failed to log stats: %s", e)
+
     async def run(self):
-        await self.connect()
-        await self._queue.consume(self.handle, no_ack=False)
-        while True:
-            await asyncio.sleep(3600)
+        logger.info("[OPEN:STARTING] Worker initializing...")
+        
+        try:
+            await self.connect()
+            await self._queue.consume(self.handle, no_ack=False)
+            logger.info("[OPEN:READY] Worker started consuming messages")
+            
+            # Log stats periodically
+            stats_interval = 0
+            while True:
+                await asyncio.sleep(300)  # 5 minutes
+                stats_interval += 300
+                
+                # Log stats every 15 minutes
+                if stats_interval >= 900:
+                    await self._log_stats()
+                    stats_interval = 0
+        except Exception as e:
+            error_logger.exception("[OPEN:RUN_ERROR] Worker run error: %s", e)
+            raise
 
 
 async def main():
     w = OpenWorker()
-    await w.run()
+    try:
+        logger.info("[OPEN:MAIN] Starting open worker service...")
+        await w.run()
+    except KeyboardInterrupt:
+        logger.info("[OPEN:MAIN] Received keyboard interrupt, shutting down...")
+    except Exception as e:
+        error_logger.exception("[OPEN:MAIN] Unhandled exception in main: %s", e)
+    finally:
+        # Log final stats
+        try:
+            await w._log_stats()
+        except Exception:
+            pass
+        logger.info("[OPEN:MAIN] Worker shutdown complete")
 
 
 if __name__ == "__main__":
     try:
+        logger.info("[OPEN:APP] Starting open worker application...")
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        logger.info("[OPEN:APP] Application interrupted by user")
+    except Exception as e:
+        error_logger.exception("[OPEN:APP] Application failed: %s", e)

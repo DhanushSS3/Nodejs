@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, Optional
 from pathlib import Path
 from dotenv import load_dotenv
+import time
 
 import orjson
 import aio_pika
@@ -22,8 +23,17 @@ env_path = root_dir / '.env'
 load_dotenv(env_path)
 
 from app.config.redis_config import redis_cluster, redis_pubsub_client
+from app.services.logging.provider_logger import (
+    get_dispatcher_logger,
+    get_provider_errors_logger,
+    log_provider_stats
+)
 
-logger = logging.getLogger(__name__)
+# Initialize dedicated loggers
+logger = get_dispatcher_logger()
+error_logger = get_provider_errors_logger()
+
+# Keep basic logging for compatibility
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Debug: Log environment variable loading
@@ -135,6 +145,17 @@ class Dispatcher:
         self._q_dlq: Optional[aio_pika.abc.AbstractQueue] = None
         self._ex = None
         self._consumer_tag: Optional[str] = None
+        
+        # Statistics tracking
+        self._stats = {
+            'start_time': time.time(),
+            'messages_processed': 0,
+            'messages_routed': 0,
+            'messages_dlq': 0,
+            'routing_errors': 0,
+            'redis_errors': 0,
+            'last_message_time': None
+        }
 
     async def connect(self):
         # Test Redis connectivity
@@ -185,18 +206,54 @@ class Dispatcher:
         try:
             msg = aio_pika.Message(body=orjson.dumps(body), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
             await self._ex.publish(msg, routing_key=queue_name)
+            
+            # Log successful routing
+            logger.debug(
+                "[DISPATCH:ROUTED] order_id=%s queue=%s redis_status=%s ord_status=%s",
+                body.get('order_id', 'unknown'),
+                queue_name,
+                body.get('execution_report', {}).get('redis_status', 'unknown'),
+                body.get('execution_report', {}).get('ord_status', 'unknown')
+            )
+            self._stats['messages_routed'] += 1
+            
         except Exception as e:
-            logger.exception("Failed to publish message to queue %s: %s", queue_name, e)
+            error_logger.exception(
+                "[DISPATCH:PUBLISH_FAILED] queue=%s order_id=%s error=%s",
+                queue_name,
+                body.get('order_id', 'unknown'),
+                str(e)
+            )
+            self._stats['routing_errors'] += 1
             # Don't re-raise to avoid breaking the message processing flow
 
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
+        start_time = time.time()
+        order_id_debug = None
+        
         try:
             async with message.process(requeue=False):
+                self._stats['messages_processed'] += 1
+                self._stats['last_message_time'] = start_time
+                
                 report = orjson.loads(message.body)
+                
+                # Extract order ID for logging
+                order_id_debug = (
+                    report.get("order_id") or 
+                    report.get("exec_id") or 
+                    (report.get("raw") or {}).get("11") or 
+                    (report.get("raw") or {}).get("17") or
+                    "unknown"
+                )
+                
                 # Only process execution reports, ignore provider ACK messages
                 rtype = str(report.get("type") or "").strip().lower()
                 if rtype != "execution_report":
-                    logger.info("Dispatcher ignoring non-execution report type=%s", rtype)
+                    logger.debug(
+                        "[DISPATCH:IGNORED] order_id=%s type=%s reason=non_execution_report",
+                        order_id_debug, rtype
+                    )
                     return
                 
                 lifecycle_id = report.get("order_id") or report.get("exec_id")
@@ -206,8 +263,12 @@ class Dispatcher:
                     lifecycle_id = raw.get("11") or raw.get("17")
 
                 if not lifecycle_id:
-                    logger.warning("No lifecycle ID in report; sending to DLQ")
+                    logger.warning(
+                        "[DISPATCH:DLQ] order_id=%s reason=missing_lifecycle_id",
+                        order_id_debug
+                    )
                     await self._publish(DLQ, {"reason": "missing_lifecycle_id", "report": report})
+                    self._stats['messages_dlq'] += 1
                     return
 
                 # Handle Redis operations with error handling
@@ -218,8 +279,12 @@ class Dispatcher:
 
                 order_data = await _redis_hgetall(f"order_data:{canonical_order_id}")
                 if not order_data:
-                    logger.warning("Canonical order_data missing for %s; DLQ", canonical_order_id)
+                    logger.warning(
+                        "[DISPATCH:DLQ] order_id=%s canonical_id=%s reason=missing_order_data",
+                        order_id_debug, canonical_order_id
+                    )
                     await self._publish(DLQ, {"reason": "missing_order_data", "order_id": canonical_order_id, "report": report})
+                    self._stats['messages_dlq'] += 1
                     return
 
                 payload = await _compose_payload(report, order_data, canonical_order_id)
@@ -253,9 +318,9 @@ class Dispatcher:
                     elif redis_status in ("MODIFY", "PENDING", "CANCELLED"):
                         target_queue = CANCEL_QUEUE
                     else:
-                        logger.info(
-                            "Unmapped cancel confirmation; DLQ. redis_status=%s ord_status=%s order_id=%s",
-                            redis_status, ord_status, canonical_order_id,
+                        logger.warning(
+                            "[DISPATCH:DLQ] order_id=%s reason=unmapped_cancel_state redis_status=%s ord_status=%s",
+                            canonical_order_id, redis_status, ord_status
                         )
                         await self._publish(
                             DLQ,
@@ -267,6 +332,7 @@ class Dispatcher:
                                 "report": report,
                             },
                         )
+                        self._stats['messages_dlq'] += 1
                         return
                 elif redis_status == "OPEN" and ord_status == "EXECUTED":
                     target_queue = OPEN_QUEUE
@@ -301,9 +367,9 @@ class Dispatcher:
                 elif redis_status in ("STOPLOSS", "TAKEPROFIT", "STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL") and ord_status == "EXECUTED":
                     target_queue = CLOSE_QUEUE
                 else:
-                    logger.info(
-                        "Unmapped routing state; DLQ. redis_status=%s ord_status=%s order_id=%s",
-                        redis_status, ord_status, canonical_order_id,
+                    logger.warning(
+                        "[DISPATCH:DLQ] order_id=%s reason=unmapped_routing_state redis_status=%s ord_status=%s",
+                        canonical_order_id, redis_status, ord_status
                     )
                     await self._publish(
                         DLQ,
@@ -315,43 +381,103 @@ class Dispatcher:
                             "report": report,
                         },
                     )
+                    self._stats['messages_dlq'] += 1
                     return
 
+                # Log successful routing decision
+                processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
                 logger.info(
-                    "Routing ER redis_status=%s ord_status=%s order_id=%s -> %s",
-                    redis_status, ord_status, canonical_order_id, target_queue,
+                    "[DISPATCH:SUCCESS] order_id=%s redis_status=%s ord_status=%s target_queue=%s processing_time=%.2fms",
+                    canonical_order_id, redis_status, ord_status, target_queue, processing_time
                 )
+                
+                # Add routing metadata to payload
+                payload["routing_metadata"] = {
+                    "dispatcher_processing_time_ms": processing_time,
+                    "routing_decision": {
+                        "redis_status": redis_status,
+                        "ord_status": ord_status,
+                        "target_queue": target_queue
+                    },
+                    "timestamp": start_time
+                }
+                
                 await self._publish(target_queue, payload)
         except Exception as e:
-            logger.exception("Dispatcher handle error (channel/connection issue): %s", e)
+            processing_time = (time.time() - start_time) * 1000
+            error_logger.exception(
+                "[DISPATCH:ERROR] order_id=%s processing_time=%.2fms error=%s",
+                order_id_debug or "unknown", processing_time, str(e)
+            )
+            self._stats['routing_errors'] += 1
             # Don't re-raise here to avoid unhandled exceptions during shutdown
+
+    async def _log_stats(self):
+        """Log dispatcher statistics."""
+        try:
+            uptime = time.time() - self._stats['start_time']
+            stats = {
+                **self._stats,
+                'uptime_seconds': uptime,
+                'uptime_hours': uptime / 3600,
+                'messages_per_second': self._stats['messages_processed'] / uptime if uptime > 0 else 0,
+                'routing_success_rate': (
+                    (self._stats['messages_routed'] / self._stats['messages_processed']) * 100
+                    if self._stats['messages_processed'] > 0 else 0
+                ),
+                'error_rate': (
+                    (self._stats['routing_errors'] / self._stats['messages_processed']) * 100
+                    if self._stats['messages_processed'] > 0 else 0
+                )
+            }
+            
+            log_provider_stats('dispatcher', stats)
+            logger.info(
+                "[DISPATCH:STATS] processed=%d routed=%d dlq=%d errors=%d uptime=%.1fh rate=%.2f/s",
+                stats['messages_processed'],
+                stats['messages_routed'],
+                stats['messages_dlq'],
+                stats['routing_errors'],
+                stats['uptime_hours'],
+                stats['messages_per_second']
+            )
+        except Exception as e:
+            logger.error("[DISPATCH:STATS_ERROR] Failed to log stats: %s", e)
 
     async def cleanup(self):
         """Clean up connections and resources"""
+        logger.info("[DISPATCH:CLEANUP] Starting cleanup...")
+        
         try:
+            # Log final stats before cleanup
+            await self._log_stats()
+            
             # Cancel consumer if it exists
             if self._consumer_tag and self._q_in:
                 try:
                     await self._q_in.cancel(self._consumer_tag)
+                    logger.debug("[DISPATCH:CLEANUP] Consumer cancelled")
                 except Exception as e:
-                    logger.debug("Failed to cancel consumer: %s", e)
+                    logger.debug("[DISPATCH:CLEANUP] Failed to cancel consumer: %s", e)
             
             # Close channel
             if self._channel and not self._channel.is_closed:
                 try:
                     await self._channel.close()
+                    logger.debug("[DISPATCH:CLEANUP] Channel closed")
                 except Exception as e:
-                    logger.debug("Failed to close channel: %s", e)
+                    logger.debug("[DISPATCH:CLEANUP] Failed to close channel: %s", e)
             
             # Close connection
             if self._conn and not self._conn.is_closed:
                 try:
                     await self._conn.close()
+                    logger.debug("[DISPATCH:CLEANUP] Connection closed")
                 except Exception as e:
-                    logger.debug("Failed to close connection: %s", e)
+                    logger.debug("[DISPATCH:CLEANUP] Failed to close connection: %s", e)
                     
         except Exception as e:
-            logger.exception("Error during cleanup: %s", e)
+            error_logger.exception("[DISPATCH:CLEANUP] Error during cleanup: %s", e)
         finally:
             self._conn = None
             self._channel = None
@@ -359,8 +485,11 @@ class Dispatcher:
             self._q_dlq = None
             self._ex = None
             self._consumer_tag = None
+            logger.info("[DISPATCH:CLEANUP] Cleanup completed")
 
     async def run(self):
+        logger.info("[DISPATCH:STARTING] Dispatcher service initializing...")
+        
         while True:
             try:
                 # Clean up any existing connections first
@@ -368,42 +497,52 @@ class Dispatcher:
                 
                 await self.connect()
                 self._consumer_tag = await self._q_in.consume(self.handle, no_ack=False)
-                logger.info("Dispatcher started consuming messages")
+                logger.info("[DISPATCH:READY] Dispatcher started consuming messages")
                 
-                # Keep the service running
+                # Keep the service running and log stats periodically
+                stats_interval = 0
                 while True:
                     await asyncio.sleep(30)  # Check more frequently
+                    stats_interval += 30
+                    
+                    # Log stats every 5 minutes
+                    if stats_interval >= 300:
+                        await self._log_stats()
+                        stats_interval = 0
+                    
                     # Check if connection is still alive
                     if not self._conn or self._conn.is_closed:
-                        logger.warning("Connection lost, reconnecting...")
+                        logger.warning("[DISPATCH:RECONNECT] Connection lost, reconnecting...")
                         break
                     if not self._channel or self._channel.is_closed:
-                        logger.warning("Channel lost, reconnecting...")
+                        logger.warning("[DISPATCH:RECONNECT] Channel lost, reconnecting...")
                         break
                         
             except Exception as e:
-                logger.exception("Dispatcher run error: %s", e)
-                logger.info("Retrying connection in 5 seconds...")
+                error_logger.exception("[DISPATCH:RUN_ERROR] Dispatcher run error: %s", e)
+                logger.info("[DISPATCH:RETRY] Retrying connection in 5 seconds...")
                 await asyncio.sleep(5)
 
 
 async def main():
     d = Dispatcher()
     try:
+        logger.info("[DISPATCH:MAIN] Starting dispatcher service...")
         await d.run()
     except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, shutting down...")
+        logger.info("[DISPATCH:MAIN] Received keyboard interrupt, shutting down...")
     except Exception as e:
-        logger.exception("Unhandled exception in main: %s", e)
+        error_logger.exception("[DISPATCH:MAIN] Unhandled exception in main: %s", e)
     finally:
         await d.cleanup()
-        logger.info("Dispatcher shutdown complete")
+        logger.info("[DISPATCH:MAIN] Dispatcher shutdown complete")
 
 
 if __name__ == "__main__":
     try:
+        logger.info("[DISPATCH:APP] Starting dispatcher application...")
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Application interrupted by user")
+        logger.info("[DISPATCH:APP] Application interrupted by user")
     except Exception as e:
-        logger.exception("Application failed: %s", e)
+        error_logger.exception("[DISPATCH:APP] Application failed: %s", e)

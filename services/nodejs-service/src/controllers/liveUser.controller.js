@@ -449,18 +449,16 @@ async function refreshToken(req, res) {
     );
 
     // Delete the old refresh token in a separate operation
-    await deleteRefreshToken(refreshToken, 'live');
+    await deleteRefreshToken(refreshToken);
 
     return res.status(200).json({
       success: true,
       message: 'Token refreshed successfully',
-      data: {
-        access_token: newAccessToken,
-        refresh_token: newRefreshToken,
-        expires_in: 900, // 15 minutes in seconds
-        token_type: 'Bearer',
-        session_id: sessionId
-      }
+      access_token: newAccessToken,
+      refresh_token: newRefreshToken,
+      expires_in: 900, // 15 minutes in seconds
+      token_type: 'Bearer',
+      session_id: sessionId
     });
   } catch (error) {
     console.error('Token refresh failed:', error);

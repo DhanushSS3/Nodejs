@@ -300,13 +300,11 @@ async function login(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Login successful',
-      data: {
-        access_token: token,
-        refresh_token: refreshToken,
-        expires_in: 900, // 15 minutes
-        token_type: 'Bearer',
-        session_id: sessionId
-      }
+      access_token: token,
+      refresh_token: refreshToken,
+      expires_in: 900, // 15 minutes in seconds
+      token_type: 'Bearer',
+      session_id: sessionId
     });
   } catch (err) {
     logger.error('Demo user login failed', { error: err.message });
@@ -389,13 +387,11 @@ async function refreshToken(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Token refreshed successfully',
-      data: {
-        access_token: newAccessToken,
-        refresh_token: newRefreshToken,
-        expires_in: 900,
-        token_type: 'Bearer',
-        session_id: sessionId
-      }
+      access_token: newAccessToken,
+      refresh_token: newRefreshToken,
+      expires_in: 900, // 15 minutes in seconds
+      token_type: 'Bearer',
+      session_id: sessionId
     });
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
