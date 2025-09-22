@@ -62,9 +62,9 @@ class RedisConfig:
             "decode_responses": True,
             "password": redis_password,
             "health_check_interval": 30,
-            "socket_connect_timeout": 2,
-            "socket_timeout": 2,
-            "max_connections": 50,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+            "max_connections": 200,
             "address_remap": address_remap,
         }
     

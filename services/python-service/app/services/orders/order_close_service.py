@@ -17,8 +17,10 @@ from app.services.portfolio.conversion_utils import convert_to_usd
 from app.services.orders.service_provider_client import send_provider_order
 from app.services.orders.order_registry import add_lifecycle_id
 from app.services.groups.group_config_helper import get_group_config_with_fallback
+from app.services.logging.provider_logger import get_provider_errors_logger
 
 logger = logging.getLogger(__name__)
+error_logger = get_provider_errors_logger()
 
 # User-level locks to prevent race conditions during order operations
 _user_locks = {}
@@ -471,19 +473,34 @@ class OrderCloser:
                 )
 
                 # Remove keys and update margins using same-slot pipeline for user-scoped keys
-                p_user = redis_cluster.pipeline()
-                p_user.srem(index_key, order_id)
-                p_user.delete(order_key)
-                if executed_margin is not None:
-                    p_user.hset(portfolio_key, mapping={
-                        "used_margin_executed": str(float(executed_margin)),
-                        "used_margin": str(float(executed_margin)),
-                    })
-                if total_margin is not None:
-                    p_user.hset(portfolio_key, mapping={
-                        "used_margin_all": str(float(total_margin)),
-                    })
-                await p_user.execute()
+                # Add retry logic for Redis connection pool exhaustion
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        p_user = redis_cluster.pipeline()
+                        p_user.srem(index_key, order_id)
+                        p_user.delete(order_key)
+                        if executed_margin is not None:
+                            p_user.hset(portfolio_key, mapping={
+                                "used_margin_executed": str(float(executed_margin)),
+                                "used_margin": str(float(executed_margin)),
+                            })
+                        if total_margin is not None:
+                            p_user.hset(portfolio_key, mapping={
+                                "used_margin_all": str(float(total_margin)),
+                            })
+                        await p_user.execute()
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        if attempt == max_retries - 1:
+                            # Last attempt failed, re-raise
+                            raise
+                        logger.warning(
+                            "[CLOSE:CLEANUP_RETRY] order_id=%s user=%s:%s attempt=%d error=%s",
+                            order_id, user_type, user_id, attempt + 1, str(e)
+                        )
+                        # Wait briefly before retry (exponential backoff)
+                        await asyncio.sleep(0.1 * (2 ** attempt))
                 # Delete canonical in separate call to avoid cross-slot pipeline
                 try:
                     await redis_cluster.delete(order_data_key)
@@ -505,7 +522,15 @@ class OrderCloser:
                     "used_margin_all": float(total_margin or 0.0) if total_margin is not None else None,
                 }
             except Exception as e:
-                logger.error("cleanup_after_close error for %s:%s order=%s: %s", user_type, user_id, order_id, e)
+                logger.error(
+                    "[CLOSE:CLEANUP_EXCEPTION] order_id=%s user=%s:%s error_type=%s error_msg=%s",
+                    order_id, user_type, user_id, type(e).__name__, str(e)
+                )
+                # Log the full traceback to provider_errors.log
+                error_logger.exception(
+                    "[CLOSE:CLEANUP_EXCEPTION_TRACE] order_id=%s user=%s:%s",
+                    order_id, user_type, user_id
+                )
                 return {"ok": False, "reason": "cleanup_exception"}
 
     async def finalize_close(self, *, user_type: str, user_id: str, order_id: str, close_price: Optional[float] = None,

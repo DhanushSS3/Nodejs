@@ -434,14 +434,30 @@ class CloseWorker:
             order.get("takeprofit_cancel_id"),
             order.get("stoploss_cancel_id"),
         ]
-        try:
-            pipe = redis_cluster.pipeline()
-            for _id in ids_to_map:
-                if _id:
-                    pipe.set(f"global_order_lookup:{_id}", can_id)
-            await pipe.execute()
-        except Exception:
-            pass
+        # Add retry logic for Redis connection pool exhaustion
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                pipe = redis_cluster.pipeline()
+                for _id in ids_to_map:
+                    if _id:
+                        pipe.set(f"global_order_lookup:{_id}", can_id)
+                await pipe.execute()
+                break  # Success, exit retry loop
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    # Last attempt failed, log and continue (non-critical operation)
+                    logger.warning(
+                        "[CLOSE:LOOKUP_MAPPING_FAILED] order_id=%s error=%s",
+                        payload.get("order_id"), str(e)
+                    )
+                    break
+                logger.warning(
+                    "[CLOSE:LOOKUP_MAPPING_RETRY] order_id=%s attempt=%d error=%s",
+                    payload.get("order_id"), attempt + 1, str(e)
+                )
+                # Wait briefly before retry (exponential backoff)
+                await asyncio.sleep(0.1 * (2 ** attempt))
         # Enrich payload with user info if missing
         if not payload.get("user_id") and user.get("id") is not None:
             payload["user_id"] = str(user.get("id"))

@@ -125,23 +125,37 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
         "provider_ts": str(ts) if ts is not None else "",
     }
 
-    # Update both keys in a pipeline
-    pipe = redis_cluster.pipeline()
-    # Filter out None values to avoid writing 'order_type': None
-    mapping_filtered = {k: v for k, v in mapping_common.items() if v is not None}
-    pipe.hset(order_data_key, mapping=mapping_filtered)
-    pipe.hset(order_key, mapping=mapping_filtered)
-    # Ensure order is in the active index (idempotent safety)
-    pipe.sadd(index_key, order_id)
-    # Ensure symbol_holders has this user for this symbol (idempotent safety)
-    try:
-        symbol = str(payload.get("symbol") or "").upper()
-        if symbol:
-            sym_set = f"symbol_holders:{symbol}:{user_type}"
-            pipe.sadd(sym_set, hash_tag)
-    except Exception:
-        pass
-    await pipe.execute()
+    # Update both keys in a pipeline with retry logic
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            pipe = redis_cluster.pipeline()
+            # Filter out None values to avoid writing 'order_type': None
+            mapping_filtered = {k: v for k, v in mapping_common.items() if v is not None}
+            pipe.hset(order_data_key, mapping=mapping_filtered)
+            pipe.hset(order_key, mapping=mapping_filtered)
+            # Ensure order is in the active index (idempotent safety)
+            pipe.sadd(index_key, order_id)
+            # Ensure symbol_holders has this user for this symbol (idempotent safety)
+            try:
+                symbol = str(payload.get("symbol") or "").upper()
+                if symbol:
+                    sym_set = f"symbol_holders:{symbol}:{user_type}"
+                    pipe.sadd(sym_set, hash_tag)
+            except Exception:
+                pass
+            await pipe.execute()
+            break  # Success, exit retry loop
+        except Exception as e:
+            if attempt == max_retries - 1:
+                # Last attempt failed, re-raise
+                raise
+            logger.warning(
+                "[OPEN:REDIS_UPDATE_RETRY] order_id=%s attempt=%d error=%s",
+                order_id, attempt + 1, str(e)
+            )
+            # Wait briefly before retry (exponential backoff)
+            await asyncio.sleep(0.1 * (2 ** attempt))
 
     return {
         "order_id": order_id,
@@ -519,10 +533,6 @@ class OpenWorker:
                     )
                     upd_map["contract_value"] = str(float(expected_cv))
 
-                pipe = redis_cluster.pipeline()
-                if upd_map:
-                    pipe.hset(ctx["order_key"], mapping=upd_map)
-                    pipe.hset(ctx["order_data_key"], mapping=upd_map)
                 # Update portfolio used_margin with recomputed totals (always recalc post-confirmation)
                 portfolio_key = f"user_portfolio:{{{payload.get('user_type')}:{payload.get('user_id')}}}"
                 # Recalculate both margin fields
@@ -541,8 +551,28 @@ class OpenWorker:
                     "used_margin_all": str(float(total_margin)) if total_margin is not None else "0.0",
                     "used_margin": str(float(executed_margin)) if executed_margin is not None else "0.0",  # Legacy field now points to executed only
                 }
-                pipe.hset(portfolio_key, mapping=margin_updates)
-                await pipe.execute()
+                
+                # Add retry logic for Redis connection pool exhaustion
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        pipe = redis_cluster.pipeline()
+                        if upd_map:
+                            pipe.hset(ctx["order_key"], mapping=upd_map)
+                            pipe.hset(ctx["order_data_key"], mapping=upd_map)
+                        pipe.hset(portfolio_key, mapping=margin_updates)
+                        await pipe.execute()
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        if attempt == max_retries - 1:
+                            # Last attempt failed, re-raise
+                            raise
+                        logger.warning(
+                            "[OPEN:PIPELINE_RETRY] order_id=%s attempt=%d error=%s",
+                            ctx.get("order_id"), attempt + 1, str(e)
+                        )
+                        # Wait briefly before retry (exponential backoff)
+                        await asyncio.sleep(0.1 * (2 ** attempt))
                 logger.info(
                     "[OPEN:UPDATED] order_id=%s price=%s qty=%s margin=%s used_margin_executed=%s used_margin_all=%s",
                     ctx.get("order_id"),
