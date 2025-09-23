@@ -13,7 +13,7 @@ import aiohttp
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_close_service import OrderCloser
 from app.services.orders.order_repository import fetch_user_config
-from app.services.orders.provider_connection import send_provider_order
+from app.services.orders.provider_connection import get_provider_connection_manager
 from app.services.logging.provider_logger import (
     get_worker_close_logger,
     get_orders_calculated_logger,
@@ -252,7 +252,9 @@ class CloseWorker:
         Async task to send cancel request to provider (fire and forget).
         """
         try:
-            ok, via = await send_provider_order(cancel_payload)
+            manager = get_provider_connection_manager()
+            await manager.send(cancel_payload)
+            ok, via = True, manager.transport or "unknown"
             if ok:
                 logger.info(
                     "[CLOSE:CANCEL_FF_SENT] order_id=%s type=%s via=%s", 

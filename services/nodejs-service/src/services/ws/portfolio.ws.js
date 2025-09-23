@@ -218,6 +218,7 @@ function startPortfolioWSServer(server) {
         const updateStatus = isOrderUpdate && evt.update && evt.update.order_status ? String(evt.update.order_status).toUpperCase() : '';
         const forceDbRefresh = (
           (evt && evt.type === 'order_rejected') ||
+          (evt && evt.type === 'order_rejection_created') ||
           (evt && evt.type === 'pending_cancelled') ||
           (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'local_pending_cancel' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered')) ||
           (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED' || updateStatus === 'CANCELLED'))

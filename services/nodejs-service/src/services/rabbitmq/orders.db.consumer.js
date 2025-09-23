@@ -4,6 +4,7 @@ const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
 const LiveUser = require('../../models/liveUser.model');
 const DemoUser = require('../../models/demoUser.model');
+const OrderRejection = require('../../models/orderRejection.model');
 const { updateUserUsedMargin } = require('../user.margin.service');
 // Redis cluster (used to fetch canonical order data if SQL row missing)
 const { redisCluster } = require('../../../config/redis');
@@ -26,6 +27,88 @@ function normalizeOrderType(t) {
   if (s === 'BUY_LIMIT' || s === 'BUY_STOP' || s === 'B_LIMIT' || s === 'B_STOP') return 'BUY';
   if (s === 'SELL_LIMIT' || s === 'SELL_STOP' || s === 'S_LIMIT' || s === 'S_STOP') return 'SELL';
   return s;
+}
+
+async function handleOrderRejectionRecord(msg) {
+  const {
+    canonical_order_id,
+    provider_order_id,
+    user_id,
+    user_type,
+    symbol,
+    rejection_type,
+    redis_status,
+    provider_ord_status,
+    reason,
+    provider_exec_id,
+    provider_raw_data,
+    order_type,
+    order_price,
+    order_quantity,
+    margin_released
+  } = msg || {};
+
+  if (!canonical_order_id || !user_id || !user_type || !rejection_type) {
+    throw new Error('Missing required fields in rejection record message');
+  }
+
+  logger.info('DB consumer creating rejection record', {
+    canonical_order_id: String(canonical_order_id),
+    user_id: String(user_id),
+    user_type: String(user_type),
+    rejection_type,
+    redis_status,
+    symbol
+  });
+
+  try {
+    // Create rejection record
+    await OrderRejection.create({
+      canonical_order_id: String(canonical_order_id),
+      provider_order_id: provider_order_id ? String(provider_order_id) : null,
+      user_id: parseInt(String(user_id), 10),
+      user_type: String(user_type),
+      symbol: symbol ? String(symbol).toUpperCase() : '',
+      rejection_type: String(rejection_type),
+      redis_status: redis_status ? String(redis_status) : '',
+      provider_ord_status: provider_ord_status ? String(provider_ord_status) : null,
+      reason: reason ? String(reason) : null,
+      provider_exec_id: provider_exec_id ? String(provider_exec_id) : null,
+      provider_raw_data: provider_raw_data || null,
+      order_type: order_type ? String(order_type) : null,
+      order_price: order_price != null && Number.isFinite(Number(order_price)) ? Number(order_price) : null,
+      order_quantity: order_quantity != null && Number.isFinite(Number(order_quantity)) ? Number(order_quantity) : null,
+      margin_released: margin_released != null && Number.isFinite(Number(margin_released)) ? Number(margin_released) : null
+    });
+
+    logger.info('Created order rejection record', {
+      canonical_order_id: String(canonical_order_id),
+      rejection_type,
+      user_id: String(user_id),
+      user_type: String(user_type)
+    });
+
+    // Emit websocket event for rejection notification
+    try {
+      portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+        type: 'order_rejection_created',
+        canonical_order_id: String(canonical_order_id),
+        rejection_type: String(rejection_type),
+        reason: reason ? String(reason) : null,
+        symbol: symbol ? String(symbol).toUpperCase() : null
+      });
+    } catch (e) {
+      logger.warn('Failed to emit rejection notification event', { error: e.message });
+    }
+
+  } catch (error) {
+    logger.error('Failed to create order rejection record', {
+      error: error.message,
+      canonical_order_id: String(canonical_order_id),
+      rejection_type
+    });
+    throw error;
+  }
 }
 
 async function applyDbUpdate(msg) {
@@ -522,10 +605,20 @@ async function startOrdersDbConsumer() {
       if (!msg) return;
       try {
         const payload = JSON.parse(msg.content.toString('utf8'));
-        await applyDbUpdate(payload);
+        
+        // Route different message types
+        if (payload.type === 'ORDER_REJECTION_RECORD') {
+          await handleOrderRejectionRecord(payload);
+        } else {
+          await applyDbUpdate(payload);
+        }
+        
         ch.ack(msg);
       } catch (err) {
-        logger.error('Orders DB consumer failed to handle message', { error: err.message });
+        logger.error('Orders DB consumer failed to handle message', { 
+          error: err.message, 
+          messageType: payload?.type || 'unknown'
+        });
         // Requeue to retry transient failures
         ch.nack(msg, false, true);
       }

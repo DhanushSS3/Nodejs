@@ -360,20 +360,15 @@ class Dispatcher:
                     # Race: pending executed at provider before cancel took effect -> proceed to OPEN
                     payload["pending_executed"] = True
                     target_queue = OPEN_QUEUE
-                elif redis_status == "OPEN" and ord_status == "REJECTED":
-                    target_queue = REJECT_QUEUE
-                elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "REJECTED":
-                    target_queue = REJECT_QUEUE
-                elif redis_status == "CLOSED" and ord_status == "EXECUTED":
-                    target_queue = CLOSE_QUEUE
-                elif redis_status == "CLOSED" and ord_status == "REJECTED":
+                # Route ALL REJECTED orders to reject worker regardless of Redis status
+                elif ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
                 elif redis_status == "STOPLOSS" and ord_status == "PENDING":
                     target_queue = SL_QUEUE
                 elif redis_status == "TAKEPROFIT" and ord_status == "PENDING":
                     target_queue = TP_QUEUE
                 # Close on provider EXECUTED for trigger-related statuses
-                elif redis_status in ("STOPLOSS", "TAKEPROFIT", "STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL") and ord_status == "EXECUTED":
+                elif redis_status in ("STOPLOSS", "TAKEPROFIT", "STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL", "CLOSED") and ord_status == "EXECUTED":
                     target_queue = CLOSE_QUEUE
                 else:
                     logger.warning(
