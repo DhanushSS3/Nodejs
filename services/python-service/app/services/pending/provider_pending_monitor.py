@@ -128,7 +128,7 @@ async def _validate_margin(user_type: str, user_id: str, group: str, symbol: str
 async def _send_cancel(order_id: str, cancel_id: str, order_type: str) -> bool:
     try:
         payload = {
-            "order_id": str(order_id),
+            "original_id": str(order_id),
             "cancel_id": str(cancel_id),
             "order_type": str(order_type).upper(),
             "status": "CANCELLED",
