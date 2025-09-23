@@ -9,11 +9,11 @@ nodes.conf
 appendonlydir/
 
 # Environment files
-.env
-.env.local
-.env.production
-.env.staging
-*.env
+# .env
+# .env.local
+# .env.production
+# .env.staging
+# *.env
 
 # Node modules
 **/node_modules
