@@ -4,14 +4,28 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
+import time
 
 import orjson
 import aio_pika
 
 from app.config.redis_config import redis_cluster
 from app.services.pending.provider_pending_monitor import register_provider_pending
+from app.services.logging.provider_logger import (
+    get_worker_pending_logger,
+    get_orders_calculated_logger,
+    get_provider_errors_logger,
+    log_provider_stats,
+    log_order_processing,
+    log_error_with_context
+)
 
-logger = logging.getLogger(__name__)
+# Initialize dedicated loggers
+logger = get_worker_pending_logger()
+calc_logger = get_orders_calculated_logger()
+error_logger = get_provider_errors_logger()
+
+# Keep basic logging for compatibility
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
@@ -48,29 +62,8 @@ async def release_lock(lock_key: str, token: str) -> None:
         logger.error("release_lock error: %s", e)
 
 
-# ------------- Dedicated calculated orders file logger -------------
-def _get_orders_calc_logger() -> logging.Logger:
-    lg = logging.getLogger("orders.calculated")
-    # Avoid duplicate handlers
-    for h in lg.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "_orders_calc", False):
-            return lg
-    try:
-        base_dir = Path(__file__).resolve().parents[3]
-    except Exception:
-        base_dir = Path('.')
-    log_dir = base_dir / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'orders_calculated.log'
-    fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
-    fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
-    fh._orders_calc = True
-    lg.addHandler(fh)
-    lg.setLevel(logging.INFO)
-    return lg
-
-
-_ORDERS_CALC_LOG = _get_orders_calc_logger()
+# Use centralized calculated orders logger
+_ORDERS_CALC_LOG = calc_logger
 
 
 async def _update_redis_for_pending(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -147,6 +140,20 @@ class PendingWorker:
         self._channel: Optional[aio_pika.abc.AbstractChannel] = None
         self._queue: Optional[aio_pika.abc.AbstractQueue] = None
         self._ex = None
+        
+        # Statistics tracking
+        self._stats = {
+            'start_time': time.time(),
+            'messages_processed': 0,
+            'orders_pending': 0,
+            'orders_modified': 0,
+            'orders_failed': 0,
+            'provider_registrations': 0,
+            'redis_errors': 0,
+            'db_publishes': 0,
+            'last_message_time': None,
+            'total_processing_time_ms': 0
+        }
 
     async def connect(self):
         self._conn = await aio_pika.connect_robust(RABBITMQ_URL)
@@ -156,7 +163,7 @@ class PendingWorker:
         # ensure DB update queue exists
         await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
         self._ex = self._channel.default_exchange
-        logger.info("PendingWorker connected. Waiting on %s", PENDING_QUEUE)
+        logger.info("[PENDING:CONNECTED] Worker connected to %s", PENDING_QUEUE)
 
     async def _ack(self, message: aio_pika.abc.AbstractIncomingMessage):
         try:
@@ -171,16 +178,32 @@ class PendingWorker:
             logger.exception("nack failed")
 
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
+        start_time = time.time()
+        order_id_dbg = None
+        
         try:
+            self._stats['messages_processed'] += 1
+            self._stats['last_message_time'] = start_time
+            
             payload = orjson.loads(message.body)
             er = payload.get("execution_report") or {}
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
-            order_id = str(payload.get("order_id"))
+            order_id_dbg = str(payload.get("order_id"))
             user_type = str(payload.get("user_type"))
             user_id = str(payload.get("user_id"))
+            symbol = str(payload.get("symbol") or "").upper()
+            order_type = str(payload.get("order_type") or "").upper()
+            
+            logger.info(
+                "[PENDING:RECEIVED] order_id=%s ord_status=%s user=%s:%s symbol=%s type=%s",
+                order_id_dbg, ord_status, user_type, user_id, symbol, order_type
+            )
 
             if ord_status not in ("PENDING", "MODIFY"):
-                logger.warning("[PENDING:skip] order_id=%s ord_status=%s not PENDING", order_id, ord_status)
+                logger.warning(
+                    "[PENDING:SKIP] order_id=%s ord_status=%s reason=not_pending_or_modify", 
+                    order_id_dbg, ord_status
+                )
                 await self._ack(message)
                 return
 
@@ -195,7 +218,10 @@ class PendingWorker:
                 ).strip()
                 if idem:
                     if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info("[PENDING:skip:provider_idempotent] order_id=%s idem=%s", order_id, idem)
+                        logger.info(
+                            "[PENDING:SKIP] order_id=%s idem=%s reason=provider_idempotent", 
+                            order_id_dbg, idem
+                        )
                         await self._ack(message)
                         return
             except Exception:
@@ -206,34 +232,50 @@ class PendingWorker:
             token = f"{os.getpid()}-{id(message)}"
             got_lock = await acquire_lock(lock_key, token, ttl_sec=8)
             if not got_lock:
-                logger.warning("Could not acquire lock %s; NACK and requeue", lock_key)
+                logger.warning(
+                    "[PENDING:LOCK_FAILED] order_id=%s lock_key=%s", 
+                    order_id_dbg, lock_key
+                )
                 await self._nack(message, requeue=True)
                 return
 
             try:
                 # Step 1: mark order PENDING in Redis and persist provider fields
                 ctx = await _update_redis_for_pending(payload)
+                logger.debug(
+                    "[PENDING:REDIS_UPDATED] order_id=%s modified_price=%s", 
+                    order_id_dbg, ctx.get('modified_price')
+                )
 
                 # Step 2: register for provider pending monitoring (starts cancel-on-insufficient-margin loop)
                 try:
+                    self._stats['provider_registrations'] += 1
                     info = {
-                        "order_id": order_id,
-                        "symbol": str(payload.get("symbol") or "").upper(),
-                        "order_type": str(payload.get("order_type") or "").upper(),
+                        "order_id": order_id_dbg,
+                        "symbol": symbol,
+                        "order_type": order_type,
                         "order_quantity": payload.get("order_quantity"),
                         "user_id": user_id,
                         "user_type": user_type,
                         "group": str(payload.get("group") or "Standard"),
                     }
                     await register_provider_pending(info)
-                except Exception:
-                    logger.exception("[PENDING:register] failed for %s", order_id)
+                    logger.debug(
+                        "[PENDING:REGISTERED] order_id=%s for monitoring", 
+                        order_id_dbg
+                    )
+                except Exception as e:
+                    error_logger.exception(
+                        "[PENDING:REGISTER_ERROR] order_id=%s error=%s", 
+                        order_id_dbg, str(e)
+                    )
 
                 # Step 3: publish DB update to flip SQL status to PENDING
                 try:
+                    self._stats['db_publishes'] += 1
                     db_msg = {
                         "type": "ORDER_PENDING_CONFIRMED",
-                        "order_id": order_id,
+                        "order_id": order_id_dbg,
                         "user_id": user_id,
                         "user_type": user_type,
                         "order_status": "PENDING",
@@ -243,23 +285,32 @@ class PendingWorker:
                         mod_px = ctx.get("modified_price")
                         if mod_px is not None:
                             db_msg["order_price"] = str(mod_px)
+                            self._stats['orders_modified'] += 1
                     except Exception:
                         pass
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
-                except Exception:
-                    logger.exception("Failed to publish DB update message for pending confirmation")
+                    logger.debug(
+                        "[PENDING:DB_PUBLISHED] order_id=%s queue=%s", 
+                        order_id_dbg, DB_UPDATE_QUEUE
+                    )
+                except Exception as e:
+                    error_logger.exception(
+                        "[PENDING:DB_PUBLISH_ERROR] order_id=%s error=%s", 
+                        order_id_dbg, str(e)
+                    )
 
                 # Step 4: log calculated/context info
                 try:
                     calc = {
                         "type": "ORDER_PENDING_CONFIRMED",
-                        "order_id": order_id,
+                        "order_id": order_id_dbg,
                         "user_type": user_type,
                         "user_id": user_id,
-                        "symbol": str(payload.get("symbol") or "").upper(),
-                        "order_type": str(payload.get("order_type") or "").upper(),
+                        "symbol": symbol,
+                        "order_type": order_type,
                         "order_quantity": payload.get("order_quantity"),
+                        "modified_price": ctx.get("modified_price"),
                         "provider": {
                             "ord_status": ord_status,
                             "avgpx": er.get("avgpx") or (er.get("raw") or {}).get("6"),
@@ -272,25 +323,109 @@ class PendingWorker:
             finally:
                 await release_lock(lock_key, token)
 
+            # Record successful processing
+            processing_time = (time.time() - start_time) * 1000
+            self._stats['orders_pending'] += 1
+            self._stats['total_processing_time_ms'] += processing_time
+            
+            logger.info(
+                "[PENDING:SUCCESS] order_id=%s processing_time=%.2fms total_orders=%d",
+                order_id_dbg, processing_time, self._stats['orders_pending']
+            )
+            
             await self._ack(message)
         except Exception as e:
-            logger.exception("PendingWorker handle error: %s", e)
+            processing_time = (time.time() - start_time) * 1000
+            self._stats['orders_failed'] += 1
+            self._stats['total_processing_time_ms'] += processing_time
+            
+            error_logger.exception(
+                "[PENDING:ERROR] order_id=%s processing_time=%.2fms error=%s",
+                order_id_dbg or "unknown", processing_time, str(e)
+            )
             await self._nack(message, requeue=True)
 
+    async def _log_stats(self):
+        """Log worker statistics."""
+        try:
+            uptime = time.time() - self._stats['start_time']
+            avg_processing_time = (
+                self._stats['total_processing_time_ms'] / self._stats['messages_processed']
+                if self._stats['messages_processed'] > 0 else 0
+            )
+            
+            stats = {
+                **self._stats,
+                'uptime_seconds': uptime,
+                'uptime_hours': uptime / 3600,
+                'messages_per_second': self._stats['messages_processed'] / uptime if uptime > 0 else 0,
+                'success_rate': (
+                    (self._stats['orders_pending'] / self._stats['messages_processed']) * 100
+                    if self._stats['messages_processed'] > 0 else 0
+                ),
+                'avg_processing_time_ms': avg_processing_time
+            }
+            
+            log_provider_stats('worker_pending', stats)
+            logger.info(
+                "[PENDING:STATS] processed=%d pending=%d modified=%d failed=%d uptime=%.1fh rate=%.2f/s avg_time=%.2fms",
+                stats['messages_processed'],
+                stats['orders_pending'],
+                stats['orders_modified'],
+                stats['orders_failed'],
+                stats['uptime_hours'],
+                stats['messages_per_second'],
+                avg_processing_time
+            )
+        except Exception as e:
+            logger.error("[PENDING:STATS_ERROR] Failed to log stats: %s", e)
+
     async def run(self):
-        await self.connect()
-        await self._queue.consume(self.handle, no_ack=False)
-        while True:
-            await asyncio.sleep(3600)
+        logger.info("[PENDING:STARTING] Worker initializing...")
+        
+        try:
+            await self.connect()
+            await self._queue.consume(self.handle, no_ack=False)
+            logger.info("[PENDING:READY] Worker started consuming messages")
+            
+            # Log stats periodically
+            stats_interval = 0
+            while True:
+                await asyncio.sleep(300)  # 5 minutes
+                stats_interval += 300
+                
+                # Log stats every 15 minutes
+                if stats_interval >= 900:
+                    await self._log_stats()
+                    stats_interval = 0
+        except Exception as e:
+            error_logger.exception("[PENDING:RUN_ERROR] Worker run error: %s", e)
+            raise
 
 
 async def main():
     w = PendingWorker()
-    await w.run()
+    try:
+        logger.info("[PENDING:MAIN] Starting pending worker service...")
+        await w.run()
+    except KeyboardInterrupt:
+        logger.info("[PENDING:MAIN] Received keyboard interrupt, shutting down...")
+    except Exception as e:
+        error_logger.exception("[PENDING:MAIN] Unhandled exception in main: %s", e)
+    finally:
+        # Log final stats
+        try:
+            await w._log_stats()
+        except Exception:
+            pass
+        logger.info("[PENDING:MAIN] Worker shutdown complete")
 
 
 if __name__ == "__main__":
     try:
+        logger.info("[PENDING:APP] Starting pending worker application...")
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        logger.info("[PENDING:APP] Application interrupted by user")
+    except Exception as e:
+        error_logger.exception("[PENDING:APP] Application failed: %s", e)

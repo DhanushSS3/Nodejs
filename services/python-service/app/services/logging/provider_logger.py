@@ -1,257 +1,257 @@
 """
-Centralized logging configuration for provider services with file rotation.
-Provides separate log files for dispatcher, workers, and calculated orders.
+Provider logging utilities for separate worker log files.
+Each worker gets its own dedicated log file with proper rotation.
 """
-
-import os
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict, Optional
-import threading
+from typing import Dict, Any
+import orjson
 
-# Thread-safe logger cache
-_logger_cache: Dict[str, logging.Logger] = {}
-_cache_lock = threading.Lock()
 
-# Default log configuration
-DEFAULT_LOG_CONFIG = {
-    'max_bytes': 50 * 1024 * 1024,  # 50MB per file
-    'backup_count': 10,  # Keep 10 backup files
-    'format': '%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
-    'date_format': '%Y-%m-%d %H:%M:%S',
-    'encoding': 'utf-8'
-}
+# Base logs directory - ensure it's inside the python-service directory
+BASE_LOG_DIR = Path(__file__).parent.parent.parent.parent / "logs" / "provider"
+BASE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-def get_log_directory() -> Path:
-    """Get the logs directory, creating it if it doesn't exist."""
-    try:
-        # Get the base directory (services/python-service)
-        base_dir = Path(__file__).resolve().parents[4]
-    except Exception:
-        base_dir = Path('.')
-    
-    log_dir = base_dir / 'logs' / 'provider'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return log_dir
+# Logger cache to avoid creating duplicate loggers
+_LOGGER_CACHE: Dict[str, logging.Logger] = {}
 
-def create_rotating_logger(
+
+def _create_rotating_logger(
     name: str,
-    log_filename: str,
-    level: str = None,
-    max_bytes: int = None,
-    backup_count: int = None,
-    format_string: str = None
+    filename: str,
+    max_bytes: int = 50 * 1024 * 1024,  # 50MB
+    backup_count: int = 10,
+    level: int = logging.INFO
 ) -> logging.Logger:
-    """
-    Create a logger with rotating file handler.
+    """Create a rotating file logger with specified parameters."""
     
-    Args:
-        name: Logger name (e.g., 'provider.dispatcher')
-        log_filename: Log file name (e.g., 'dispatcher.log')
-        level: Log level (defaults to LOG_LEVEL env var or INFO)
-        max_bytes: Max file size before rotation (defaults to 50MB)
-        backup_count: Number of backup files to keep (defaults to 10)
-        format_string: Custom log format string
+    if name in _LOGGER_CACHE:
+        return _LOGGER_CACHE[name]
     
-    Returns:
-        Configured logger instance
-    """
-    with _cache_lock:
-        # Return cached logger if it exists
-        if name in _logger_cache:
-            return _logger_cache[name]
-        
-        # Create new logger
-        logger = logging.getLogger(name)
-        
-        # Avoid duplicate handlers
-        if logger.handlers:
-            _logger_cache[name] = logger
-            return logger
-        
-        # Configuration with defaults
-        log_level = level or os.getenv("LOG_LEVEL", "INFO")
-        max_file_size = max_bytes or DEFAULT_LOG_CONFIG['max_bytes']
-        backup_files = backup_count or DEFAULT_LOG_CONFIG['backup_count']
-        log_format = format_string or DEFAULT_LOG_CONFIG['format']
-        
-        # Set logger level
-        logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-        
-        # Create log directory and file path
-        log_dir = get_log_directory()
-        log_file = log_dir / log_filename
-        
-        # Create rotating file handler
-        file_handler = RotatingFileHandler(
-            str(log_file),
-            maxBytes=max_file_size,
-            backupCount=backup_files,
-            encoding=DEFAULT_LOG_CONFIG['encoding']
-        )
-        
-        # Set formatter
-        formatter = logging.Formatter(
-            log_format,
-            datefmt=DEFAULT_LOG_CONFIG['date_format']
-        )
-        file_handler.setFormatter(formatter)
-        
-        # Add handler to logger
-        logger.addHandler(file_handler)
-        
-        # Prevent propagation to root logger to avoid duplicate console output
-        logger.propagate = False
-        
-        # Cache the logger
-        _logger_cache[name] = logger
-        
-        # Log initial message
-        logger.info(f"Logger '{name}' initialized - File: {log_file}, Max Size: {max_file_size/1024/1024:.1f}MB, Backups: {backup_files}")
-        
-        return logger
-
-def get_dispatcher_logger() -> logging.Logger:
-    """Get the dispatcher logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.dispatcher',
-        log_filename='dispatcher.log',
-        max_bytes=100 * 1024 * 1024,  # 100MB for dispatcher (high volume)
-        backup_count=15
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    
+    # Clear any existing handlers
+    logger.handlers.clear()
+    
+    # Create file path
+    log_file = BASE_LOG_DIR / filename
+    
+    # Create rotating file handler
+    handler = RotatingFileHandler(
+        filename=str(log_file),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding='utf-8'
     )
+    
+    # Set formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    
+    logger.addHandler(handler)
+    logger.propagate = False  # Don't propagate to root logger
+    
+    _LOGGER_CACHE[name] = logger
+    return logger
 
+
+# Individual worker loggers
 def get_worker_open_logger() -> logging.Logger:
-    """Get the open worker logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.worker.open',
-        log_filename='worker_open.log',
-        max_bytes=75 * 1024 * 1024,  # 75MB for open worker
+    """Get logger for open worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.open",
+        "worker_open.log",
+        max_bytes=75 * 1024 * 1024,  # 75MB
         backup_count=12
     )
+
 
 def get_worker_close_logger() -> logging.Logger:
-    """Get the close worker logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.worker.close',
-        log_filename='worker_close.log',
-        max_bytes=75 * 1024 * 1024,  # 75MB for close worker
+    """Get logger for close worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.close",
+        "worker_close.log",
+        max_bytes=75 * 1024 * 1024,  # 75MB
         backup_count=12
     )
 
+
 def get_worker_pending_logger() -> logging.Logger:
-    """Get the pending worker logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.worker.pending',
-        log_filename='worker_pending.log',
-        max_bytes=50 * 1024 * 1024,  # 50MB for pending worker
+    """Get logger for pending worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.pending",
+        "worker_pending.log",
+        max_bytes=50 * 1024 * 1024,  # 50MB
         backup_count=10
     )
+
 
 def get_worker_cancel_logger() -> logging.Logger:
-    """Get the cancel worker logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.worker.cancel',
-        log_filename='worker_cancel.log',
-        max_bytes=50 * 1024 * 1024,  # 50MB for cancel worker
+    """Get logger for cancel worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.cancel",
+        "worker_cancel.log",
+        max_bytes=50 * 1024 * 1024,  # 50MB
         backup_count=10
     )
+
 
 def get_worker_reject_logger() -> logging.Logger:
-    """Get the reject worker logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.worker.reject',
-        log_filename='worker_reject.log',
-        max_bytes=50 * 1024 * 1024,  # 50MB for reject worker
+    """Get logger for reject worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.reject",
+        "worker_reject.log",
+        max_bytes=50 * 1024 * 1024,  # 50MB
         backup_count=10
     )
 
-def get_orders_calculated_logger() -> logging.Logger:
-    """Get the orders calculated logger with dedicated log file."""
-    return create_rotating_logger(
-        name='provider.orders.calculated',
-        log_filename='orders_calculated.log',
-        max_bytes=200 * 1024 * 1024,  # 200MB for calculated orders (JSON logs)
-        backup_count=20,
-        format_string='%(asctime)s %(message)s'  # Simplified format for JSON logs
+
+def get_worker_stoploss_logger() -> logging.Logger:
+    """Get logger for stop loss worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.stoploss",
+        "worker_stoploss.log",
+        max_bytes=50 * 1024 * 1024,  # 50MB
+        backup_count=10
     )
 
-def get_provider_errors_logger() -> logging.Logger:
-    """Get the provider errors logger for critical issues."""
-    return create_rotating_logger(
-        name='provider.errors',
-        log_filename='provider_errors.log',
-        max_bytes=100 * 1024 * 1024,  # 100MB for errors
+
+def get_worker_takeprofit_logger() -> logging.Logger:
+    """Get logger for take profit worker operations."""
+    return _create_rotating_logger(
+        "provider.worker.takeprofit",
+        "worker_takeprofit.log",
+        max_bytes=50 * 1024 * 1024,  # 50MB
+        backup_count=10
+    )
+
+
+def get_dispatcher_logger() -> logging.Logger:
+    """Get logger for dispatcher operations."""
+    return _create_rotating_logger(
+        "provider.dispatcher",
+        "dispatcher.log",
+        max_bytes=100 * 1024 * 1024,  # 100MB
         backup_count=15
     )
 
-def log_provider_stats(component: str, stats: dict) -> None:
-    """Log provider component statistics to dedicated stats logger."""
-    stats_logger = create_rotating_logger(
-        name='provider.stats',
-        log_filename='provider_stats.log',
-        max_bytes=50 * 1024 * 1024,
-        backup_count=10,
-        format_string='%(asctime)s [STATS] %(message)s'
+
+def get_orders_calculated_logger() -> logging.Logger:
+    """Get logger for calculated orders data."""
+    return _create_rotating_logger(
+        "provider.orders.calculated",
+        "orders_calculated.log",
+        max_bytes=200 * 1024 * 1024,  # 200MB
+        backup_count=20
     )
-    
-    import orjson
-    stats_data = {
-        'component': component,
-        'timestamp': stats.get('timestamp'),
-        **stats
-    }
-    stats_logger.info(orjson.dumps(stats_data).decode())
 
-def cleanup_old_logs(days_to_keep: int = 30) -> None:
-    """
-    Clean up log files older than specified days.
-    
-    Args:
-        days_to_keep: Number of days to keep log files (default: 30)
-    """
-    import time
-    
-    log_dir = get_log_directory()
-    cutoff_time = time.time() - (days_to_keep * 24 * 3600)
-    
-    cleanup_logger = create_rotating_logger(
-        name='provider.cleanup',
-        log_filename='cleanup.log'
+
+def get_provider_errors_logger() -> logging.Logger:
+    """Get logger for provider errors across all workers."""
+    return _create_rotating_logger(
+        "provider.errors",
+        "provider_errors.log",
+        max_bytes=100 * 1024 * 1024,  # 100MB
+        backup_count=15
     )
-    
-    cleaned_count = 0
-    try:
-        for log_file in log_dir.glob('*.log*'):
-            if log_file.stat().st_mtime < cutoff_time:
-                try:
-                    log_file.unlink()
-                    cleaned_count += 1
-                    cleanup_logger.info(f"Deleted old log file: {log_file.name}")
-                except Exception as e:
-                    cleanup_logger.error(f"Failed to delete {log_file.name}: {e}")
-        
-        cleanup_logger.info(f"Log cleanup completed. Removed {cleaned_count} old files.")
-    except Exception as e:
-        cleanup_logger.error(f"Log cleanup failed: {e}")
 
-# Convenience function to get all loggers for health checks
-def get_all_provider_loggers() -> Dict[str, logging.Logger]:
-    """Get all provider loggers for health monitoring."""
-    return {
-        'dispatcher': get_dispatcher_logger(),
-        'worker_open': get_worker_open_logger(),
-        'worker_close': get_worker_close_logger(),
-        'worker_pending': get_worker_pending_logger(),
-        'worker_cancel': get_worker_cancel_logger(),
-        'worker_reject': get_worker_reject_logger(),
-        'orders_calculated': get_orders_calculated_logger(),
-        'provider_errors': get_provider_errors_logger()
+
+# Utility functions for standardized logging
+def log_order_processing(logger: logging.Logger, order_id: str, user_id: str, symbol: str, 
+                        order_type: str, status: str, processing_time_ms: float = None,
+                        additional_data: Dict[str, Any] = None) -> None:
+    """Log standardized order processing information."""
+    log_data = {
+        "order_id": order_id,
+        "user_id": user_id,
+        "symbol": symbol,
+        "order_type": order_type,
+        "status": status,
     }
+    
+    if processing_time_ms is not None:
+        log_data["processing_time_ms"] = processing_time_ms
+    
+    if additional_data:
+        log_data.update(additional_data)
+    
+    logger.info(f"ORDER_PROCESSING: {orjson.dumps(log_data).decode()}")
 
-# Auto-cleanup on module import (optional)
-if os.getenv('AUTO_CLEANUP_LOGS', 'false').lower() == 'true':
-    try:
-        cleanup_old_logs(int(os.getenv('LOG_RETENTION_DAYS', '30')))
-    except Exception:
-        pass
+
+def log_worker_stats(logger: logging.Logger, worker_type: str, stats: Dict[str, Any]) -> None:
+    """Log worker performance statistics."""
+    log_data = {
+        "worker_type": worker_type,
+        "timestamp": stats.get("timestamp"),
+        "stats": stats
+    }
+    logger.info(f"WORKER_STATS: {orjson.dumps(log_data).decode()}")
+
+
+def log_provider_stats(worker_type: str, stats: Dict[str, Any]) -> None:
+    """Log provider statistics to appropriate worker logger."""
+    logger_map = {
+        "worker_open": get_worker_open_logger(),
+        "worker_close": get_worker_close_logger(),
+        "worker_pending": get_worker_pending_logger(),
+        "worker_cancel": get_worker_cancel_logger(),
+        "worker_reject": get_worker_reject_logger(),
+        "worker_stoploss": get_worker_stoploss_logger(),
+        "worker_takeprofit": get_worker_takeprofit_logger(),
+        "dispatcher": get_dispatcher_logger(),
+    }
+    
+    logger = logger_map.get(worker_type)
+    if logger:
+        log_worker_stats(logger, worker_type, stats)
+
+
+def log_error_with_context(logger: logging.Logger, error: Exception, context: Dict[str, Any] = None) -> None:
+    """Log error with additional context information."""
+    error_data = {
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "error_details": context or {}
+    }
+    logger.error(f"ERROR_CONTEXT: {orjson.dumps(error_data).decode()}", exc_info=True)
+
+
+def log_success_with_metrics(logger: logging.Logger, operation: str, metrics: Dict[str, Any]) -> None:
+    """Log successful operation with performance metrics."""
+    success_data = {
+        "operation": operation,
+        "status": "success",
+        "metrics": metrics
+    }
+    logger.info(f"SUCCESS_METRICS: {orjson.dumps(success_data).decode()}")
+
+
+# Initialize all loggers on import to ensure directories exist
+def initialize_all_loggers():
+    """Initialize all provider loggers to ensure log files and directories exist."""
+    loggers = [
+        get_worker_open_logger(),
+        get_worker_close_logger(),
+        get_worker_pending_logger(),
+        get_worker_cancel_logger(),
+        get_worker_reject_logger(),
+        get_worker_stoploss_logger(),
+        get_worker_takeprofit_logger(),
+        get_dispatcher_logger(),
+        get_orders_calculated_logger(),
+        get_provider_errors_logger(),
+    ]
+    
+    # Log initialization message to each logger
+    for logger in loggers:
+        logger.info("Provider logger initialized successfully")
+
+
+# Initialize on module import
+initialize_all_loggers()
