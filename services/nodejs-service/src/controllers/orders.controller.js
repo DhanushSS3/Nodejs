@@ -3,6 +3,7 @@ const logger = require('../services/logger.service');
 const orderReqLogger = require('../services/order.request.logger');
 const timingLogger = require('../services/perf.timing.logger');
 const idGenerator = require('../services/idGenerator.service');
+const orderLifecycleService = require('../services/orderLifecycle.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
@@ -119,6 +120,20 @@ async function placeInstantOrder(req, res) {
     const order_id = await idGenerator.generateOrderId();
     mark('after_id_generated');
     const hasIdempotency = !!req.body.idempotency_key;
+    
+    // Store main order_id in lifecycle service
+    try {
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'order_id', 
+        order_id, 
+        `Order placed - ${parsed.order_type} ${parsed.symbol} @ ${parsed.order_price}`
+      );
+    } catch (lifecycleErr) {
+      logger.warn('Failed to store order_id in lifecycle service', { 
+        order_id, error: lifecycleErr.message 
+      });
+    }
 
     // Persist initial order (QUEUED) unless request is idempotent
     const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
@@ -1190,6 +1205,32 @@ async function closeOrder(req, res) {
         idUpdates.status = incomingStatus; // persist whatever frontend sent as status
         await rowToUpdate.update(idUpdates);
       }
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'close_id', 
+        close_id, 
+        `Close order initiated - status: ${incomingStatus}`
+      );
+      
+      if (takeprofit_cancel_id) {
+        await orderLifecycleService.addLifecycleId(
+          order_id, 
+          'takeprofit_cancel_id', 
+          takeprofit_cancel_id, 
+          'Takeprofit cancel during close'
+        );
+      }
+      
+      if (stoploss_cancel_id) {
+        await orderLifecycleService.addLifecycleId(
+          order_id, 
+          'stoploss_cancel_id', 
+          stoploss_cancel_id, 
+          'Stoploss cancel during close'
+        );
+      }
     } catch (e) {
       logger.warn('Failed to persist lifecycle ids before close', { order_id, error: e.message });
     }
@@ -1416,6 +1457,14 @@ async function addStopLoss(req, res) {
       if (toUpdate) {
         await toUpdate.update({ stoploss_id, status });
       }
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'stoploss_id', 
+        stoploss_id, 
+        `Stoploss added - price: ${stop_loss}`
+      );
     } catch (e) {
       logger.warn('Failed to persist stoploss_id before send', { order_id, error: e.message });
     }
@@ -1586,6 +1635,14 @@ async function addTakeProfit(req, res) {
       if (toUpdate) {
         await toUpdate.update({ takeprofit_id, status });
       }
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'takeprofit_id', 
+        takeprofit_id, 
+        `Takeprofit added - price: ${take_profit}`
+      );
     } catch (e) {
       logger.warn('Failed to persist takeprofit_id before send', { order_id, error: e.message });
     }
@@ -1795,6 +1852,23 @@ async function cancelStopLoss(req, res) {
       if (toUpdate) {
         await toUpdate.update({ stoploss_cancel_id, status: statusIn });
       }
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'stoploss_cancel_id', 
+        stoploss_cancel_id, 
+        `Stoploss cancel requested - resolved_sl_id: ${resolvedStoplossId}`
+      );
+      
+      // Mark the original stoploss as cancelled
+      if (resolvedStoplossId && resolvedStoplossId !== `SL-${order_id}`) {
+        await orderLifecycleService.updateLifecycleStatus(
+          resolvedStoplossId, 
+          'cancelled', 
+          'Cancelled by user request'
+        );
+      }
     } catch (e) {
       logger.warn('Failed to persist stoploss_cancel_id before send', { order_id, error: e.message });
     }
@@ -1997,6 +2071,23 @@ async function cancelTakeProfit(req, res) {
       const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
       if (toUpdate) {
         await toUpdate.update({ takeprofit_cancel_id, status: statusIn });
+      }
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'takeprofit_cancel_id', 
+        takeprofit_cancel_id, 
+        `Takeprofit cancel requested - resolved_tp_id: ${resolvedTakeprofitId}`
+      );
+      
+      // Mark the original takeprofit as cancelled
+      if (resolvedTakeprofitId && resolvedTakeprofitId !== `TP-${order_id}`) {
+        await orderLifecycleService.updateLifecycleStatus(
+          resolvedTakeprofitId, 
+          'cancelled', 
+          'Cancelled by user request'
+        );
       }
     } catch (e) {
       logger.warn('Failed to persist takeprofit_cancel_id before send', { order_id, error: e.message });
