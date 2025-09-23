@@ -117,8 +117,17 @@ def _select_worker_queue(status: Optional[str]) -> Optional[str]:
 
 
 async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], canonical_order_id: str) -> Dict[str, Any]:
+    # Extract the original provider order_id from the report
+    provider_order_id = (
+        report.get("order_id") or 
+        report.get("exec_id") or 
+        (report.get("raw") or {}).get("11") or 
+        (report.get("raw") or {}).get("17")
+    )
+    
     payload: Dict[str, Any] = {
-        "order_id": canonical_order_id,
+        "order_id": canonical_order_id,  # Keep canonical for existing workers
+        "provider_order_id": provider_order_id,  # Add original provider order_id
         "user_id": order_data.get("user_id"),
         "user_type": order_data.get("user_type"),
         "group": order_data.get("group"),

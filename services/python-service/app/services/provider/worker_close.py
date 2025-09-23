@@ -12,6 +12,8 @@ import aiohttp
 
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_close_service import OrderCloser
+from app.services.orders.order_repository import fetch_user_config
+from app.services.orders.provider_connection import send_provider_order
 from app.services.logging.provider_logger import (
     get_worker_close_logger,
     get_orders_calculated_logger,
@@ -90,7 +92,10 @@ class CloseWorker:
             'db_publishes': 0,
             'last_message_time': None,
             'total_processing_time_ms': 0,
-            'finalize_retries': 0
+            'finalize_retries': 0,
+            'sl_cancel_requests': 0,
+            'tp_cancel_requests': 0,
+            'order_type_identifications': 0
         }
 
     async def connect(self):
@@ -115,6 +120,155 @@ class CloseWorker:
         except Exception:
             logger.exception("nack failed")
 
+    async def _identify_order_type_and_get_canonical(self, received_order_id: str) -> tuple[str, str]:
+        """
+        Identify if received order_id is a stoploss_id, takeprofit_id, or close_id.
+        Returns: (order_type, canonical_order_id)
+        order_type: 'stoploss', 'takeprofit', 'close', or 'unknown'
+        """
+        try:
+            # First check global lookup to get canonical order_id
+            canonical_order_id = await redis_cluster.get(f"global_order_lookup:{received_order_id}")
+            if not canonical_order_id:
+                return ("unknown", received_order_id)
+            
+            canonical_order_id = str(canonical_order_id)
+            
+            # Get order data to check which ID type this is
+            order_data = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
+            if not order_data:
+                return ("unknown", canonical_order_id)
+            
+            # Check if received_order_id matches any of the lifecycle IDs
+            if order_data.get("stoploss_id") == received_order_id:
+                return ("stoploss", canonical_order_id)
+            elif order_data.get("takeprofit_id") == received_order_id:
+                return ("takeprofit", canonical_order_id)
+            elif order_data.get("close_id") == received_order_id:
+                return ("close", canonical_order_id)
+            elif canonical_order_id == received_order_id:
+                return ("close", canonical_order_id)  # Direct canonical order close
+            else:
+                return ("unknown", canonical_order_id)
+                
+        except Exception as e:
+            logger.warning(
+                "[CLOSE:ORDER_TYPE_ID_ERROR] order_id=%s error=%s", 
+                received_order_id, str(e)
+            )
+            return ("unknown", received_order_id)
+
+    async def _send_cancel_request_fire_forget(self, order_type: str, canonical_order_id: str, 
+                                             user_type: str, user_id: str, symbol: str, side: str):
+        """
+        Send stoploss or takeprofit cancel request as fire-and-forget.
+        order_type: 'stoploss' or 'takeprofit'
+        """
+        try:
+            # Get order data to find the target ID to cancel
+            order_data = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
+            if not order_data:
+                logger.warning(
+                    "[CLOSE:CANCEL_FF_NO_DATA] order_id=%s type=%s", 
+                    canonical_order_id, order_type
+                )
+                return
+
+            target_id = None
+            if order_type == "stoploss":
+                target_id = order_data.get("takeprofit_id")
+                if not target_id:
+                    logger.debug(
+                        "[CLOSE:CANCEL_FF_NO_TP] order_id=%s no_takeprofit_to_cancel", 
+                        canonical_order_id
+                    )
+                    return
+                self._stats['tp_cancel_requests'] += 1
+            elif order_type == "takeprofit":
+                target_id = order_data.get("stoploss_id")
+                if not target_id:
+                    logger.debug(
+                        "[CLOSE:CANCEL_FF_NO_SL] order_id=%s no_stoploss_to_cancel", 
+                        canonical_order_id
+                    )
+                    return
+                self._stats['sl_cancel_requests'] += 1
+
+            if not target_id:
+                return
+
+            # Check user config to determine flow
+            cfg = await fetch_user_config(user_type, user_id)
+            sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+            
+            # Only send to provider for provider flow
+            if user_type == "live" and sending_orders == "barclays":
+                # Build cancel payload similar to the endpoint implementations
+                if order_type == "stoploss":
+                    # Cancel takeprofit
+                    cancel_payload = {
+                        "order_id": canonical_order_id,
+                        "symbol": symbol,
+                        "order_type": side,
+                        "status": "TAKEPROFIT-CANCEL",
+                        "takeprofit_id": target_id,
+                        "type": "order",
+                    }
+                    logger.info(
+                        "[CLOSE:CANCEL_FF_TP] order_id=%s takeprofit_id=%s fire_forget", 
+                        canonical_order_id, target_id
+                    )
+                else:
+                    # Cancel stoploss
+                    cancel_payload = {
+                        "order_id": canonical_order_id,
+                        "symbol": symbol,
+                        "order_type": side,
+                        "status": "STOPLOSS-CANCEL",
+                        "stoploss_id": target_id,
+                        "type": "order",
+                    }
+                    logger.info(
+                        "[CLOSE:CANCEL_FF_SL] order_id=%s stoploss_id=%s fire_forget", 
+                        canonical_order_id, target_id
+                    )
+
+                # Fire and forget - don't wait for response
+                asyncio.create_task(self._send_provider_cancel_async(cancel_payload, canonical_order_id, order_type))
+            else:
+                logger.debug(
+                    "[CLOSE:CANCEL_FF_SKIP] order_id=%s type=%s flow=local", 
+                    canonical_order_id, order_type
+                )
+
+        except Exception as e:
+            logger.error(
+                "[CLOSE:CANCEL_FF_ERROR] order_id=%s type=%s error=%s", 
+                canonical_order_id, order_type, str(e)
+            )
+
+    async def _send_provider_cancel_async(self, cancel_payload: dict, canonical_order_id: str, order_type: str):
+        """
+        Async task to send cancel request to provider (fire and forget).
+        """
+        try:
+            ok, via = await send_provider_order(cancel_payload)
+            if ok:
+                logger.info(
+                    "[CLOSE:CANCEL_FF_SENT] order_id=%s type=%s via=%s", 
+                    canonical_order_id, order_type, via
+                )
+            else:
+                logger.warning(
+                    "[CLOSE:CANCEL_FF_FAILED] order_id=%s type=%s via=%s", 
+                    canonical_order_id, order_type, via
+                )
+        except Exception as e:
+            logger.error(
+                "[CLOSE:CANCEL_FF_EXCEPTION] order_id=%s type=%s error=%s", 
+                canonical_order_id, order_type, str(e)
+            )
+
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
         start_time = time.time()
         order_id_dbg = None
@@ -126,12 +280,16 @@ class CloseWorker:
             payload = orjson.loads(message.body)
             er = payload.get("execution_report") or {}
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
-            order_id_dbg = str(payload.get("order_id"))
+            
+            # Use provider_order_id for identification, fallback to order_id for backward compatibility
+            provider_order_id = str(payload.get("provider_order_id") or payload.get("order_id"))
+            canonical_order_id = str(payload.get("order_id"))
+            order_id_dbg = provider_order_id  # Use provider order_id for logging
             side_dbg = str(payload.get("order_type") or payload.get("side") or "").upper()
             
             logger.info(
-                "[CLOSE:RECEIVED] order_id=%s ord_status=%s side=%s avgpx=%s",
-                order_id_dbg, ord_status, side_dbg,
+                "[CLOSE:RECEIVED] provider_id=%s canonical_id=%s ord_status=%s side=%s avgpx=%s",
+                provider_order_id, canonical_order_id, ord_status, side_dbg,
                 er.get("avgpx") or (er.get("raw") or {}).get("6"),
             )
 
@@ -160,6 +318,60 @@ class CloseWorker:
                         return
             except Exception:
                 pass
+
+            # Identify order type and handle SL/TP cancellation logic
+            self._stats['order_type_identifications'] += 1
+            order_type, identified_canonical_id = await self._identify_order_type_and_get_canonical(provider_order_id)
+            
+            # Use the canonical_order_id from payload (dispatcher already resolved it)
+            # But verify it matches our identification for logging
+            if identified_canonical_id != canonical_order_id:
+                logger.warning(
+                    "[CLOSE:ORDER_TYPE_MISMATCH] provider_id=%s dispatcher_canonical=%s identified_canonical=%s",
+                    provider_order_id, canonical_order_id, identified_canonical_id
+                )
+            
+            logger.info(
+                "[CLOSE:ORDER_TYPE] provider_id=%s canonical_id=%s type=%s",
+                provider_order_id, canonical_order_id, order_type
+            )
+            
+            # If this is a stoploss or takeprofit execution, send cancel for the counterpart (fire & forget)
+            if order_type in ("stoploss", "takeprofit"):
+                # Get basic order info for cancel request
+                try:
+                    user_type = str(payload.get("user_type") or "").lower()
+                    user_id = str(payload.get("user_id") or "")
+                    symbol = str(payload.get("symbol") or "").upper()
+                    side = str(payload.get("order_type") or payload.get("side") or "").upper()
+                    
+                    # If missing from payload, try to get from order data
+                    if not all([user_type, user_id, symbol, side]):
+                        order_data = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
+                        user_type = user_type or str(order_data.get("user_type") or "").lower()
+                        user_id = user_id or str(order_data.get("user_id") or "")
+                        symbol = symbol or str(order_data.get("symbol") or "").upper()
+                        side = side or str(order_data.get("order_type") or "").upper()
+                    
+                    if all([user_type, user_id, symbol, side]):
+                        # Send cancel request for the counterpart (fire and forget)
+                        await self._send_cancel_request_fire_forget(
+                            order_type, canonical_order_id, user_type, user_id, symbol, side
+                        )
+                    else:
+                        logger.warning(
+                            "[CLOSE:CANCEL_FF_MISSING_INFO] order_id=%s type=%s user_type=%s user_id=%s symbol=%s side=%s",
+                            canonical_order_id, order_type, user_type, user_id, symbol, side
+                        )
+                except Exception as e:
+                    logger.error(
+                        "[CLOSE:CANCEL_FF_SETUP_ERROR] order_id=%s type=%s error=%s",
+                        canonical_order_id, order_type, str(e)
+                    )
+
+            # Keep using canonical_order_id for the rest of processing (already in payload)
+            # Update debug variable to canonical for consistency with existing logic
+            order_id_dbg = canonical_order_id
 
             # Per-order processing guard to avoid duplicate concurrent processing
             processing_key = f"close_processing:{payload.get('order_id')}"
@@ -503,10 +715,13 @@ class CloseWorker:
             
             log_provider_stats('worker_close', stats)
             logger.info(
-                "[CLOSE:STATS] processed=%d closed=%d failed=%d uptime=%.1fh rate=%.2f/s avg_time=%.2fms",
+                "[CLOSE:STATS] processed=%d closed=%d failed=%d sl_cancels=%d tp_cancels=%d type_ids=%d uptime=%.1fh rate=%.2f/s avg_time=%.2fms",
                 stats['messages_processed'],
                 stats['orders_closed'],
                 stats['orders_failed'],
+                stats['sl_cancel_requests'],
+                stats['tp_cancel_requests'],
+                stats['order_type_identifications'],
                 stats['uptime_hours'],
                 stats['messages_per_second'],
                 avg_processing_time
