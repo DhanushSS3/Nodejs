@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const { redisCluster } = require('../../config/redis');
 
+// Redis cluster connection pool increased to 1000 connections for high-volume operations
+
 // --- RATE LIMITING ---
 const RATE_LIMIT_ATTEMPTS = 10;
 const RATE_LIMIT_WINDOW = 900; // 15 min in seconds

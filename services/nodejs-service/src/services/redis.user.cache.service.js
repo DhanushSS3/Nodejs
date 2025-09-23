@@ -1,4 +1,4 @@
-const { redisCluster } = require('../../config/redis');
+const { redisCluster, redisReadyPromise } = require('../../config/redis');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
 const logger = require('./logger.service');
@@ -11,7 +11,9 @@ class RedisUserCacheService {
     this.subscriber = redisCluster;
 
     this.isInitialized = false;
-    this.setupSubscriber();
+    this.isSubscriberSetup = false;
+    // Setup subscriber after Redis is ready
+    this.setupSubscriberWhenReady();
   }
 
   /**
@@ -46,22 +48,47 @@ class RedisUserCacheService {
   }
 
   /**
+   * Setup Redis subscriber when cluster is ready
+   */
+  async setupSubscriberWhenReady() {
+    try {
+      // Wait for Redis cluster to be ready before subscribing
+      await redisReadyPromise;
+      await this.setupSubscriber();
+    } catch (error) {
+      logger.error('Failed to setup Redis subscriber:', error);
+      // Retry after a delay
+      setTimeout(() => this.setupSubscriberWhenReady(), 5000);
+    }
+  }
+
+  /**
    * Setup Redis subscriber for user updates
    */
-  setupSubscriber() {
-    this.subscriber.on('message', async (channel, message) => {
-      try {
-        if (channel === 'user_updates') {
-          const updateData = JSON.parse(message);
-          await this.handleUserUpdate(updateData);
-        }
-      } catch (error) {
-        logger.error('Error processing Redis message:', error);
-      }
-    });
+  async setupSubscriber() {
+    if (this.isSubscriberSetup) {
+      return; // Already setup
+    }
 
-    this.subscriber.subscribe('user_updates');
-    logger.info('Subscribed to user_updates channel');
+    try {
+      this.subscriber.on('message', async (channel, message) => {
+        try {
+          if (channel === 'user_updates') {
+            const updateData = JSON.parse(message);
+            await this.handleUserUpdate(updateData);
+          }
+        } catch (error) {
+          logger.error('Error processing Redis message:', error);
+        }
+      });
+
+      await this.subscriber.subscribe('user_updates');
+      this.isSubscriberSetup = true;
+      logger.info('Subscribed to user_updates channel');
+    } catch (error) {
+      logger.error('PortfolioEventBus subscribe failed', { error: error.message });
+      // Don't throw, let the application continue
+    }
   }
 
   /**

@@ -64,7 +64,7 @@ class RedisConfig:
             "health_check_interval": 30,
             "socket_connect_timeout": 5,
             "socket_timeout": 5,
-            "max_connections": 200,
+            "max_connections": 1000,
             "address_remap": address_remap,
         }
     

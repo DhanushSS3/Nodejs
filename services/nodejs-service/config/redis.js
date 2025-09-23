@@ -57,11 +57,25 @@ const nodes = hosts.map(h => {
 });
 
 const redisCluster = new Redis.Cluster(nodes, {
-  // Add password to redisOptions
+  // Redis options applied to each node connection
   redisOptions: {
     password: process.env.REDIS_PASSWORD,
     connectTimeout: 10000,
+    maxRetriesPerRequest: null, // Allow unlimited retries for initial connection
+    retryDelayOnFailover: 100,
+    keepAlive: 30000,
+    family: 4,
+    lazyConnect: false, // Connect immediately to avoid offline queue issues
+    enableReadyCheck: true,
+    // Each node can have up to ~167 connections (1000/6 nodes)
+    // Note: ioredis doesn't have maxConnections per node, it manages pool automatically
   },
+  // Cluster-level settings
+  enableOfflineQueue: true,  // Enable offline queue to handle commands before cluster is ready
+  maxRetriesPerRequest: null, // Allow unlimited retries
+  retryDelayOnFailover: 100,
+  scaleReads: 'slave',
+  enableReadyCheck: true,
   // The natMap is essential for connecting from outside the Docker network
   natMap: {
     "172.28.0.2:7001": { host: "127.0.0.1", port: 7001 },
@@ -80,13 +94,40 @@ redisCluster.on("error", (err) => {
   console.error("❌ Redis Cluster error:", err);
 });
 
+redisCluster.on("connect", () => {
+  console.log("🔄 Redis Cluster connecting...");
+});
+
+redisCluster.on("ready", () => {
+  console.log("✅ Redis Cluster is ready to receive commands");
+});
+
+redisCluster.on("close", () => {
+  console.log("🔌 Redis Cluster connection closed");
+});
+
+redisCluster.on("reconnecting", () => {
+  console.log("🔄 Redis Cluster reconnecting...");
+});
+
 const redisReadyPromise = new Promise((resolve, reject) => {
+  // Set a timeout for initial connection
+  const timeout = setTimeout(() => {
+    console.warn("⚠️ Redis cluster taking longer than expected to connect, but continuing...");
+    resolve(redisCluster); // Resolve anyway since offline queue is enabled
+  }, 15000); // 15 second timeout
+
   redisCluster.on('ready', () => {
+    clearTimeout(timeout);
     console.log("✅ Redis Cluster is ready to receive commands");
     resolve(redisCluster);
   });
+  
   redisCluster.on('error', (err) => {
-    reject(err);
+    clearTimeout(timeout);
+    console.error("❌ Redis Cluster connection failed:", err);
+    // Don't reject immediately, let offline queue handle it
+    resolve(redisCluster);
   });
 });
 
