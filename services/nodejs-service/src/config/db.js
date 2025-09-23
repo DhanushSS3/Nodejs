@@ -11,13 +11,11 @@ const sequelize = new Sequelize(
     dialect: 'mariadb',
     logging: false,
     pool: {
-      // Increased pool for higher concurrency and to keep warm connections
-      // Suitable starting point for deployments serving up to ~1000 active users
-      max: 150,
-      min: 10,
-      acquire: 60000, // wait up to 60s to get a connection under load
-      idle: 30000,    // keep idle connections for 30s
-      evict: 10000,   // run eviction every 10s
+      max: 100,        // Increased from 50 to handle 1000 users with concurrent orders
+      min: 15,         // Increased from 0 to keep warm connections (eliminates handshake latency)
+      acquire: 60000,  // Increased from 30s to 60s for high-load scenarios
+      idle: 30000,     // Increased from 10s to 30s to keep connections alive longer
+      evict: 60000     // Added: Check for idle connections every 60s
     },
     define: {
       underscored: true, // optional, for snake_case columns

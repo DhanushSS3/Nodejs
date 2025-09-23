@@ -140,6 +140,7 @@ async function placeInstantOrder(req, res) {
     let initialOrder;
     if (!hasIdempotency) {
       try {
+        mark('before_db_preinsert'); // Add timing mark before DB operation
         initialOrder = await OrderModel.create({
           order_id,
           order_user_id: parseInt(parsed.user_id),
@@ -435,7 +436,7 @@ async function placeInstantOrder(req, res) {
         total_ms: msBetween(t0, tEnd),
         validate_ms: marks.after_validate ? msBetween(t0, marks.after_validate) : undefined,
         id_generate_ms: marks.after_id_generated ? msBetween(marks.after_validate || t0, marks.after_id_generated) : undefined,
-        db_preinsert_ms: marks.after_db_preinsert ? msBetween(marks.after_id_generated || t0, marks.after_db_preinsert) : undefined,
+        db_preinsert_ms: (marks.before_db_preinsert && marks.after_db_preinsert) ? msBetween(marks.before_db_preinsert, marks.after_db_preinsert) : undefined,
         py_roundtrip_ms: (marks.py_req_start && marks.py_req_end) ? msBetween(marks.py_req_start, marks.py_req_end) : undefined,
         db_post_success_ms: marks.after_db_post_success ? msBetween(marks.py_req_end || marks.after_id_generated || t0, marks.after_db_post_success) : undefined,
         user_margin_ms: marks.after_user_margin ? msBetween(marks.after_db_post_success || marks.py_req_end || t0, marks.after_user_margin) : undefined,
