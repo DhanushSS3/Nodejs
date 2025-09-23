@@ -8,7 +8,7 @@ from .liquidation import LiquidationEngine
 
 logger = logging.getLogger(__name__)
 
-ALERT_TTL_SEC = 600  # 10 minutes
+ALERT_TTL_SEC = 10800  # 3 hours (3 * 60 * 60)
 
 
 async def _get_margin_level(user_type: str, user_id: str) -> float:
@@ -51,20 +51,30 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
 
     # Alert zone
     if 50.0 <= ml < 100.0:
-        # rate-limit via Redis TTL flag
+        # rate-limit via Redis TTL flag with atomic check-and-set
         alert_key = f"autocutoff:alert_sent:{user_type}:{user_id}"
         try:
-            already = await redis_cluster.get(alert_key)
-            if already:
+            # Use SET with NX (only if not exists) to prevent race conditions
+            # TTL is 3 hours to limit alerts to once every 3 hours
+            already_set = await redis_cluster.set(alert_key, "1", ex=ALERT_TTL_SEC, nx=True)
+            if not already_set:
+                # Alert already sent within TTL period
                 return
         except Exception:
-            already = None
+            # Fallback to simple check if SET NX fails
+            try:
+                already = await redis_cluster.get(alert_key)
+                if already:
+                    return
+            except Exception:
+                pass
+        
         email = await _get_user_email(user_type, user_id)
         ok = await notifier.send_alert(user_type=user_type, user_id=user_id, email=email, margin_level=ml, threshold=100.0)
-        if ok:
+        if not ok:
+            # If email failed, remove the TTL key so we can retry later
             try:
-                # Set TTL 10 minutes
-                await redis_cluster.set(alert_key, "1", ex=ALERT_TTL_SEC)
+                await redis_cluster.delete(alert_key)
             except Exception:
                 pass
         return
