@@ -519,6 +519,14 @@ class CloseWorker:
                             trigger_lifecycle_id = str(trigger_lifecycle_id)
                     except Exception:
                         trigger_lifecycle_id = None
+                    # Set close message based on provider_order_id identification
+                    if order_type == "stoploss":
+                        close_message = "Stoploss-Triggered"
+                    elif order_type == "takeprofit":
+                        close_message = "Takeprofit-Triggered"
+                    else:  # order_type == "close" or "unknown"
+                        close_message = "Closed"
+                    
                     db_msg = {
                         "type": "ORDER_CLOSE_CONFIRMED",
                         "order_id": str(payload.get("order_id")),
@@ -535,6 +543,7 @@ class CloseWorker:
                         "used_margin_executed": result.get("used_margin_executed"),
                         "used_margin_all": result.get("used_margin_all"),
                         "trigger_lifecycle_id": trigger_lifecycle_id,
+                        "close_message": close_message,
                     }
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
@@ -563,9 +572,10 @@ class CloseWorker:
             self._stats['total_processing_time_ms'] += processing_time
             
             logger.info(
-                "[CLOSE:SUCCESS] order_id=%s processing_time=%.2fms total_closed=%d profit=%s",
+                "[CLOSE:SUCCESS] order_id=%s processing_time=%.2fms total_closed=%d profit=%s close_message=%s",
                 order_id_dbg, processing_time, self._stats['orders_closed'],
-                result.get('net_profit') if 'result' in locals() else None
+                result.get('net_profit') if 'result' in locals() else None,
+                close_message if 'close_message' in locals() else 'Closed'
             )
             
             await self._ack(message)
