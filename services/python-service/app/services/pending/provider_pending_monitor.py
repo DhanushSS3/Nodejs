@@ -131,6 +131,7 @@ async def _send_cancel(order_id: str, cancel_id: str, order_type: str) -> bool:
             "order_id": str(order_id),
             "cancel_id": str(cancel_id),
             "order_type": str(order_type).upper(),
+            "status": "CANCELLED",
         }
         ok, via = await send_provider_order(payload)
         if not ok:
