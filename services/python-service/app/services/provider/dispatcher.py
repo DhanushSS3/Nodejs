@@ -116,18 +116,20 @@ def _select_worker_queue(status: Optional[str]) -> Optional[str]:
     return None
 
 
-async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], canonical_order_id: str) -> Dict[str, Any]:
-    # Extract the original provider order_id from the report
-    provider_order_id = (
-        report.get("order_id") or 
-        report.get("exec_id") or 
-        (report.get("raw") or {}).get("11") or 
-        (report.get("raw") or {}).get("17")
-    )
+async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], canonical_order_id: str, provider_order_id: str = None) -> Dict[str, Any]:
+    # Use the provider_order_id passed from dispatcher, or extract from report as fallback
+    if not provider_order_id:
+        provider_order_id = (
+            report.get("provider_order_id") or
+            report.get("order_id") or 
+            report.get("exec_id") or 
+            (report.get("raw") or {}).get("11") or 
+            (report.get("raw") or {}).get("17")
+        )
     
     payload: Dict[str, Any] = {
         "order_id": canonical_order_id,  # Keep canonical for existing workers
-        "provider_order_id": provider_order_id,  # Add original provider order_id
+        "provider_order_id": provider_order_id,  # Add original provider order_id from execution report
         "user_id": order_data.get("user_id"),
         "user_type": order_data.get("user_type"),
         "group": order_data.get("group"),
@@ -256,6 +258,13 @@ class Dispatcher:
                     "unknown"
                 )
                 
+                # Debug: Log the raw execution report to see what provider is sending
+                logger.debug(
+                    "[DISPATCH:RAW_REPORT] order_id=%s report_keys=%s order_id_field=%s exec_id_field=%s",
+                    order_id_debug, list(report.keys()), 
+                    report.get("order_id"), report.get("exec_id")
+                )
+                
                 # Only process execution reports, ignore provider ACK messages
                 rtype = str(report.get("type") or "").strip().lower()
                 if rtype != "execution_report":
@@ -265,26 +274,48 @@ class Dispatcher:
                     )
                     return
                 
-                lifecycle_id = report.get("order_id") or report.get("exec_id")
-                if not lifecycle_id:
-                    # try in raw dict
-                    raw = report.get("raw") or {}
-                    lifecycle_id = raw.get("11") or raw.get("17")
-
-                if not lifecycle_id:
-                    logger.warning(
-                        "[DISPATCH:DLQ] order_id=%s reason=missing_lifecycle_id",
-                        order_id_debug
+                # Check if provider_connection already resolved canonical_order_id
+                canonical_order_id = report.get("canonical_order_id")
+                provider_order_id = report.get("provider_order_id") or report.get("order_id")
+                
+                if canonical_order_id:
+                    # Provider connection already resolved the canonical order_id
+                    logger.debug(
+                        "[DISPATCH:PRERESOLVED] provider_id=%s canonical_id=%s",
+                        provider_order_id, canonical_order_id
                     )
-                    await self._publish(DLQ, {"reason": "missing_lifecycle_id", "report": report})
-                    self._stats['messages_dlq'] += 1
-                    return
+                else:
+                    # Fallback to legacy lookup logic
+                    lifecycle_id = report.get("order_id") or report.get("exec_id")
+                    if not lifecycle_id:
+                        # try in raw dict
+                        raw = report.get("raw") or {}
+                        lifecycle_id = raw.get("11") or raw.get("17")
 
-                # Handle Redis operations with error handling
-                canonical_order_id = await _redis_get(f"global_order_lookup:{lifecycle_id}")
-                # Fallback: treat lifecycle_id as canonical order_id (self-mapping case)
-                if not canonical_order_id:
-                    canonical_order_id = lifecycle_id
+                    if not lifecycle_id:
+                        logger.warning(
+                            "[DISPATCH:DLQ] order_id=%s reason=missing_lifecycle_id",
+                            order_id_debug
+                        )
+                        await self._publish(DLQ, {"reason": "missing_lifecycle_id", "report": report})
+                        self._stats['messages_dlq'] += 1
+                        return
+
+                    # Handle Redis operations with error handling
+                    canonical_order_id = await _redis_get(f"global_order_lookup:{lifecycle_id}")
+                    # Debug: Log the lookup process
+                    logger.debug(
+                        "[DISPATCH:LOOKUP] lifecycle_id=%s canonical_from_redis=%s",
+                        lifecycle_id, canonical_order_id
+                    )
+                    # Fallback: treat lifecycle_id as canonical order_id (self-mapping case)
+                    if not canonical_order_id:
+                        canonical_order_id = lifecycle_id
+                        logger.debug(
+                            "[DISPATCH:LOOKUP_FALLBACK] lifecycle_id=%s using_as_canonical=%s",
+                            lifecycle_id, canonical_order_id
+                        )
+                    provider_order_id = lifecycle_id
 
                 order_data = await _redis_hgetall(f"order_data:{canonical_order_id}")
                 if not order_data:
@@ -296,7 +327,13 @@ class Dispatcher:
                     self._stats['messages_dlq'] += 1
                     return
 
-                payload = await _compose_payload(report, order_data, canonical_order_id)
+                payload = await _compose_payload(report, order_data, canonical_order_id, provider_order_id)
+                
+                # Debug: Log the composed payload IDs
+                logger.debug(
+                    "[DISPATCH:PAYLOAD] canonical_id=%s provider_id=%s",
+                    canonical_order_id, payload.get("provider_order_id")
+                )
                 # Route based on Redis status (engine/UI state) and provider ord_status (string)
                 # IMPORTANT: Use only the 'status' field per spec; do not fallback to 'order_status'.
                 redis_status = str(order_data.get("status") or "").upper().strip()

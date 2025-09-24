@@ -338,9 +338,11 @@ class ProviderConnectionManager:
                                     except Exception:
                                         pass
 
-                        # Attach group/symbol/spread if available; normalize report.order_id to canonical
+                        # Attach group/symbol/spread if available; preserve original provider order_id and add canonical
                         if canonical_order_id:
-                            report["order_id"] = str(canonical_order_id)
+                            # Preserve the original provider order_id and add canonical_order_id as separate field
+                            report["provider_order_id"] = report.get("order_id")  # Preserve original provider order_id
+                            report["canonical_order_id"] = str(canonical_order_id)  # Add canonical order_id
                         # Prefer report values, fallback to order_data
                         group_val = report.get("group") or od.get("group") or group_val
                         symbol_val = report.get("symbol") or od.get("symbol") or symbol_val
