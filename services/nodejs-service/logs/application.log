@@ -5965,3 +5965,27 @@
 {"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-24T05:57:30.247Z"}
 {"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-24T05:57:38.537Z"}
 {"level":"info","message":"Authentication successful for user 6 on POST /instant/place","timestamp":"2025-09-24T05:57:46.472Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-24T07:02:57.444Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-24T07:02:57.535Z"}
+{"level":"error","message":"Groups sync failed: Unknown column 'swap_type' in 'SELECT'","name":"SequelizeDatabaseError","original":{"code":"ER_BAD_FIELD_ERROR","errno":1054,"sql":"SELECT `id`, `symbol`, `name`, `commision_type`, `commision_value_type`, `type`, `pip_currency`, `show_points`, `swap_buy`, `swap_sell`, `commision`, `margin`, `spread`, `deviation`, `min_lot`, `max_lot`, `pips`, `spread_pip`, `contract_size`, `profit`, `swap_type`, `bonus`, `created_at`, `updated_at` FROM `groups` AS `Group` ORDER BY `Group`.`id` ASC LIMIT 0, 100;","sqlMessage":"Unknown column 'swap_type' in 'SELECT'","sqlState":"42S22"},"parameters":{},"parent":{"code":"ER_BAD_FIELD_ERROR","errno":1054,"sql":"SELECT `id`, `symbol`, `name`, `commision_type`, `commision_value_type`, `type`, `pip_currency`, `show_points`, `swap_buy`, `swap_sell`, `commision`, `margin`, `spread`, `deviation`, `min_lot`, `max_lot`, `pips`, `spread_pip`, `contract_size`, `profit`, `swap_type`, `bonus`, `created_at`, `updated_at` FROM `groups` AS `Group` ORDER BY `Group`.`id` ASC LIMIT 0, 100;","sqlMessage":"Unknown column 'swap_type' in 'SELECT'","sqlState":"42S22"},"sql":"SELECT `id`, `symbol`, `name`, `commision_type`, `commision_value_type`, `type`, `pip_currency`, `show_points`, `swap_buy`, `swap_sell`, `commision`, `margin`, `spread`, `deviation`, `min_lot`, `max_lot`, `pips`, `spread_pip`, `contract_size`, `profit`, `swap_type`, `bonus`, `created_at`, `updated_at` FROM `groups` AS `Group` ORDER BY `Group`.`id` ASC LIMIT 0, 100;","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.select (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:407:12)\n    at async Group.findAll (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1140:21)\n    at async GroupsCacheService.syncAllGroupsToRedis (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:159:24)\n    at async StartupCacheService.initialize (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\startup.cache.service.js:22:28)\n    at async C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\index.js:37:7","timestamp":"2025-09-24T07:02:57.591Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-24T07:06:16.883Z"}
+{"level":"info","message":"Found 1627 groups to sync","timestamp":"2025-09-24T07:06:17.010Z"}
+{"level":"info","message":"Synced 100/1627 groups (6%)","timestamp":"2025-09-24T07:06:17.473Z"}
+{"level":"info","message":"Synced 200/1627 groups (12%)","timestamp":"2025-09-24T07:06:17.838Z"}
+{"level":"info","message":"Synced 300/1627 groups (18%)","timestamp":"2025-09-24T07:06:18.328Z"}
+{"level":"info","message":"Synced 400/1627 groups (25%)","timestamp":"2025-09-24T07:06:18.750Z"}
+{"level":"info","message":"Synced 500/1627 groups (31%)","timestamp":"2025-09-24T07:06:19.171Z"}
+{"level":"info","message":"Synced 600/1627 groups (37%)","timestamp":"2025-09-24T07:06:19.588Z"}
+{"level":"info","message":"Synced 700/1627 groups (43%)","timestamp":"2025-09-24T07:06:19.978Z"}
+{"level":"info","message":"Synced 800/1627 groups (49%)","timestamp":"2025-09-24T07:06:20.304Z"}
+{"level":"info","message":"Synced 900/1627 groups (55%)","timestamp":"2025-09-24T07:06:20.698Z"}
+{"level":"info","message":"Synced 1000/1627 groups (61%)","timestamp":"2025-09-24T07:06:21.189Z"}
+{"level":"info","message":"Synced 1100/1627 groups (68%)","timestamp":"2025-09-24T07:06:21.720Z"}
+{"level":"info","message":"Synced 1200/1627 groups (74%)","timestamp":"2025-09-24T07:06:22.232Z"}
+{"level":"info","message":"Synced 1300/1627 groups (80%)","timestamp":"2025-09-24T07:06:22.697Z"}
+{"level":"info","message":"Synced 1400/1627 groups (86%)","timestamp":"2025-09-24T07:06:23.138Z"}
+{"level":"info","message":"Synced 1500/1627 groups (92%)","timestamp":"2025-09-24T07:06:23.625Z"}
+{"level":"info","message":"Synced 1600/1627 groups (98%)","timestamp":"2025-09-24T07:06:24.196Z"}
+{"level":"info","message":"Synced 1627/1627 groups (100%)","timestamp":"2025-09-24T07:06:24.326Z"}
+{"level":"info","message":"Groups sync completed: 1627 groups in 7441ms","timestamp":"2025-09-24T07:06:24.326Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1627 groups, Redis cluster has 1627 total keys","timestamp":"2025-09-24T07:06:24.336Z"}

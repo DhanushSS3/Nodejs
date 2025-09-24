@@ -207,7 +207,8 @@ class RejectWorker:
     async def connect(self):
         self._conn = await aio_pika.connect_robust(RABBITMQ_URL)
         self._channel = await self._conn.channel()
-        await self._channel.set_qos(prefetch_count=64)
+        # Reduce prefetch for idle efficiency (was 64)
+        await self._channel.set_qos(prefetch_count=1)
         self._queue = await self._channel.declare_queue(REJECT_QUEUE, durable=True)
         # ensure DB update queue exists
         await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
@@ -227,8 +228,13 @@ class RejectWorker:
             logger.exception("nack failed")
 
     async def _log_stats_if_needed(self):
-        """Log statistics every 100 orders or 5 minutes."""
+        """Log statistics every 100 orders or 5 minutes - optimized for idle."""
         now = time.time()
+        
+        # Only check stats if we've processed messages or significant time passed
+        if self._stats['processed_count'] == 0 and (now - self._stats['start_time']) < 300:
+            return  # Skip stats logging for first 5 minutes when idle
+            
         should_log = (
             self._stats['processed_count'] % 100 == 0 or
             (now - self._stats['last_stats_log']) >= 300
@@ -456,8 +462,31 @@ class RejectWorker:
         await self.connect()
         await self._queue.consume(self.handle, no_ack=False)
         logger.info("[REJECT:READY] Enhanced reject worker started")
-        while True:
-            await asyncio.sleep(3600)
+        
+        # Use event-driven approach instead of continuous loop
+        try:
+            # Wait indefinitely for shutdown signal
+            shutdown_event = asyncio.Event()
+            
+            # Register signal handlers for graceful shutdown
+            import signal
+            def signal_handler():
+                logger.info("[REJECT:SHUTDOWN] Received shutdown signal")
+                shutdown_event.set()
+            
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(sig, lambda s, f: signal_handler())
+            
+            # Wait for shutdown event (no CPU consumption)
+            await shutdown_event.wait()
+            
+        except KeyboardInterrupt:
+            logger.info("[REJECT:SHUTDOWN] Keyboard interrupt received")
+        finally:
+            # Cleanup connections
+            if self._conn and not self._conn.is_closed:
+                await self._conn.close()
+            logger.info("[REJECT:SHUTDOWN] Worker stopped gracefully")
 
 
 async def main():
