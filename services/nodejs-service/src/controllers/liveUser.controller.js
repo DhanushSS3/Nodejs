@@ -7,6 +7,7 @@ const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
 const TransactionService = require('../services/transaction.service');
 const logger = require('../services/logger.service');
+const ErrorResponse = require('../utils/errorResponse.util');
 const { IdempotencyService } = require('../services/idempotency.service');
 const jwt = require('jsonwebtoken');
 const { comparePassword } = require('../services/password.service');
@@ -22,10 +23,7 @@ async function signup(req, res) {
     // Validate request
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false, 
-        errors: errors.array() 
-      });
+      return ErrorResponse.validationError(req, res, errors.array(), 'live user signup');
     }
 
     const {
@@ -251,11 +249,6 @@ async function signup(req, res) {
     return res.status(201).json(result);
 
   } catch (error) {
-    logger.transactionFailure('live_user_signup', error, { 
-      operationId, 
-      email: req.body.email 
-    });
-
     // Mark idempotency as failed if we have the key
     try {
       const idempotencyKey = IdempotencyService.generateKey(req, 'live_signup');
@@ -266,26 +259,17 @@ async function signup(req, res) {
       });
     }
 
-    // Handle specific error types
+    // Handle specific error types with generic messages
     if (error.message === 'Email or phone number already exists') {
-      return res.status(409).json({ 
-        success: false, 
-        message: error.message 
-      });
+      return ErrorResponse.validationError(req, res, [{ msg: 'User already exists with this email or phone number' }], 'live user signup');
     }
 
     if (error.message.includes('Unable to generate unique')) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'System temporarily unavailable. Please try again.' 
-      });
+      return ErrorResponse.serviceUnavailableError(req, res, 'Account generation service');
     }
 
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error',
-      operationId 
-    });
+    // Handle all other errors with generic response and detailed logging
+    return ErrorResponse.serverError(req, res, error, 'live user signup');
   }
 }
 
@@ -370,8 +354,8 @@ async function login(req, res, next) {
       token_type: 'Bearer',
       session_id: sessionId
     });
-  } catch (err) {
-    return next(err);
+  } catch (error) {
+    return ErrorResponse.serverError(req, res, error, 'live user login');
   }
 }
 
@@ -464,19 +448,12 @@ async function refreshToken(req, res) {
       session_id: sessionId
     });
   } catch (error) {
-    console.error('Token refresh failed:', error);
     if (error.name === 'TokenExpiredError') {
       // Clean up expired refresh token
       await deleteRefreshToken(refreshToken);
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Refresh token has expired' 
-      });
+      return ErrorResponse.authenticationError(req, res, 'Your session has expired. Please login again.');
     }
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to refresh token' 
-    });
+    return ErrorResponse.serverError(req, res, error, 'token refresh');
   }
 }
 
@@ -497,11 +474,7 @@ async function logout(req, res) {
       message: 'Logout successful' 
     });
   } catch (error) {
-    console.error('Logout failed:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to logout' 
-    });
+    return ErrorResponse.serverError(req, res, error, 'user logout');
   }
 }
 
@@ -558,16 +531,7 @@ async function regenerateViewPassword(req, res) {
     return res.status(200).json(result);
 
   } catch (error) {
-    logger.transactionFailure('regenerate_view_password', error, { 
-      operationId, 
-      userId: id 
-    });
-
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error',
-      operationId 
-    });
+    return ErrorResponse.serverError(req, res, error, 'regenerate view password');
   }
 }
 
@@ -627,15 +591,7 @@ async function getUserInfo(req, res) {
     return res.status(200).json(userInfo);
 
   } catch (error) {
-    logger.error('Failed to get live user info', {
-      error: error.message,
-      userId: req.user.sub || req.user.user_id || req.user.id
-    });
-    // Error case remains the same for clarity
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    return ErrorResponse.serverError(req, res, error, 'get user info');
   }
 }
 

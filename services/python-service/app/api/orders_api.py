@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Header
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Header, Request
 from typing import Dict, Any
 import logging
 import time
@@ -14,6 +14,7 @@ from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
 from ..services.logging.timing_logger import get_orders_timing_logger
+from ..services.logging.error_logger import ErrorLogger
 from .schemas.orders import (
     InstantOrderRequest,
     InstantOrderResponse,
@@ -47,7 +48,7 @@ _tp_service = TakeProfitService()
 
 
 @router.post("/instant/execute", response_model=InstantOrderResponse)
-async def instant_execute_order(payload: InstantOrderRequest, background_tasks: BackgroundTasks):
+async def instant_execute_order(request: Request, payload: InstantOrderRequest, background_tasks: BackgroundTasks):
     """
     Unified endpoint for instant order execution.
     Supports local (demo/Rock) and provider (barclays) flows.
@@ -258,18 +259,38 @@ async def instant_execute_order(payload: InstantOrderRequest, background_tasks: 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"instant_execute_order error: {e}")
+        # Log detailed error information for debugging
+        correlation_id = ErrorLogger.log_api_error(
+            error=e,
+            endpoint=f"{request.method} {request.url.path}",
+            method=request.method,
+            user_id=payload.user_id if hasattr(payload, 'user_id') else None,
+            user_type=payload.user_type.value if hasattr(payload, 'user_type') else None,
+            request_data=payload.model_dump(mode="json"),
+            additional_context={
+                "operation": "instant_order_execution",
+                "execution_time_ms": int(((exec_done or time.perf_counter()) - t0) * 1000)
+            }
+        )
+        
         try:
             timing_log.info(__import__("orjson").dumps({
                 "component": "python_api",
                 "endpoint": "orders/instant/execute",
                 "status": "exception",
-                "error": str(e),
+                "correlation_id": correlation_id,
                 "durations_ms": { "executor_ms": int(((exec_done or time.perf_counter()) - t0) * 1000) }
             }).decode())
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail={"ok": False, "reason": "exception", "error": str(e)})
+        
+        # Return generic error message (internal API, but still good practice)
+        raise HTTPException(status_code=500, detail={
+            "ok": False, 
+            "reason": "service_error", 
+            "message": "Service is temporarily unavailable. Please try again later.",
+            "correlation_id": correlation_id
+        })
 
 
 @router.post("/pending/cancel")
