@@ -126,7 +126,7 @@ async function signup(req, res) {
           country_id = countryRecord.id;
         }
       }
-      // Create user
+      // Create user with default values
       const user = await LiveUser.create({
         name, 
         phone_number, 
@@ -154,6 +154,9 @@ async function signup(req, res) {
         user_type: 'live',
         view_password: hashedViewPassword,
         book: book || null,
+        // Set default values for live users
+        sending_orders: 'barclays',
+        leverage: 100,
         ...optionalFields
       }, { transaction });
 

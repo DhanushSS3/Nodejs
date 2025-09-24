@@ -111,7 +111,7 @@ async function signup(req, res) {
           country_id = countryRecord.id;
         }
       }
-      // Create user
+      // Create user with default values
       const user = await DemoUser.create({
         name,
         phone_number,
@@ -127,6 +127,9 @@ async function signup(req, res) {
         is_active,
         account_number,
         user_type: 'demo',
+        // Set default values for demo users
+        wallet_balance: 10000,
+        leverage: 100,
         ...optionalFields
       }, { transaction });
 

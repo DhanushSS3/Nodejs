@@ -10,7 +10,7 @@ const LiveUser = sequelize.define('LiveUser', {
   password: DataTypes.STRING,
   user_type: DataTypes.STRING,
   wallet_balance: { type: DataTypes.DECIMAL(18, 6), defaultValue: 0 },
-  leverage: DataTypes.INTEGER,
+  leverage: { type: DataTypes.INTEGER, defaultValue: 100 },
   margin: { type: DataTypes.DECIMAL(18, 6), defaultValue: 0 },
   net_profit: { type: DataTypes.DECIMAL(18, 6), defaultValue: 0 },
   account_number: { type: DataTypes.STRING, unique: true },
@@ -45,7 +45,7 @@ const LiveUser = sequelize.define('LiveUser', {
   copytrader_id: DataTypes.INTEGER,
   copytrading_status: { type: DataTypes.INTEGER, defaultValue: 0 },
   copytrading_alloted_time: DataTypes.DATE,
-  sending_orders: { type: DataTypes.STRING, allowNull: true },
+  sending_orders: { type: DataTypes.STRING, allowNull: true, defaultValue: 'barclays' },
   view_password: { type: DataTypes.STRING, allowNull: true },
   book: { type: DataTypes.STRING(5), allowNull: true },
 }, {

@@ -146,6 +146,21 @@ const Group = sequelize.define('Group', {
       len: [0, 10]
     }
   },
+  swap_type: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    validate: {
+      len: [0, 50]
+    }
+  },
+  bonus: {
+    type: DataTypes.DECIMAL(10, 4),
+    allowNull: true,
+    validate: {
+      isDecimal: true,
+      min: 0
+    }
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: false,
