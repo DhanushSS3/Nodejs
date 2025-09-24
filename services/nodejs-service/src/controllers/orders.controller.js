@@ -1,4 +1,6 @@
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const logger = require('../services/logger.service');
 const orderReqLogger = require('../services/order.request.logger');
 const timingLogger = require('../services/perf.timing.logger');
@@ -14,6 +16,27 @@ const redisUserCache = require('../services/redis.user.cache.service');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
 const { applyOrderClosePayout } = require('../services/order.payout.service');
+
+// Create reusable axios instance with HTTP keep-alive for Python service calls
+const pythonServiceAxios = axios.create({
+  timeout: 15000,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub'
+  },
+  httpAgent: new http.Agent({ 
+    keepAlive: true,
+    keepAliveMsecs: 30000,  // Keep connections alive for 30 seconds
+    maxSockets: 50,         // Max concurrent connections per host
+    maxFreeSockets: 10      // Max idle connections to keep open
+  }),
+  httpsAgent: new https.Agent({ 
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 50,
+    maxFreeSockets: 10
+  })
+});
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -196,13 +219,9 @@ async function placeInstantOrder(req, res) {
     try {
       mark('py_req_start');
       pyReqStarted = true;
-      pyResp = await axios.post(
+      pyResp = await pythonServiceAxios.post(
         `${baseUrl}/api/orders/instant/execute`,
-        pyPayload,
-        {
-          timeout: 15000,
-          headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' },
-        }
+        pyPayload
       );
       mark('py_req_end');
     } catch (err) {
@@ -441,14 +460,15 @@ async function placeInstantOrder(req, res) {
         db_post_success_ms: marks.after_db_post_success ? msBetween(marks.py_req_end || marks.after_id_generated || t0, marks.after_db_post_success) : undefined,
         user_margin_ms: marks.after_user_margin ? msBetween(marks.after_db_post_success || marks.py_req_end || t0, marks.after_user_margin) : undefined,
       };
-      await timingLogger.logTiming({
+      // Fire-and-forget timing log to avoid tail latency
+      timingLogger.logTiming({
         endpoint: 'placeInstantOrder',
         operationId,
         order_id: finalOrderId,
         status: 'success',
         flow,
         durations_ms: durations,
-      });
+      }).catch(() => {}); // Ignore logging errors
     } catch (_) {}
     return res.status(201).json({
       success: true,
@@ -1255,10 +1275,10 @@ async function closeOrder(req, res) {
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
     let pyResp;
     try {
-      pyResp = await axios.post(
+      pyResp = await pythonServiceAxios.post(
         `${baseUrl}/api/orders/close`,
         pyPayload,
-        { timeout: 20000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
+        { timeout: 20000 }
       );
     } catch (err) {
       const statusCode = err?.response?.status || 500;

@@ -324,7 +324,7 @@ class Dispatcher:
                     if redis_status in ("STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL"):
                         target_queue = CANCEL_QUEUE
                     # Pending cancel confirmations may find status in MODIFY/PENDING/CANCELLED
-                    elif redis_status in ("MODIFY", "PENDING", "CANCELLED"):
+                    elif redis_status in ("MODIFY", "PENDING", "CANCELLED", "PENDING-QUEUED"):
                         target_queue = CANCEL_QUEUE
                     else:
                         logger.warning(

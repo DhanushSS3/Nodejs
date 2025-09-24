@@ -1,9 +1,10 @@
 const express = require('express');
 const { signup, regenerateViewPassword, getUserInfo } = require('../controllers/liveUser.controller');
-const { body, param } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+const FinancialSummaryController = require('../controllers/financial.summary.controller');
 
 const router = express.Router();
 
@@ -337,5 +338,124 @@ router.post('/:id/regenerate-view-password',
  *         description: Internal server error
  */
 router.get('/me', authenticateJWT, getUserInfo);
+
+/**
+ * @swagger
+ * /api/live-users/financial-summary:
+ *   get:
+ *     summary: Get financial summary for authenticated live user
+ *     tags: [Live Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: start_date
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date for filtering data (YYYY-MM-DD or ISO format)
+ *         example: "2024-01-01"
+ *       - in: query
+ *         name: end_date
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date for filtering data (YYYY-MM-DD or ISO format)
+ *         example: "2024-12-31"
+ *     responses:
+ *       200:
+ *         description: Live user financial summary retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Financial summary retrieved successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user_id:
+ *                       type: integer
+ *                     user_type:
+ *                       type: string
+ *                       example: "live"
+ *                     balance:
+ *                       type: number
+ *                       format: float
+ *                       description: Current wallet balance
+ *                     total_margin:
+ *                       type: number
+ *                       format: float
+ *                       description: Total margin currently used
+ *                     period:
+ *                       type: object
+ *                       properties:
+ *                         start_date:
+ *                           type: string
+ *                           format: date-time
+ *                           nullable: true
+ *                         end_date:
+ *                           type: string
+ *                           format: date-time
+ *                           nullable: true
+ *                         is_filtered:
+ *                           type: boolean
+ *                     trading:
+ *                       type: object
+ *                       properties:
+ *                         net_profit:
+ *                           type: number
+ *                           format: float
+ *                         commission:
+ *                           type: number
+ *                           format: float
+ *                         swap:
+ *                           type: number
+ *                           format: float
+ *                         total_orders:
+ *                           type: integer
+ *                     transactions:
+ *                       type: object
+ *                       properties:
+ *                         total_deposits:
+ *                           type: number
+ *                           format: float
+ *                         deposit_count:
+ *                           type: integer
+ *                     overall:
+ *                       type: object
+ *                       properties:
+ *                         user_net_profit:
+ *                           type: number
+ *                           format: float
+ *       400:
+ *         description: Bad request - Invalid parameters
+ *       401:
+ *         description: Unauthorized - Invalid or missing JWT token
+ *       404:
+ *         description: Live user not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/financial-summary',
+  authenticateJWT,
+  [
+    query('start_date')
+      .optional()
+      .isISO8601()
+      .withMessage('start_date must be a valid date in YYYY-MM-DD or ISO format'),
+    query('end_date')
+      .optional()
+      .isISO8601()
+      .withMessage('end_date must be a valid date in YYYY-MM-DD or ISO format')
+  ],
+  handleValidationErrors,
+  FinancialSummaryController.getLiveUserFinancialSummary
+);
 
 module.exports = router;

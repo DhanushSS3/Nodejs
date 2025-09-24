@@ -22,6 +22,7 @@ const logger = require('./services/logger.service');
 const cors = require('cors');
 const superadminOrdersRoutes = require('./routes/superadmin.orders.routes');
 const internalProviderRoutes = require('./routes/internal.provider.lookup.routes');
+const { financialSummaryRouter } = require('./routes/financial.summary.routes');
 
 const app = express();
 
@@ -107,6 +108,7 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/superadmin/orders', superadminOrdersRoutes);
 app.use('/api/internal/provider', internalProviderRoutes);
 app.use('/api/transactions', transactionsRoutes);
+app.use('/api/financial-summary', financialSummaryRouter);
 
 // 404 handler
 app.use(notFoundHandler);
