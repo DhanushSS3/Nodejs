@@ -23,6 +23,7 @@ const cors = require('cors');
 const superadminOrdersRoutes = require('./routes/superadmin.orders.routes');
 const internalProviderRoutes = require('./routes/internal.provider.lookup.routes');
 const { financialSummaryRouter } = require('./routes/financial.summary.routes');
+const redisHealthRoutes = require('./routes/redis.health.routes');
 
 const app = express();
 
@@ -109,6 +110,7 @@ app.use('/api/superadmin/orders', superadminOrdersRoutes);
 app.use('/api/internal/provider', internalProviderRoutes);
 app.use('/api/transactions', transactionsRoutes);
 app.use('/api/financial-summary', financialSummaryRouter);
+app.use('/api/redis-health', redisHealthRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

@@ -2,6 +2,7 @@ const UserTransaction = require('../models/userTransaction.model');
 const { LiveUser, DemoUser } = require('../models');
 const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
+const redisSyncService = require('./redis.sync.service');
 const { Op } = require('sequelize');
 const sequelize = require('../config/db');
 
@@ -114,6 +115,20 @@ class WalletService {
           balanceBefore: currentBalance,
           balanceAfter: newBalance,
           adminId
+        });
+
+        // Sync Redis after successful database transaction (outside DB transaction)
+        // This is done after the DB transaction commits to avoid blocking
+        setImmediate(async () => {
+          try {
+            await redisSyncService.syncAfterTransaction(transaction, operationId);
+          } catch (redisSyncError) {
+            logger.error('Redis sync failed after wallet transaction - database is consistent', {
+              operationId,
+              transactionId,
+              error: redisSyncError.message
+            });
+          }
         });
 
         return transaction;

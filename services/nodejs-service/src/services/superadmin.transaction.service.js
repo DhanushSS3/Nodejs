@@ -3,6 +3,7 @@ const sequelize = require('../config/db');
 const { redisCluster } = require('../../config/redis');
 const logger = require('../utils/logger');
 const idGenerator = require('./idGenerator.service');
+const redisSyncService = require('./redis.sync.service');
 
 class SuperadminTransactionService {
   /**
@@ -131,17 +132,25 @@ class SuperadminTransactionService {
       // Commit database transaction
       await transaction.commit();
 
-      // Update Redis caches after commit (best-effort)
+      // Comprehensive Redis sync after successful database commit
       try {
-        // 1) Short TTL balance cache
-        await this.updateCachedBalance(userId, userType, balanceAfter);
-      } catch (_) {}
-      try {
-        // 2) Primary user config in Redis used by Python services
-        const key = `user:{${String(userType)}:${String(userId)}}:config`;
-        await redisCluster.hset(key, { wallet_balance: String(balanceAfter) });
-      } catch (e2) {
-        logger.warn('Failed to update Redis user config after deposit', { error: e2.message, userId, userType });
+        await redisSyncService.syncUserAfterBalanceChange(userId, userType, {
+          wallet_balance: balanceAfter,
+          last_deposit_amount: depositAmount,
+          last_admin_action: 'deposit'
+        }, {
+          operation_type: 'deposit',
+          admin_id: adminId,
+          transaction_id: transactionRecord.transaction_id
+        });
+      } catch (redisSyncError) {
+        logger.error('Redis sync failed after deposit - database is still consistent', {
+          error: redisSyncError.message,
+          userId,
+          userType,
+          balanceAfter
+        });
+        // Don't throw - database transaction is already committed and consistent
       }
 
       logger.info(`Deposit processed successfully: ${userType} user ${userId}, amount: ${depositAmount}, new balance: ${balanceAfter}`);
@@ -246,15 +255,25 @@ class SuperadminTransactionService {
       // Commit database transaction
       await transaction.commit();
 
-      // Update Redis caches after commit (best-effort)
+      // Comprehensive Redis sync after successful database commit
       try {
-        await this.updateCachedBalance(userId, userType, balanceAfter);
-      } catch (_) {}
-      try {
-        const key = `user:{${String(userType)}:${String(userId)}}:config`;
-        await redisCluster.hset(key, { wallet_balance: String(balanceAfter) });
-      } catch (e2) {
-        logger.warn('Failed to update Redis user config after withdrawal', { error: e2.message, userId, userType });
+        await redisSyncService.syncUserAfterBalanceChange(userId, userType, {
+          wallet_balance: balanceAfter,
+          last_withdrawal_amount: withdrawalAmount,
+          last_admin_action: 'withdrawal'
+        }, {
+          operation_type: 'withdrawal',
+          admin_id: adminId,
+          transaction_id: transactionRecord.transaction_id
+        });
+      } catch (redisSyncError) {
+        logger.error('Redis sync failed after withdrawal - database is still consistent', {
+          error: redisSyncError.message,
+          userId,
+          userType,
+          balanceAfter
+        });
+        // Don't throw - database transaction is already committed and consistent
       }
 
       logger.info(`Withdrawal processed successfully: ${userType} user ${userId}, amount: ${withdrawalAmount}, new balance: ${balanceAfter}`);

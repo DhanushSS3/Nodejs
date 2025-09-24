@@ -2,6 +2,7 @@ const { LiveUser, DemoUser } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('./logger.service');
 const redisUserCache = require('./redis.user.cache.service');
+const redisSyncService = require('./redis.sync.service');
 
 class AdminUserManagementService {
   /**
@@ -49,6 +50,17 @@ class AdminUserManagementService {
         throw new Error('User not found');
       }
 
+      // Store old values for comparison (especially group changes)
+      const oldValues = {
+        group: user.group,
+        leverage: user.leverage,
+        status: user.status,
+        is_active: user.is_active,
+        wallet_balance: user.wallet_balance,
+        margin: user.margin,
+        net_profit: user.net_profit
+      };
+
       // Define fields that cannot be updated via this endpoint
       const restrictedFields = ['id', 'password', 'account_number', 'created_at', 'updated_at'];
       
@@ -77,9 +89,32 @@ class AdminUserManagementService {
       // Extract cacheable fields for Redis update
       const cacheableFields = this.extractCacheableFields(sanitizedData, 'live');
       
-      // Publish update to Redis Pub/Sub for real-time cache sync
+      // Comprehensive Redis sync after database update
       if (Object.keys(cacheableFields).length > 0) {
-        await redisUserCache.publishUserUpdate('live', userId, cacheableFields);
+        try {
+          // Check if group changed for special handling
+          const groupChanged = sanitizedData.hasOwnProperty('group') && oldValues.group !== sanitizedData.group;
+          
+          // Use comprehensive Redis sync service
+          await redisSyncService.syncUserAfterAdminUpdate(userId, 'live', cacheableFields, {
+            oldGroup: oldValues.group,
+            admin_id: adminInfo.id,
+            operation_type: 'admin_user_update',
+            group_changed: groupChanged
+          });
+          
+          // Also maintain backward compatibility with existing pub/sub
+          await redisUserCache.publishUserUpdate('live', userId, cacheableFields);
+          
+        } catch (redisSyncError) {
+          logger.error('Redis sync failed after live user update - database is consistent', {
+            operationId,
+            userId,
+            error: redisSyncError.message,
+            updatedFields: Object.keys(cacheableFields)
+          });
+          // Don't throw - database is authoritative
+        }
       }
 
       // Log the update operation
@@ -131,6 +166,17 @@ class AdminUserManagementService {
         throw new Error('User not found');
       }
 
+      // Store old values for comparison (especially group changes)
+      const oldValues = {
+        group: user.group,
+        leverage: user.leverage,
+        status: user.status,
+        is_active: user.is_active,
+        wallet_balance: user.wallet_balance,
+        margin: user.margin,
+        net_profit: user.net_profit
+      };
+
       // Define fields that cannot be updated via this endpoint
       const restrictedFields = ['id', 'password', 'account_number', 'created_at', 'updated_at'];
       
@@ -159,9 +205,32 @@ class AdminUserManagementService {
       // Extract cacheable fields for Redis update
       const cacheableFields = this.extractCacheableFields(sanitizedData, 'demo');
       
-      // Publish update to Redis Pub/Sub for real-time cache sync
+      // Comprehensive Redis sync after database update
       if (Object.keys(cacheableFields).length > 0) {
-        await redisUserCache.publishUserUpdate('demo', userId, cacheableFields);
+        try {
+          // Check if group changed for special handling
+          const groupChanged = sanitizedData.hasOwnProperty('group') && oldValues.group !== sanitizedData.group;
+          
+          // Use comprehensive Redis sync service
+          await redisSyncService.syncUserAfterAdminUpdate(userId, 'demo', cacheableFields, {
+            oldGroup: oldValues.group,
+            admin_id: adminInfo.id,
+            operation_type: 'admin_user_update',
+            group_changed: groupChanged
+          });
+          
+          // Also maintain backward compatibility with existing pub/sub
+          await redisUserCache.publishUserUpdate('demo', userId, cacheableFields);
+          
+        } catch (redisSyncError) {
+          logger.error('Redis sync failed after demo user update - database is consistent', {
+            operationId,
+            userId,
+            error: redisSyncError.message,
+            updatedFields: Object.keys(cacheableFields)
+          });
+          // Don't throw - database is authoritative
+        }
       }
 
       // Log the update operation
