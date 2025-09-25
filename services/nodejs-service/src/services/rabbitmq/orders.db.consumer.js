@@ -120,6 +120,7 @@ async function applyDbUpdate(msg) {
     order_type,
     order_status,
     order_price,
+    order_quantity,
     margin,
     contract_value,
     commission,
@@ -150,6 +151,7 @@ async function applyDbUpdate(msg) {
     user_type: String(user_type),
     order_status,
     order_price,
+    order_quantity,
     margin,
     commission,
     used_margin_usd,
@@ -289,6 +291,7 @@ async function applyDbUpdate(msg) {
     }
     if (order_type) updateFields.order_type = normalizeOrderType(order_type);
     if (order_price != null) updateFields.order_price = String(order_price);
+    if (order_quantity != null) updateFields.order_quantity = String(order_quantity);
     if (margin != null && Number.isFinite(Number(margin))) {
       updateFields.margin = Number(margin).toFixed(8);
     }
@@ -440,6 +443,9 @@ async function applyDbUpdate(msg) {
           if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
             pUser.hset(orderKey, 'order_price', String(updateFields.order_price));
           }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_quantity')) {
+            pUser.hset(orderKey, 'order_quantity', String(updateFields.order_quantity));
+          }
           if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
             pUser.hset(orderKey, 'contract_value', String(updateFields.contract_value));
           }
@@ -475,6 +481,9 @@ async function applyDbUpdate(msg) {
           }
           if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
             pOd.hset(orderDataKey, 'order_price', String(updateFields.order_price));
+          }
+          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_quantity')) {
+            pOd.hset(orderDataKey, 'order_quantity', String(updateFields.order_quantity));
           }
           if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
             pOd.hset(orderDataKey, 'contract_value', String(updateFields.contract_value));

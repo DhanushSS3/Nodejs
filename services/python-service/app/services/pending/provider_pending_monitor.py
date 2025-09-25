@@ -175,16 +175,28 @@ async def _process_one(order_id: str) -> None:
         ok_margin = await _validate_margin(user_type, user_id, group, symbol, qty, ask)
         if ok_margin:
             return
-        # Need to cancel: fetch cancel_id
+        # Need to cancel: fetch or generate cancel_id
         cancel_id = None
         try:
             od = await redis_cluster.hgetall(f"order_data:{order_id}")
             cancel_id = od.get("cancel_id") if od else None
         except Exception:
             cancel_id = None
+        
+        # If no cancel_id exists, generate one and store it
         if not cancel_id:
-            logger.warning("No cancel_id for provider pending %s; skipping cancel", order_id)
-            return
+            from app.services.orders.id_generator import generate_cancel_id
+            cancel_id = generate_cancel_id()
+            logger.info("Generated cancel_id=%s for provider pending order %s", cancel_id, order_id)
+            
+            # Store the cancel_id in order_data for future reference
+            try:
+                await redis_cluster.hset(f"order_data:{order_id}", "cancel_id", cancel_id)
+                # Also register in lifecycle service for tracking
+                from app.services.orders.order_registry import add_lifecycle_id
+                await add_lifecycle_id(order_id, cancel_id, "cancel_id")
+            except Exception as e:
+                logger.warning("Failed to store cancel_id for order %s: %s", order_id, e)
         # Avoid duplicate cancel requests
         sent_key = f"provider_pending_cancel_sent:{order_id}"
         nx = await redis_cluster.set(sent_key, "1", ex=300, nx=True)

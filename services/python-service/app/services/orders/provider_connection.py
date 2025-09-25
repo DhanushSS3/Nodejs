@@ -227,18 +227,31 @@ class ProviderConnectionManager:
                 except Exception:
                     # Fallback to plain repr if JSON fails
                     _PROVIDER_RX_LOG.info(f"transport={self.transport} dir=in msg={msg!r}")
+                
+                # Debug: Log that we're starting message processing
+                _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:STARTING_PROCESSING] order_id=%s", msg.get("order_id") if isinstance(msg, dict) else "not_dict")
+                
                 # Publish execution reports: either already structured or named-field dicts
                 report = None
+                _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:MSG_RECEIVED] msg_type=%s order_id=%s ord_status=%s isinstance_dict=%s", 
+                                     msg.get("type"), msg.get("order_id"), msg.get("ord_status"), isinstance(msg, dict))
                 try:
                     if isinstance(msg, dict):
                         if str(msg.get("type")) == "execution_report":
                             # Already a proper report, pass through
                             report = msg
+                            _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:USING_EXISTING_REPORT] order_id=%s", msg.get("order_id"))
                         else:
                             # Build from named fields (no FIX tag mapping)
+                            _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:BUILDING_REPORT] order_id=%s ord_status=%s", 
+                                                 msg.get("order_id"), msg.get("ord_status"))
                             report = _build_report(msg)
-                except Exception:
+                except Exception as e:
+                    logger.error("[PROVIDER_CONNECTION:BUILD_REPORT_ERROR] msg=%s error=%s", msg, str(e))
+                    _PROVIDER_RX_LOG.error("[PROVIDER_CONNECTION:BUILD_REPORT_ERROR] msg=%s error=%s", msg, str(e))
                     report = None
+                _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:REPORT_RESULT] order_id=%s report_is_none=%s", 
+                                     msg.get("order_id") if isinstance(msg, dict) else "not_dict", report is None)
                 if report is not None:
                     # Persist a short-lived ack in Redis for lifecycle-level awaits (cancel/close ids)
                     try:
@@ -264,8 +277,12 @@ class ProviderConnectionManager:
                     try:
                         lifecycle_id = report.get("order_id") or report.get("exec_id")
                         canonical_order_id = None
+                        logger.info("[PROVIDER_CONNECTION:PROCESSING] lifecycle_id=%s ord_status=%s", lifecycle_id, report.get("ord_status"))
+                        _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:PROCESSING] lifecycle_id=%s ord_status=%s", lifecycle_id, report.get("ord_status"))
                         if lifecycle_id:
                             canonical_order_id = await redis_cluster.get(f"global_order_lookup:{lifecycle_id}")
+                            logger.info("[PROVIDER_CONNECTION:LOOKUP] lifecycle_id=%s canonical_id=%s", lifecycle_id, canonical_order_id)
+                            _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:LOOKUP] lifecycle_id=%s canonical_id=%s", lifecycle_id, canonical_order_id)
 
                         group_val = report.get("group")
                         symbol_val = report.get("symbol")
@@ -393,11 +410,17 @@ class ProviderConnectionManager:
                                     report["commission_value_type"] = vtype
                         except Exception:
                             pass
-                    except Exception:
+                    except Exception as e:
                         # Enrichment is best-effort; proceed even if it fails
+                        logger.error("[PROVIDER_CONNECTION:ENRICHMENT_ERROR] lifecycle_id=%s error=%s", lifecycle_id, str(e))
+                        _PROVIDER_RX_LOG.error("[PROVIDER_CONNECTION:ENRICHMENT_ERROR] lifecycle_id=%s error=%s", lifecycle_id, str(e))
                         pass
 
                     await self._publisher.publish(report)
+                    logger.info("[PROVIDER_CONNECTION:PUBLISHED] lifecycle_id=%s canonical_id=%s ord_status=%s to_queue=%s", 
+                               lifecycle_id, canonical_order_id, report.get("ord_status"), CONFIRMATION_QUEUE)
+                    _PROVIDER_RX_LOG.info("[PROVIDER_CONNECTION:PUBLISHED] lifecycle_id=%s canonical_id=%s ord_status=%s to_queue=%s", 
+                                         lifecycle_id, canonical_order_id, report.get("ord_status"), CONFIRMATION_QUEUE)
                     try:
                         logger.debug(
                             "Published ER to %s: order_id=%s ord_status=%s",

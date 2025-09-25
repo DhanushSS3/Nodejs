@@ -86,6 +86,7 @@ class CancelWorker:
             er = payload.get("execution_report") or {}
             ord_status = str(er.get("ord_status") or (er.get("raw") or {}).get("39") or "").strip().upper()
             order_id_dbg = str(payload.get("order_id"))
+            order_id = order_id_dbg  # Initialize order_id with the debug value
             
             logger.info(
                 "[CANCEL:RECEIVED] order_id=%s ord_status=%s keys=%s", 
@@ -148,6 +149,17 @@ class CancelWorker:
             symbol = str(od.get("symbol") or payload.get("symbol") or "").upper()
             side = str(od.get("order_type") or payload.get("order_type") or payload.get("side") or "").upper()
 
+            # Check if this is a modify-related cancel (no cancel_id in order_data)
+            # These should be ignored as they're part of the modify flow
+            has_cancel_id = bool(od.get("cancel_id") or od.get("stoploss_cancel_id") or od.get("takeprofit_cancel_id"))
+            if ord_status in ("CANCELLED", "CANCELED") and not has_cancel_id:
+                logger.info(
+                    "[CANCEL:IGNORE_MODIFY] order_id=%s ord_status=%s reason=no_cancel_id_modify_flow", 
+                    order_id_dbg, ord_status
+                )
+                await self._ack(message)
+                return
+
             # Determine cancel kind robustly to avoid race with status write
             lifecycle_id = str(er.get("order_id") or (er.get("raw") or {}).get("11") or "")
             cancel_kind = None
@@ -175,6 +187,27 @@ class CancelWorker:
                 # treat this as a pending order cancel even without cancel_id match
                 elif ord_status in ("CANCELLED", "CANCELED") and redis_status in ("MODIFY", "PENDING", "CANCELLED"):
                     cancel_kind = "PENDING"
+                # Enhanced fallback: infer cancel type from lifecycle_id prefix when Redis status is empty
+                elif not redis_status and lifecycle_id:
+                    if lifecycle_id.startswith("SLC"):
+                        cancel_kind = "SL"
+                        logger.info("[CANCEL:INFERRED] order_id=%s inferred_type=SL from lifecycle_id=%s", order_id_dbg, lifecycle_id)
+                    elif lifecycle_id.startswith("TPC"):
+                        cancel_kind = "TP"
+                        logger.info("[CANCEL:INFERRED] order_id=%s inferred_type=TP from lifecycle_id=%s", order_id_dbg, lifecycle_id)
+                    elif lifecycle_id.startswith("PC"):
+                        cancel_kind = "PENDING"
+                        logger.info("[CANCEL:INFERRED] order_id=%s inferred_type=PENDING from lifecycle_id=%s", order_id_dbg, lifecycle_id)
+                # Additional fallback: check if order has SL/TP fields in Redis
+                elif not redis_status and od:
+                    has_sl = bool(od.get("stop_loss") or od.get("stoploss_price"))
+                    has_tp = bool(od.get("take_profit") or od.get("takeprofit_price"))
+                    if has_sl and not has_tp:
+                        cancel_kind = "SL"
+                        logger.info("[CANCEL:INFERRED] order_id=%s inferred_type=SL from Redis SL fields", order_id_dbg)
+                    elif has_tp and not has_sl:
+                        cancel_kind = "TP"
+                        logger.info("[CANCEL:INFERRED] order_id=%s inferred_type=TP from Redis TP fields", order_id_dbg)
             logger.info("[CANCEL:RESOLVED] order_id=%s cancel_kind=%s", order_id_dbg, cancel_kind)
 
             if cancel_kind == "SL":

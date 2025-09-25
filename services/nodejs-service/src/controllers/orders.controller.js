@@ -709,53 +709,9 @@ async function placePendingOrder(req, res) {
     try {
       // Use previously determined provider flow flag
       if (isProviderFlow) {
-        // 1) Generate cancel_id in Node and persist to SQL
-        let cancel_id = null;
-        try {
-          cancel_id = await idGenerator.generateCancelOrderId();
-        } catch (eGen) {
-          logger.warn('Failed to generate cancel_id for provider pending', { error: eGen.message, order_id });
-        }
-        if (cancel_id) {
-          try {
-            await OrderModel.update({ cancel_id }, { where: { order_id } });
-          } catch (eUpd) {
-            logger.warn('Failed to persist cancel_id in SQL for provider pending', { error: eUpd.message, order_id });
-          }
-          // Persist in Redis holdings and canonical for Python monitor access
-          // IMPORTANT: Avoid cross-slot pipelines in Redis Cluster. Write per-key.
-          try {
-            const hashTag = `${parsed.user_type}:${parsed.user_id}`;
-            const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
-            const odKey = `order_data:${order_id}`;
-            await redisCluster.hset(orderKey, 'cancel_id', String(cancel_id));
-            try {
-              await redisCluster.hset(odKey, 'cancel_id', String(cancel_id));
-            } catch (e2) {
-              logger.warn('Failed to set cancel_id on order_data', { error: e2.message, order_id });
-            }
-          } catch (eRedis) {
-            logger.warn('Failed to mirror cancel_id into Redis for provider pending', { error: eRedis.message, order_id });
-          }
-          // Also register lifecycle id mapping in Python for provider dispatcher quick lookup (fire-and-forget)
-          try {
-            const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-            axios.post(`${baseUrl}/api/orders/registry/lifecycle-id`, {
-              order_id,
-              new_id: cancel_id,
-              id_type: 'cancel_id',
-            }, { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } })
-              .then(() => {
-                logger.info('Registered cancel_id lifecycle mapping in Python', { order_id });
-              })
-              .catch((eMap) => {
-                logger.warn('Failed to register cancel_id lifecycle mapping in Python', { error: eMap.message, order_id });
-              });
-          } catch (eMapOuter) {
-            logger.warn('Unable to initiate cancel_id lifecycle registration', { error: eMapOuter.message, order_id });
-          }
-        }
-        // 2) Call Python to place provider pending order (Python will half-spread adjust before sending)
+        // NOTE: No longer generate cancel_id during order placement for provider flow
+        // cancel_id will be generated only when actually needed for cancellation by provider_pending_monitor
+        // Call Python to place provider pending order (Python will half-spread adjust before sending)
         try {
           const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
           const payload = {
@@ -966,6 +922,7 @@ async function modifyPendingOrder(req, res) {
         await redisCluster.hset(hkey, {
           order_price_user: String(order_price),
           order_price_compare: String(compare_price),
+          order_quantity: String(order_quantity),
           updated_at: Date.now().toString(),
         });
         // Mirror to user holdings (same-slot pipeline)
@@ -974,6 +931,7 @@ async function modifyPendingOrder(req, res) {
           const orderKey = `user_holdings:{${tag}}:${order_id}`;
           const pUser = redisCluster.pipeline();
           pUser.hset(orderKey, 'order_price', String(order_price));
+          pUser.hset(orderKey, 'order_quantity', String(order_quantity));
           pUser.hset(orderKey, 'status', 'PENDING');
           await pUser.exec();
         } catch (e) { logger.warn('Failed to mirror modify to user holdings', { error: e.message, order_id }); }
@@ -984,6 +942,7 @@ async function modifyPendingOrder(req, res) {
           pOd.hset(odKey, 'order_price', String(order_price));
           pOd.hset(odKey, 'compare_price', String(compare_price));
           pOd.hset(odKey, 'half_spread', String(half_spread));
+          pOd.hset(odKey, 'order_quantity', String(order_quantity));
           pOd.hset(odKey, 'status', 'PENDING');
           await pOd.exec();
         } catch (e) { logger.warn('Failed to update canonical for pending modify', { error: e.message, order_id }); }
@@ -997,7 +956,7 @@ async function modifyPendingOrder(req, res) {
 
       // Persist SQL order_price BEFORE emitting WS event so snapshot reflects new price immediately
       try {
-        await OrderModel.update({ order_price: order_price }, { where: { order_id } });
+        await OrderModel.update({ order_price: order_price, order_quantity: order_quantity }, { where: { order_id } });
       } catch (dbErr) {
         logger.warn('SQL update failed for pending modify', { error: dbErr.message, order_id });
       }
@@ -1007,7 +966,7 @@ async function modifyPendingOrder(req, res) {
         portfolioEvents.emitUserUpdate(user_type, user_id, {
           type: 'order_update',
           order_id,
-          update: { order_status: 'PENDING', order_price: String(order_price) },
+          update: { order_status: 'PENDING', order_price: String(order_price), order_quantity: String(order_quantity) },
           reason: 'pending_modified',
         });
       } catch (_) {}
@@ -1030,11 +989,13 @@ async function modifyPendingOrder(req, res) {
       await redisCluster.hset(orderKey, {
         status: 'MODIFY',
         pending_modify_price_user: String(order_price),
+        pending_modify_quantity_user: String(order_quantity),
       });
       // Separate slot updates
       const pOd = redisCluster.pipeline();
       pOd.hset(odKey, 'status', 'MODIFY');
       pOd.hset(odKey, 'pending_modify_price_user', String(order_price));
+      pOd.hset(odKey, 'pending_modify_quantity_user', String(order_quantity));
       if (modify_id) pOd.hset(odKey, 'modify_id', String(modify_id));
       await pOd.exec();
     } catch (e) {

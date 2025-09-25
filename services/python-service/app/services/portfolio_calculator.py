@@ -803,7 +803,7 @@ class PortfolioCalculatorListener:
             self._update_stats(symbol, users_added)
             
             if users_added > 0:
-                self.logger.info(
+                self.logger.debug(
                     f"Symbol {symbol}: Added {users_added} users to dirty sets "
                     f"(live: {len(live_users)}, demo: {len(demo_users)})"
                 )
@@ -895,7 +895,7 @@ class PortfolioCalculatorListener:
             live_dirty = len(self._dirty_users['live'])
             demo_dirty = len(self._dirty_users['demo'])
         
-        self.logger.info(
+        self.logger.debug(
             f"Portfolio Calculator Stats - "
             f"Symbols processed: {self._stats['symbols_processed']}, "
             f"Total users affected: {self._stats['users_affected_total']}, "

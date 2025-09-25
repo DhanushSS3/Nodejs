@@ -357,8 +357,25 @@ class Dispatcher:
                     target_queue = CANCEL_QUEUE
                 # Handle CANCELLED (or CANCELED) confirmations for cancels
                 elif ord_status in ("CANCELLED", "CANCELED"):
+                    # Check if order_id is actually a modify_id (modify flow cancel)
+                    is_modify_cancel = False
+                    try:
+                        # Quick check: if order_id exists in modify_id lifecycle mapping, it's a modify cancel
+                        modify_lookup = await redis_cluster.get(f"lifecycle_id_lookup:modify_id:{canonical_order_id}")
+                        if modify_lookup:
+                            is_modify_cancel = True
+                            logger.debug(
+                                "[DISPATCH:MODIFY_CANCEL] order_id=%s is modify_id, routing to PENDING_QUEUE", 
+                                canonical_order_id
+                            )
+                    except Exception as e:
+                        logger.debug("Failed to check modify_id lookup for %s: %s", canonical_order_id, e)
+                    
+                    if is_modify_cancel:
+                        # This is a modify-related cancel, route to pending worker for ignore/handling
+                        target_queue = PENDING_QUEUE
                     # SL/TP cancel confirmations
-                    if redis_status in ("STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL"):
+                    elif redis_status in ("STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL"):
                         target_queue = CANCEL_QUEUE
                     # Pending cancel confirmations may find status in MODIFY/PENDING/CANCELLED
                     elif redis_status in ("MODIFY", "PENDING", "CANCELLED", "PENDING-QUEUED"):

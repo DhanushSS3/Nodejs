@@ -323,6 +323,11 @@ def generate_close_id() -> str:
     return _numeric_id_generator.generate_prefixed_id('CLS')
 
 
+def generate_cancel_id() -> str:
+    """Generate general cancel ID: CNL1234567890123456 (Redis-independent)"""
+    return _numeric_id_generator.generate_prefixed_id('CNL')
+
+
 def generate_stoploss_cancel_id() -> str:
     """Generate stop loss cancel ID: SLC1234567890123456 (Redis-independent)"""
     return _numeric_id_generator.generate_prefixed_id('SLC')

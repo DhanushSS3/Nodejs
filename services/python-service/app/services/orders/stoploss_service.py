@@ -331,21 +331,44 @@ class StopLossService:
         if stoploss_cancel_id:
             provider_payload["stop_loss_cancel_id"] = stoploss_cancel_id
 
+        # Send via persistent connection manager (same as other operations)
+        from app.services.orders.service_provider_client import send_provider_order
+        
+        logger.info("Stoploss cancel sending via persistent connection for order_id=%s", order_id)
         ok, via = await send_provider_order(provider_payload)
         if not ok:
             return {"ok": False, "reason": f"provider_send_failed:{via}"}
+        logger.info("Stoploss cancel sent via persistent connection (%s) for order_id=%s", via, order_id)
 
         # Mark routing status so dispatcher can route provider ACK correctly
         try:
             order_data_key = f"order_data:{order_id}"
             hash_tag = f"{user_type}:{user_id}"
             order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+            
+            # Log before setting status
+            logger.info("STOPLOSS-CANCEL setting Redis status for order_id=%s order_data_key=%s", order_id, order_data_key)
+            
             pipe = redis_cluster.pipeline()
-            pipe.hset(order_data_key, mapping={"status": "STOPLOSS-CANCEL", "symbol": symbol, "order_type": side})
+            pipe.hset(order_data_key, mapping={"status": "STOPLOSS-CANCEL", "symbol": symbol, "order_type": side, "stoploss_cancel_id": stoploss_cancel_id})
             pipe.hset(order_key, mapping={"status": "STOPLOSS-CANCEL"})
-            await pipe.execute()
-        except Exception:
-            pass
+            result = await pipe.execute()
+            
+            logger.info("STOPLOSS-CANCEL status set in Redis for order_id=%s pipeline_result=%s", order_id, result)
+            
+            # Verify the status was actually set
+            try:
+                verification = await redis_cluster.hget(order_data_key, "status")
+                logger.info("STOPLOSS-CANCEL status verification for order_id=%s current_status=%s", order_id, verification)
+                if verification != "STOPLOSS-CANCEL":
+                    logger.error("STOPLOSS-CANCEL status verification FAILED for order_id=%s expected=STOPLOSS-CANCEL actual=%s", order_id, verification)
+            except Exception as verify_e:
+                logger.error("STOPLOSS-CANCEL status verification error for order_id=%s: %s", order_id, verify_e)
+                
+        except Exception as e:
+            logger.error("Failed to set STOPLOSS-CANCEL status in Redis for order_id=%s: %s", order_id, e)
+            # This is critical - if we can't set the status, the cancel worker won't know how to handle the response
+            return {"ok": False, "reason": "redis_status_update_failed", "error": str(e)}
 
         # Fire-and-forget: do not wait for provider ACK; finalization handled by dispatcher/worker
         return {
