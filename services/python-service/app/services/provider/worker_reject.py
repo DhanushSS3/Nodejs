@@ -59,10 +59,62 @@ async def release_lock(lock_key: str, token: str) -> None:
         logger.error("release_lock error: %s", e)
 
 
-def _determine_rejection_type(redis_status: str) -> str:
+def _determine_rejection_type_by_lifecycle_id(provider_order_id: str) -> str:
     """
-    Determine rejection type based on Redis status field.
+    Determine rejection type based on provider order_id (lifecycle ID) prefix.
+    This is more reliable than Redis status as it directly maps to the operation type.
+    
+    ID Patterns:
+    - MOD123... = Modify operation failed (PENDING_MODIFY)
+    - SL123...  = Stop loss addition failed (STOPLOSS_ADD)  
+    - TP123...  = Take profit addition failed (TAKEPROFIT_ADD)
+    - SLC123... = Stop loss cancel failed (STOPLOSS_REMOVE)
+    - TPC123... = Take profit cancel failed (TAKEPROFIT_REMOVE)
+    - CNL123... = Pending cancel failed (PENDING_CANCEL)
+    - CLS123... = Close order failed (ORDER_CLOSE)
+    - 123...    = Order ID only = Instant order failed (ORDER_PLACEMENT)
     """
+    if not provider_order_id:
+        return 'ORDER_PLACEMENT'  # Default fallback
+        
+    pid = str(provider_order_id).upper().strip()
+    
+    # Check lifecycle ID prefixes
+    if pid.startswith('MOD'):
+        return 'PENDING_MODIFY'
+    elif pid.startswith('SLC'):
+        return 'STOPLOSS_REMOVE'
+    elif pid.startswith('TPC'):
+        return 'TAKEPROFIT_REMOVE'
+    elif pid.startswith('SL'):
+        return 'STOPLOSS_ADD'
+    elif pid.startswith('TP'):
+        return 'TAKEPROFIT_ADD'
+    elif pid.startswith('CNL'):
+        return 'PENDING_CANCEL'
+    elif pid.startswith('CLS'):
+        return 'ORDER_CLOSE'
+    elif pid.isdigit():
+        # Pure numeric ID = original order_id = placement failure
+        return 'ORDER_PLACEMENT'
+    else:
+        # Unknown prefix, check if it looks like pending placement
+        if any(char.isalpha() for char in pid):
+            return 'PENDING_PLACEMENT'  # Has letters, likely pending
+        return 'ORDER_PLACEMENT'  # Default fallback
+
+
+def _determine_rejection_type(redis_status: str, provider_order_id: str = None) -> str:
+    """
+    Determine rejection type with dual approach:
+    1. Primary: Use lifecycle ID prefix (more reliable)
+    2. Fallback: Use Redis status (legacy compatibility)
+    """
+    # Primary method: Use lifecycle ID if available
+    if provider_order_id:
+        return _determine_rejection_type_by_lifecycle_id(provider_order_id)
+    
+    # Fallback method: Use Redis status
     status = str(redis_status or '').upper().strip()
     
     if status == 'OPEN':
@@ -81,6 +133,7 @@ def _determine_rejection_type(redis_status: str) -> str:
         return 'STOPLOSS_REMOVE'
     elif status == 'TAKEPROFIT':
         return 'TAKEPROFIT_ADD'
+    elif status == 'TAKEPROFIT-CANCEL':
         return 'TAKEPROFIT_REMOVE'
     else:
         return 'ORDER_PLACEMENT'  # Default fallback
@@ -313,7 +366,15 @@ class RejectWorker:
                 await self._ack(message)
                 return
 
-            # Get Redis status to determine rejection type
+            # Extract provider order ID for rejection type detection
+            provider_order_id = (
+                payload.get("provider_order_id") or 
+                er.get("exec_id") or 
+                (er.get("raw") or {}).get("17") or
+                ""
+            )
+
+            # Get Redis status as fallback for rejection type determination
             redis_status = ""
             order_data = {}
             try:
@@ -328,12 +389,25 @@ class RejectWorker:
                 logger.warning("[REJECT:REDIS_ERROR] order_id=%s error=%s", order_id, e)
                 redis_status = "OPEN"  # Default fallback
 
-            rejection_type = _determine_rejection_type(redis_status)
+            # Determine rejection type using lifecycle ID (primary) and Redis status (fallback)
+            rejection_type = _determine_rejection_type(redis_status, provider_order_id)
+            
+            # Enhanced logging to show detection method
+            detection_method = "lifecycle_id" if provider_order_id else "redis_status"
+            logger.info(
+                "[REJECT:TYPE_DETECTION] order_id=%s provider_order_id=%s redis_status=%s rejection_type=%s method=%s",
+                order_id, provider_order_id, redis_status, rejection_type, detection_method
+            )
             
             log_order_processing(
                 logger, order_id, user_id, symbol, 'REJECT', 'PROCESSING',
                 processing_time_ms=(time.time() - start_time) * 1000,
-                additional_data={'rejection_type': rejection_type, 'redis_status': redis_status}
+                additional_data={
+                    'rejection_type': rejection_type, 
+                    'redis_status': redis_status,
+                    'provider_order_id': provider_order_id,
+                    'detection_method': detection_method
+                }
             )
 
             # Provider idempotency token-based dedupe

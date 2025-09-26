@@ -133,6 +133,7 @@ async function applyDbUpdate(msg) {
     swap,
     used_margin_executed,
     used_margin_all,
+    close_message,
     // For mapping close_message based on which lifecycle id triggered close
     trigger_lifecycle_id,
     // Trigger fields
@@ -326,37 +327,76 @@ async function applyDbUpdate(msg) {
       updateFields.swap = Number(swap).toFixed(8);
     }
 
-    // Close message mapping based on which lifecycle id triggered the close
+    // Enhanced close message mapping based on close scenario
     if (type === 'ORDER_CLOSE_CONFIRMED') {
       try {
-        let slId = row.stoploss_id || null;
-        let tpId = row.takeprofit_id || null;
-        let clsId = row.close_id || null;
-        // Fallback to Redis canonical if SQL row lacks these ids
-        if (!slId || !tpId || !clsId) {
-          try {
-            const canonical = await redisCluster.hgetall(`order_data:${String(order_id)}`);
-            if (canonical) {
-              if (!slId && canonical.stoploss_id) slId = String(canonical.stoploss_id);
-              if (!tpId && canonical.takeprofit_id) tpId = String(canonical.takeprofit_id);
-              if (!clsId && canonical.close_id) clsId = String(canonical.close_id);
+        let closeMsg = null;
+        
+        // Priority 1: Use explicit close_message if provided in payload
+        if (close_message && String(close_message).trim()) {
+          closeMsg = String(close_message).trim();
+        }
+        // Priority 2: Determine from trigger_lifecycle_id
+        else if (trigger_lifecycle_id) {
+          let slId = row.stoploss_id || null;
+          let tpId = row.takeprofit_id || null;
+          let clsId = row.close_id || null;
+          
+          // Fallback to Redis canonical if SQL row lacks these ids
+          if (!slId || !tpId || !clsId) {
+            try {
+              const canonical = await redisCluster.hgetall(`order_data:${String(order_id)}`);
+              if (canonical) {
+                if (!slId && canonical.stoploss_id) slId = String(canonical.stoploss_id);
+                if (!tpId && canonical.takeprofit_id) tpId = String(canonical.takeprofit_id);
+                if (!clsId && canonical.close_id) clsId = String(canonical.close_id);
+              }
+            } catch (e) {
+              // best effort only
             }
-          } catch (e) {
-            // best effort only
+          }
+          
+          const trig = String(trigger_lifecycle_id);
+          console.log("trigger_lifecycle_id:", trig, "slId:", slId, "tpId:", tpId, "clsId:", clsId);
+          if (slId && trig === String(slId)) {
+            closeMsg = 'Stoploss';
+          } else if (tpId && trig === String(tpId)) {
+            closeMsg = 'Takeprofit';
+          } else if (clsId && trig === String(clsId)) {
+            closeMsg = 'Closed';
+          } else if (trig.includes('trigger_stoploss_')) {
+            // Handle synthetic stoploss trigger IDs
+            closeMsg = 'Stoploss';
+          } else if (trig.includes('trigger_takeprofit_')) {
+            // Handle synthetic takeprofit trigger IDs
+            closeMsg = 'Takeprofit';
+          } else {
+            // Check if trigger ID indicates autocutoff
+            if (trig.includes('autocutoff') || trig.includes('liquidation') || trig.includes('margin_call')) {
+              closeMsg = 'Autocutoff';
+            } else {
+              closeMsg = 'Closed'; // Default for unknown triggers
+            }
           }
         }
-        let closeMsg = null;
-        if (trigger_lifecycle_id) {
-          const trig = String(trigger_lifecycle_id);
-          if (slId && trig === String(slId)) closeMsg = 'stoploss_triggered';
-          else if (tpId && trig === String(tpId)) closeMsg = 'takeprofit_triggered';
-          else if (clsId && trig === String(clsId)) closeMsg = 'close';
+        // Priority 3: Default fallback
+        else {
+          closeMsg = 'Closed';
         }
+        
         if (closeMsg) {
           updateFields.close_message = closeMsg;
+          logger.info('Set close_message for order', { 
+            order_id: String(order_id), 
+            close_message: closeMsg, 
+            trigger_lifecycle_id: trigger_lifecycle_id || 'none',
+            detection_method: close_message ? 'explicit' : (trigger_lifecycle_id ? 'trigger_id' : 'default')
+          });
         }
       } catch (e) {
-        logger.warn('Failed to set close_message from trigger_lifecycle_id', { error: e.message, order_id: String(order_id) });
+        logger.warn('Failed to set close_message', { error: e.message, order_id: String(order_id) });
+        // Set default close_message on error
+        updateFields.close_message = 'Closed';
       }
     }
 

@@ -109,12 +109,22 @@ class TriggerMonitor:
             logger.warning("zrangebyscore failed for %s/%s: %s", symbol, side, e)
             sl_ids, tp_ids = [], []
 
-        # Combine SL then TP (priority to SL)
-        ids = list(dict.fromkeys([*(sl_ids or []), *(tp_ids or [])]))
-        if not ids:
+        # Track trigger types for each order_id (preserve differentiation)
+        trigger_info = {}  # order_id -> 'stoploss' or 'takeprofit'
+        
+        # Process SL triggers first (priority to SL)
+        for order_id in (sl_ids or []):
+            trigger_info[order_id] = 'stoploss'
+        
+        # Process TP triggers (won't override SL if same order_id)
+        for order_id in (tp_ids or []):
+            if order_id not in trigger_info:
+                trigger_info[order_id] = 'takeprofit'
+        
+        if not trigger_info:
             return
 
-        for order_id in ids:
+        for order_id, trigger_type in trigger_info.items():
             # Guard against duplicates
             processing_key = f"close_processing:{order_id}"
             try:
@@ -138,6 +148,48 @@ class TriggerMonitor:
                 user_id = str(trig.get("user_id"))
                 otype = str(trig.get("order_type"))
                 sym = str(trig.get("symbol"))
+                
+                # Retrieve lifecycle IDs from canonical order data
+                trigger_lifecycle_id = None
+                close_message = None
+                try:
+                    order_data = await redis_cluster.hgetall(f"order_data:{order_id}")
+                    
+                    # Debug: Log what's actually in order_data
+                    logger.info("[TRIGGER:DEBUG_ORDER_DATA] order_id=%s keys=%s", order_id, list(order_data.keys()) if order_data else "None")
+                    
+                    if trigger_type == 'stoploss':
+                        trigger_lifecycle_id = order_data.get("stoploss_id")
+                        close_message = "Stoploss"
+                        logger.info("[TRIGGER:DEBUG_SL] order_id=%s stoploss_id=%s", order_id, trigger_lifecycle_id)
+                    elif trigger_type == 'takeprofit':
+                        trigger_lifecycle_id = order_data.get("takeprofit_id") 
+                        close_message = "Takeprofit"
+                        logger.info("[TRIGGER:DEBUG_TP] order_id=%s takeprofit_id=%s", order_id, trigger_lifecycle_id)
+                    
+                    # If lifecycle ID not found in order_data, use trigger type directly
+                    if not trigger_lifecycle_id:
+                        logger.info("[TRIGGER:USING_TRIGGER_TYPE] order_id=%s trigger_type=%s - using trigger type for close_message", order_id, trigger_type)
+                        
+                        # Since we know the trigger type from our Redis query differentiation,
+                        # we can set the correct close_message even without the lifecycle ID
+                        if trigger_type == 'stoploss':
+                            close_message = "Stoploss"
+                            # Use a synthetic trigger ID for Node.js matching
+                            trigger_lifecycle_id = f"trigger_stoploss_{order_id}"
+                            logger.info("[TRIGGER:SYNTHETIC_SL] order_id=%s close_message=%s synthetic_id=%s", order_id, close_message, trigger_lifecycle_id)
+                        elif trigger_type == 'takeprofit':
+                            close_message = "Takeprofit"
+                            # Use a synthetic trigger ID for Node.js matching
+                            trigger_lifecycle_id = f"trigger_takeprofit_{order_id}"
+                            logger.info("[TRIGGER:SYNTHETIC_TP] order_id=%s close_message=%s synthetic_id=%s", order_id, close_message, trigger_lifecycle_id)
+                        else:
+                            close_message = "Stoploss/Takeprofit"
+                            trigger_lifecycle_id = f"trigger_unknown_{order_id}"
+                        
+                except Exception as e:
+                    logger.warning("[TRIGGER:LIFECYCLE_ID_ERROR] order_id=%s error=%s", order_id, e)
+                    close_message = "Stoploss/Takeprofit"
                 payload = {
                     "symbol": sym,
                     "order_type": otype,
@@ -196,8 +248,15 @@ class TriggerMonitor:
                         "swap": result.get("swap"),
                         "used_margin_executed": result.get("used_margin_executed"),
                         "used_margin_all": result.get("used_margin_all"),
-                        "close_message": "triggered",  # optional; Node can use if desired
+                        "close_message": close_message,  # "Stoploss" or "Takeprofit"
+                        "trigger_lifecycle_id": trigger_lifecycle_id,  # SL123... or TP123...
                     }
+                    
+                    # Enhanced logging for debugging
+                    logger.info(
+                        "[TRIGGER:CLOSE_CONFIRMED] order_id=%s trigger_type=%s close_message=%s trigger_lifecycle_id=%s",
+                        order_id, trigger_type, close_message, trigger_lifecycle_id
+                    )
                     await self._publish_db_update(db_msg)
                 except Exception:
                     pass
