@@ -2,6 +2,8 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Tuple
 
+import orjson
+import aio_pika
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_repository import fetch_user_orders, fetch_group_data
 from app.services.portfolio.conversion_utils import convert_to_usd
@@ -88,6 +90,53 @@ async def _compute_order_loss_usd(order: Dict, group: Dict, prices: Dict[str, Di
 class LiquidationEngine:
     def __init__(self) -> None:
         self._closer = OrderCloser()
+        self._conn: Optional[aio_pika.RobustConnection] = None
+        self._ch: Optional[aio_pika.abc.AbstractChannel] = None
+        self._ex = None
+
+    async def _ensure_rabbitmq_connection(self):
+        """Ensure RabbitMQ connection is established for DB updates"""
+        if self._conn is None or self._conn.is_closed:
+            try:
+                import os
+                rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
+                db_update_queue = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+                
+                self._conn = await aio_pika.connect_robust(rabbitmq_url)
+                self._ch = await self._conn.channel()
+                await self._ch.declare_queue(db_update_queue, durable=True)
+                self._ex = self._ch.default_exchange
+                logger.info("LiquidationEngine connected to RabbitMQ for DB updates")
+            except Exception as e:
+                logger.error("Failed to connect to RabbitMQ: %s", e)
+                self._conn = None
+                self._ch = None
+                self._ex = None
+
+    async def _publish_db_update(self, msg: dict):
+        """Publish DB update message to RabbitMQ"""
+        try:
+            await self._ensure_rabbitmq_connection()
+            if self._ex is None:
+                logger.warning("RabbitMQ not connected, skipping DB update")
+                return
+                
+            import os
+            db_update_queue = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+            amsg = aio_pika.Message(body=orjson.dumps(msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
+            await self._ex.publish(amsg, routing_key=db_update_queue)
+            logger.info("[AUTOCUTOFF:DB_UPDATE] Published close confirmation for order_id=%s", msg.get("order_id"))
+        except Exception as e:
+            logger.error("Failed to publish DB update from LiquidationEngine: %s", e)
+
+    async def close(self):
+        """Close RabbitMQ connection"""
+        try:
+            if self._conn and not self._conn.is_closed:
+                await self._conn.close()
+                logger.info("LiquidationEngine RabbitMQ connection closed")
+        except Exception as e:
+            logger.error("Error closing RabbitMQ connection: %s", e)
 
     async def _get_margin_level(self, user_type: str, user_id: str) -> float:
         try:
@@ -240,6 +289,36 @@ class LiquidationEngine:
                     logger.warning("[AutoCutoff] close failed for %s:%s order_id=%s reason=%s", user_type, user_id, order_id, res.get("reason"))
                     # proceed to next order
                     continue
+
+                # Send DB update ONLY for local execution (not provider flow)
+                # Provider flow will be handled by provider workers after execution reports
+                if not (user_type == "live" and sending_orders == "barclays"):
+                    try:
+                        db_msg = {
+                            "type": "ORDER_CLOSE_CONFIRMED",
+                            "order_id": order_id,
+                            "user_id": str(user_id),
+                            "user_type": str(user_type),
+                            "order_status": "CLOSED",
+                            "close_price": res.get("close_price"),
+                            "net_profit": res.get("net_profit"),
+                            "commission": res.get("total_commission"),
+                            "commission_entry": res.get("commission_entry"),
+                            "commission_exit": res.get("commission_exit"),
+                            "profit_usd": res.get("profit_usd"),
+                            "swap": res.get("swap"),
+                            "used_margin_executed": res.get("used_margin_executed"),
+                            "used_margin_all": res.get("used_margin_all"),
+                            "close_message": "Autocutoff",  # Explicit autocutoff message
+                            "trigger_lifecycle_id": f"autocutoff_{order_id}",  # Synthetic autocutoff trigger ID
+                        }
+                        await self._publish_db_update(db_msg)
+                        logger.info("[AUTOCUTOFF:LOCAL_CLOSE_CONFIRMED] order_id=%s close_message=Autocutoff flow=local", order_id)
+                    except Exception as e:
+                        logger.warning("[AUTOCUTOFF:DB_UPDATE_FAILED] order_id=%s error=%s", order_id, e)
+                else:
+                    logger.info("[AUTOCUTOFF:PROVIDER_CLOSE] order_id=%s close_id=%s flow=provider - DB update will be handled by provider worker", 
+                              order_id, payload.get("close_id"))
 
                 # Wait briefly for portfolio recalculation to reflect changes
                 await asyncio.sleep(0.3)
