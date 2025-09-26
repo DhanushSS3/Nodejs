@@ -15,9 +15,18 @@ async def _get_margin_level(user_type: str, user_id: str) -> float:
     try:
         pf = await redis_cluster.hgetall(f"user_portfolio:{{{user_type}:{user_id}}}")
         if pf and pf.get("margin_level") is not None:
-            return float(pf.get("margin_level"))
-    except Exception:
-        pass
+            margin_level = float(pf.get("margin_level"))
+            used_margin = float(pf.get("used_margin", 0))
+            
+            # If used_margin is 0, margin_level should be infinite (safe)
+            # Don't trigger alerts/liquidation for users with no margin usage
+            if used_margin == 0:
+                logger.info("AutoCutoffWatcher: User %s:%s has no used margin (%.2f), treating as safe margin level", user_type, user_id, used_margin)
+                return 999.0  # Return high margin level to prevent alerts/liquidation
+            
+            return margin_level
+    except Exception as e:
+        logger.warning("AutoCutoffWatcher: Failed to get margin level for %s:%s: %s", user_type, user_id, e)
     return 0.0
 
 

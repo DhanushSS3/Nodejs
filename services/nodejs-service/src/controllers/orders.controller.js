@@ -1111,7 +1111,9 @@ async function closeOrder(req, res) {
         return res.status(404).json({ success: false, message: 'Order not found' });
       }
       // Basic ownership check with SQL row
-      if (normalizeStr(sqlRow.order_user_id) !== normalizeStr(req_user_id)) {
+      const sqlUserId = normalizeStr(sqlRow.order_user_id);
+      const reqUserId = normalizeStr(req_user_id);
+      if (sqlUserId !== reqUserId) {
         return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       }
       // Must be currently OPEN
@@ -1132,7 +1134,10 @@ async function closeOrder(req, res) {
       }
     } else {
       // Ownership check using canonical
-      if (normalizeStr(canonical.user_id) !== normalizeStr(req_user_id) || normalizeStr(canonical.user_type).toLowerCase() !== req_user_type) {
+      const canonicalUserId = normalizeStr(canonical.user_id);
+      const reqUserId = normalizeStr(req_user_id);
+      const canonicalUserType = normalizeStr(canonical.user_type).toLowerCase();
+      if (canonicalUserId !== reqUserId || canonicalUserType !== req_user_type) {
         return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       }
       // Must be currently OPEN (engine/UI state). Do NOT use canonical.status here

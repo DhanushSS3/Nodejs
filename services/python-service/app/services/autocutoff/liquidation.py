@@ -94,9 +94,18 @@ class LiquidationEngine:
             key = f"user_portfolio:{{{user_type}:{user_id}}}"
             pf = await redis_cluster.hgetall(key)
             if pf and pf.get("margin_level") is not None:
-                return float(pf.get("margin_level"))
-        except Exception:
-            pass
+                margin_level = float(pf.get("margin_level"))
+                used_margin = float(pf.get("used_margin", 0))
+                
+                # If used_margin is 0, margin_level should be infinite (safe)
+                # Don't liquidate users with no margin usage
+                if used_margin == 0:
+                    logger.info("[AutoCutoff] User %s:%s has no used margin (%.2f), treating as safe margin level", user_type, user_id, used_margin)
+                    return 999.0  # Return high margin level to prevent liquidation
+                
+                return margin_level
+        except Exception as e:
+            logger.warning("[AutoCutoff] Failed to get margin level for %s:%s: %s", user_type, user_id, e)
         return 0.0
 
     async def run(self, *, user_type: str, user_id: str, prices_cache: Optional[Dict[str, Dict[str, float]]] = None) -> None:
@@ -160,6 +169,7 @@ class LiquidationEngine:
             try:
                 # Double-check we still below threshold before closing
                 ml = await self._get_margin_level(user_type, user_id)
+                logger.info("[AutoCutoff] Pre-close margin check: margin_level=%.2f for %s:%s", ml, user_type, user_id)
                 if ml >= 100.0:
                     logger.info("[AutoCutoff] margin_level %.2f restored for %s:%s; stop liquidation", ml, user_type, user_id)
                     break
@@ -175,6 +185,7 @@ class LiquidationEngine:
                     "order_id": order_id,
                     "status": "CLOSED",
                     "order_status": "CLOSED",
+                    "close_message": "AUTOCUTOFF",  # Mark as autocutoff liquidation
                 }
 
                 # For provider flow, include close_id (we register mapping in OrderCloser)

@@ -239,21 +239,22 @@ async function getUserPortfolio(req, res) {
     // Accept from query (GET) or body (if someone posts)
     const user_type = String((req.query.user_type ?? req.body?.user_type) || '').toLowerCase();
     const user_id = String((req.query.user_id ?? req.body?.user_id) || '').trim();
+    const detailed = Boolean(req.query.detailed || req.body?.detailed);
 
     if (!['live', 'demo'].includes(user_type) || !user_id) {
       return bad(res, 'user_type (live|demo) and user_id are required');
     }
 
-    const key = `user_portfolio:{${user_type}:${user_id}}`;
-    const data = await redisCluster.hgetall(key);
+    const portfolioKey = `user_portfolio:{${user_type}:${user_id}}`;
+    const portfolioData = await redisCluster.hgetall(portfolioKey);
 
-    if (!data || Object.keys(data).length === 0) {
+    if (!portfolioData || Object.keys(portfolioData).length === 0) {
       return bad(res, 'Portfolio snapshot not found in Redis for this user', 404);
     }
 
     // Normalize numeric fields where possible
     const numericFields = ['equity', 'balance', 'free_margin', 'used_margin', 'margin_level', 'open_pnl', 'total_pl', 'ts'];
-    const portfolio = { ...data };
+    const portfolio = { ...portfolioData };
     for (const f of numericFields) {
       if (portfolio[f] !== undefined) {
         const n = Number(portfolio[f]);
@@ -261,7 +262,87 @@ async function getUserPortfolio(req, res) {
       }
     }
 
-    return ok(res, { user_type, user_id, redis_key: key, portfolio }, 'User portfolio snapshot fetched from Redis');
+    // Add calculated fields for better analysis
+    const analysis = {
+      margin_utilization_percent: portfolio.used_margin && portfolio.balance ? 
+        ((portfolio.used_margin / portfolio.balance) * 100).toFixed(2) : null,
+      risk_level: portfolio.margin_level >= 100 ? 'LOW' : 
+                 portfolio.margin_level >= 50 ? 'MEDIUM' : 'HIGH',
+      portfolio_performance: portfolio.open_pnl >= 0 ? 'POSITIVE' : 'NEGATIVE',
+      last_updated: portfolio.ts ? new Date(portfolio.ts * 1000).toISOString() : null
+    };
+
+    let result = {
+      user_type,
+      user_id,
+      redis_key: portfolioKey,
+      portfolio,
+      analysis
+    };
+
+    // If detailed=true, fetch additional information
+    if (detailed) {
+      try {
+        // Get user configuration
+        const userConfigKey = `user:{${user_type}:${user_id}}:config`;
+        const userConfig = await redisCluster.hgetall(userConfigKey);
+
+        // Get user orders count
+        const indexKey = `user_orders_index:{${user_type}:${user_id}}`;
+        const orderIds = await redisCluster.smembers(indexKey);
+        
+        // Get order details for active orders
+        const orderDetails = [];
+        if (orderIds && orderIds.length > 0) {
+          for (const orderId of orderIds.slice(0, 10)) { // Limit to first 10 for performance
+            try {
+              const orderKey = `user_holdings:{${user_type}:${user_id}}:${orderId}`;
+              const orderData = await redisCluster.hgetall(orderKey);
+              if (orderData && Object.keys(orderData).length > 0) {
+                orderDetails.push({
+                  order_id: orderId,
+                  symbol: orderData.symbol,
+                  order_type: orderData.order_type,
+                  order_status: orderData.order_status,
+                  order_price: orderData.order_price,
+                  order_quantity: orderData.order_quantity,
+                  margin: orderData.margin,
+                  created_at: orderData.created_at
+                });
+              }
+            } catch (e) {
+              // Skip failed order lookups
+            }
+          }
+        }
+
+        // Get pending orders count
+        const pendingKey = `pending_local:{${user_type}:${user_id}}`;
+        const pendingOrders = await redisCluster.smembers(pendingKey);
+
+        result.detailed_info = {
+          user_config: userConfig || {},
+          active_orders_count: orderIds ? orderIds.length : 0,
+          pending_orders_count: pendingOrders ? pendingOrders.length : 0,
+          recent_orders: orderDetails,
+          redis_keys: {
+            portfolio: portfolioKey,
+            user_config: userConfigKey,
+            orders_index: indexKey,
+            pending_local: pendingKey
+          }
+        };
+      } catch (detailError) {
+        logger.warn('Failed to fetch detailed portfolio info', { 
+          error: detailError.message, 
+          user_type, 
+          user_id 
+        });
+        result.detailed_info_error = detailError.message;
+      }
+    }
+
+    return ok(res, result, detailed ? 'Detailed user portfolio fetched from Redis' : 'User portfolio snapshot fetched from Redis');
   } catch (err) {
     return bad(res, `Failed to fetch user portfolio: ${err.message}`, 500);
   }

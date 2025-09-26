@@ -174,7 +174,7 @@ router.post('/ensure/symbol-holder', ctrl.ensureSymbolHolder);
  * @swagger
  * /api/superadmin/orders/portfolio:
  *   get:
- *     summary: Fetch a user's portfolio snapshot from Redis
+ *     summary: Fetch a user's comprehensive portfolio details from Redis
  *     tags: [Superadmin Orders]
  *     security:
  *       - bearerAuth: []
@@ -192,9 +192,81 @@ router.post('/ensure/symbol-holder', ctrl.ensureSymbolHolder);
  *         schema:
  *           type: string
  *         description: User ID to fetch the portfolio for
+ *       - in: query
+ *         name: detailed
+ *         required: false
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: If true, includes additional details like user config, order counts, and recent orders
  *     responses:
  *       200:
- *         description: Portfolio snapshot fetched successfully
+ *         description: Portfolio details fetched successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user_type:
+ *                       type: string
+ *                     user_id:
+ *                       type: string
+ *                     redis_key:
+ *                       type: string
+ *                     portfolio:
+ *                       type: object
+ *                       properties:
+ *                         equity:
+ *                           type: number
+ *                         balance:
+ *                           type: number
+ *                         free_margin:
+ *                           type: number
+ *                         used_margin:
+ *                           type: number
+ *                         margin_level:
+ *                           type: number
+ *                         open_pnl:
+ *                           type: number
+ *                         total_pl:
+ *                           type: number
+ *                         ts:
+ *                           type: number
+ *                     analysis:
+ *                       type: object
+ *                       properties:
+ *                         margin_utilization_percent:
+ *                           type: string
+ *                         risk_level:
+ *                           type: string
+ *                           enum: [LOW, MEDIUM, HIGH]
+ *                         portfolio_performance:
+ *                           type: string
+ *                           enum: [POSITIVE, NEGATIVE]
+ *                         last_updated:
+ *                           type: string
+ *                           format: date-time
+ *                     detailed_info:
+ *                       type: object
+ *                       description: Only included when detailed=true
+ *                       properties:
+ *                         user_config:
+ *                           type: object
+ *                         active_orders_count:
+ *                           type: number
+ *                         pending_orders_count:
+ *                           type: number
+ *                         recent_orders:
+ *                           type: array
+ *                           items:
+ *                             type: object
  *       404:
  *         description: Portfolio not found in Redis for the given user
  */

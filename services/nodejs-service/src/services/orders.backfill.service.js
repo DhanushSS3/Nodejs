@@ -161,6 +161,7 @@ class OrdersBackfillService {
       const odKey = `order_data:${o.order_id}`;
       const odMap = {
         order_id: o.order_id,
+        user_id: userId,  // ← MISSING FIELD ADDED!
         symbol: o.symbol,
         order_type: o.order_type,
         order_price: o.order_price ?? '',
@@ -274,6 +275,7 @@ class OrdersBackfillService {
       const odKey = `order_data:${o.order_id}`;
       const odMap = {
         order_id: o.order_id,
+        user_id: userId,  // ← MISSING FIELD ADDED!
         symbol: o.symbol,
         order_type: o.order_type,
         order_price: o.order_price ?? '',
@@ -461,6 +463,7 @@ class OrdersBackfillService {
       const odKey = `order_data:${order.order_id}`;
       await this.redis.hset(odKey, {
         order_id: order.order_id,
+        user_id: userId,  // ← MISSING FIELD ADDED!
         symbol: order.symbol,
         order_type: order.order_type,
         order_price: order.order_price ?? '',
