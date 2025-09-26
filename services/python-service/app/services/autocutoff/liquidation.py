@@ -196,7 +196,7 @@ class LiquidationEngine:
                     sending_orders = ""
                 if user_type == "live" and sending_orders == "barclays":
                     # Generate provider lifecycle IDs via Redis-backed counters (compatible with Node format)
-                    payload["close_id"] = await generate_close_id()
+                    payload["close_id"] = generate_close_id()
 
                     # Determine if TP/SL are active to send provider cancels first
                     def _is_active(v) -> bool:

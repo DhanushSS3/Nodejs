@@ -39,13 +39,35 @@ def _create_rotating_logger(
     # Create file path
     log_file = BASE_LOG_DIR / filename
     
-    # Create rotating file handler
-    handler = RotatingFileHandler(
-        filename=str(log_file),
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding='utf-8'
-    )
+    # Create rotating file handler with Windows-safe rotation
+    try:
+        # Try to create a Windows-safe rotating handler
+        from logging.handlers import TimedRotatingFileHandler
+        import platform
+        
+        if platform.system() == 'Windows':
+            # Use TimedRotatingFileHandler for Windows to avoid file locking issues
+            handler = TimedRotatingFileHandler(
+                filename=str(log_file),
+                when='midnight',
+                interval=1,
+                backupCount=backup_count,
+                encoding='utf-8'
+            )
+        else:
+            # Use RotatingFileHandler for non-Windows systems
+            handler = RotatingFileHandler(
+                filename=str(log_file),
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding='utf-8'
+            )
+    except Exception:
+        # Fallback to basic file handler if rotation fails
+        handler = logging.FileHandler(
+            filename=str(log_file),
+            encoding='utf-8'
+        )
     
     # Set formatter
     formatter = logging.Formatter(

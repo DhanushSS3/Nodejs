@@ -81,21 +81,28 @@ def _determine_rejection_type(redis_status: str) -> str:
         return 'STOPLOSS_REMOVE'
     elif status == 'TAKEPROFIT':
         return 'TAKEPROFIT_ADD'
-    elif status == 'TAKEPROFIT-CANCEL':
         return 'TAKEPROFIT_REMOVE'
     else:
         return 'ORDER_PLACEMENT'  # Default fallback
 
 
-async def _update_redis_for_order_placement_reject(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def _handle_placement_rejection(payload: Dict[str, Any]) -> None:
     """
     Handle rejection of order placement (status=OPEN).
     Mark order as REJECTED and release reserved margin.
     """
-    order_id = str(payload.get("order_id"))
-    user_id = str(payload.get("user_id"))
-    user_type = str(payload.get("user_type"))
-
+    order_id = str(payload.get("order_id", ""))
+    user_id_raw = payload.get("user_id")
+    user_type_raw = payload.get("user_type")
+    
+    if user_id_raw is None or user_type_raw is None:
+        logger.error("[REJECT:PLACEMENT] Missing user info: user_type=%s user_id=%s order_id=%s", 
+                    user_type_raw, user_id_raw, order_id)
+        return
+        
+    user_id = str(user_id_raw)
+    user_type = str(user_type_raw)
+        
     # Provider report fields
     report: Dict[str, Any] = payload.get("execution_report") or {}
     ord_status = report.get("ord_status") or (report.get("raw") or {}).get("39")
@@ -142,9 +149,23 @@ async def _handle_non_placement_reject(payload: Dict[str, Any], rejection_type: 
     Handle rejection of non-placement operations (SL/TP, pending modify/cancel, etc.).
     These don't require margin updates or Redis order status changes.
     """
-    order_id = str(payload.get("order_id"))
-    user_id = str(payload.get("user_id"))
-    user_type = str(payload.get("user_type"))
+    order_id = str(payload.get("order_id", ""))
+    user_id_raw = payload.get("user_id")
+    user_type_raw = payload.get("user_type")
+    
+    if user_id_raw is None or user_type_raw is None:
+        logger.error("[REJECT:NON_PLACEMENT] Missing user info: user_type=%s user_id=%s order_id=%s", 
+                    user_type_raw, user_id_raw, order_id)
+        return {
+            "order_id": order_id,
+            "user_id": "unknown",
+            "user_type": "unknown", 
+            "rejection_type": rejection_type,
+            "requires_margin_update": False
+        }
+        
+    user_id = str(user_id_raw)
+    user_type = str(user_type_raw)
 
     logger.info(
         "[REJECT:NON_PLACEMENT] order_id=%s rejection_type=%s user=%s:%s - no Redis updates needed",
@@ -257,7 +278,7 @@ class RejectWorker:
                 'uptime_minutes': uptime / 60
             }
             
-            log_worker_stats('worker_reject', stats_data)
+            log_worker_stats(logger, 'worker_reject', stats_data)
             self._stats['last_stats_log'] = now
 
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
@@ -268,9 +289,20 @@ class RejectWorker:
             self._stats['processed_count'] += 1
             
             payload = orjson.loads(message.body)
-            order_id = str(payload.get("order_id"))
-            user_type = str(payload.get("user_type"))
-            user_id = str(payload.get("user_id"))
+            order_id = str(payload.get("order_id", ""))
+            
+            # Safely extract user_type and user_id, handle None values
+            user_type_raw = payload.get("user_type")
+            user_id_raw = payload.get("user_id")
+            
+            if user_type_raw is None or user_id_raw is None:
+                logger.error("[REJECT:MISSING_USER_INFO] order_id=%s user_type=%s user_id=%s - skipping", 
+                           order_id, user_type_raw, user_id_raw)
+                await self._ack(message)
+                return
+                
+            user_type = str(user_type_raw)
+            user_id = str(user_id_raw)
             symbol = str(payload.get("symbol", "")).upper()
 
             # Check provider ord_status and ensure it's a rejection
@@ -299,9 +331,9 @@ class RejectWorker:
             rejection_type = _determine_rejection_type(redis_status)
             
             log_order_processing(
-                logger, 'REJECT', 'PROCESSING', order_id, user_type, user_id, symbol,
+                logger, order_id, user_id, symbol, 'REJECT', 'PROCESSING',
                 processing_time_ms=(time.time() - start_time) * 1000,
-                rejection_type=rejection_type, redis_status=redis_status
+                additional_data={'rejection_type': rejection_type, 'redis_status': redis_status}
             )
 
             # Provider idempotency token-based dedupe
@@ -435,9 +467,9 @@ class RejectWorker:
                 # Log success
                 processing_time = (time.time() - start_time) * 1000
                 log_order_processing(
-                    logger, 'REJECT', 'SUCCESS', order_id, user_type, user_id, symbol,
+                    logger, order_id, user_id, symbol, 'REJECT', 'SUCCESS',
                     processing_time_ms=processing_time,
-                    rejection_type=rejection_type, redis_status=redis_status
+                    additional_data={'rejection_type': rejection_type, 'redis_status': redis_status}
                 )
                 
                 self._stats['success_count'] += 1

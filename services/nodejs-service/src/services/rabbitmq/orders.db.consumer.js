@@ -612,8 +612,9 @@ async function startOrdersDbConsumer() {
 
     ch.consume(ORDER_DB_UPDATE_QUEUE, async (msg) => {
       if (!msg) return;
+      let payload = null;
       try {
-        const payload = JSON.parse(msg.content.toString('utf8'));
+        payload = JSON.parse(msg.content.toString('utf8'));
         
         // Route different message types
         if (payload.type === 'ORDER_REJECTION_RECORD') {
@@ -626,7 +627,8 @@ async function startOrdersDbConsumer() {
       } catch (err) {
         logger.error('Orders DB consumer failed to handle message', { 
           error: err.message, 
-          messageType: payload?.type || 'unknown'
+          messageType: payload?.type || 'unknown',
+          rawMessage: msg.content.toString('utf8').substring(0, 200) // First 200 chars for debugging
         });
         // Requeue to retry transient failures
         ch.nack(msg, false, true);

@@ -251,7 +251,7 @@ class RejectWorker:
                 'uptime_minutes': uptime / 60
             }
             
-            log_worker_stats('worker_reject', stats_data)
+            log_worker_stats(logger, 'worker_reject', stats_data)
             self._stats['last_stats_log'] = now
 
     async def handle(self, message: aio_pika.abc.AbstractIncomingMessage):
@@ -293,9 +293,9 @@ class RejectWorker:
             rejection_type = _determine_rejection_type(redis_status)
             
             log_order_processing(
-                logger, 'REJECT', 'PROCESSING', order_id, user_type, user_id, symbol,
+                logger, order_id, user_id, symbol, 'REJECT', 'PROCESSING',
                 processing_time_ms=(time.time() - start_time) * 1000,
-                rejection_type=rejection_type, redis_status=redis_status
+                additional_data={'rejection_type': rejection_type, 'redis_status': redis_status}
             )
 
             # Provider idempotency token-based dedupe
@@ -429,9 +429,9 @@ class RejectWorker:
                 # Log success
                 processing_time = (time.time() - start_time) * 1000
                 log_order_processing(
-                    logger, 'REJECT', 'SUCCESS', order_id, user_type, user_id, symbol,
+                    logger, order_id, user_id, symbol, 'REJECT', 'SUCCESS',
                     processing_time_ms=processing_time,
-                    rejection_type=rejection_type, redis_status=redis_status
+                    additional_data={'rejection_type': rejection_type, 'redis_status': redis_status}
                 )
                 
                 self._stats['success_count'] += 1

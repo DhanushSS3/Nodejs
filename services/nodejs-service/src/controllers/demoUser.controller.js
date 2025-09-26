@@ -130,7 +130,9 @@ async function signup(req, res) {
         // Set default values for demo users
         wallet_balance: 10000,
         leverage: 100,
-        ...optionalFields
+        ...optionalFields,
+        // Force group to 'Group B' for all demo users (override any request value)
+        group: 'Group B'
       }, { transaction });
 
       logger.financial('demo_user_created', {

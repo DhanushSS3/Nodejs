@@ -254,13 +254,33 @@ async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]
     Prefer the index set user_orders_index:{user_type:user_id} to avoid cluster-wide SCAN.
     Fallback to SCAN with robust flattening when index is unavailable.
     """
+    # Validate input parameters
+    if not user_type or not user_id or user_type == "None" or user_id == "None":
+        logger.error("fetch_user_orders: invalid parameters user_type=%s user_id=%s", user_type, user_id)
+        return []
+        
     try:
         hash_tag = f"{user_type}:{user_id}"
         index_key = f"user_orders_index:{{{hash_tag}}}"
         order_ids = await redis_cluster.smembers(index_key)
         keys: List[str] = []
         if order_ids:
-            keys = [f"user_holdings:{{{hash_tag}}}:{oid}" for oid in order_ids]
+            # Ensure all order IDs are strings (handle bytes, dicts, etc.)
+            sanitized_order_ids = []
+            for oid in order_ids:
+                try:
+                    if isinstance(oid, (bytes, bytearray)):
+                        sanitized_order_ids.append(oid.decode('utf-8'))
+                    elif isinstance(oid, dict):
+                        # Skip invalid dict entries
+                        logger.warning("fetch_user_orders: skipping dict order_id for %s:%s: %s", user_type, user_id, oid)
+                        continue
+                    else:
+                        sanitized_order_ids.append(str(oid))
+                except Exception as e:
+                    logger.warning("fetch_user_orders: failed to sanitize order_id for %s:%s: %s (error: %s)", user_type, user_id, oid, e)
+                    continue
+            keys = [f"user_holdings:{{{hash_tag}}}:{oid}" for oid in sanitized_order_ids]
         else:
             # Fallback to SCAN (flatten any cluster-returned dict of lists)
             pattern = f"user_holdings:{{{hash_tag}}}:*"
