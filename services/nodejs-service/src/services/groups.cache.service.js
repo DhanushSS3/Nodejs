@@ -79,6 +79,7 @@ class GroupsCacheService {
       spread_pip: group.spread_pip ? group.spread_pip.toString() : '',
       contract_size: group.contract_size ? group.contract_size.toString() : '',
       profit: group.profit || '',
+      swap_type: group.swap_type || '',
       created_at: group.created_at.toISOString(),
       updated_at: group.updated_at.toISOString(),
       // Add cache metadata
@@ -114,6 +115,7 @@ class GroupsCacheService {
       spread_pip: hash.spread_pip ? parseFloat(hash.spread_pip) : null,
       contract_size: hash.contract_size ? parseFloat(hash.contract_size) : null,
       profit: hash.profit || null,
+      swap_type: hash.swap_type || null,
       created_at: new Date(hash.created_at),
       updated_at: new Date(hash.updated_at),
       cached_at: new Date(hash.cached_at),

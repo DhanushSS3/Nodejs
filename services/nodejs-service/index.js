@@ -6,6 +6,7 @@ const sequelize = require('./src/config/db');
 const { redisCluster, redisReadyPromise } = require('./config/redis');
 const startupCacheService = require('./src/services/startup.cache.service');
 const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
+const swapSchedulerService = require('./src/services/swap.scheduler.service');
 
 const PORT = process.env.PORT || 3000;
 const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
@@ -66,6 +67,14 @@ const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
       console.log('✅ WebSocket server (/ws/portfolio) started');
     } catch (wsErr) {
       console.error('❌ Failed to start WebSocket server', wsErr);
+    }
+
+    // 6. Start swap scheduler
+    try {
+      swapSchedulerService.start();
+      console.log('✅ Swap scheduler started');
+    } catch (swapErr) {
+      console.error('❌ Failed to start swap scheduler', swapErr);
     }
 
   } catch (err) {
