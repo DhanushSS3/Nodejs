@@ -1,4 +1,4 @@
-const { LiveUser, DemoUser } = require('../models');
+const { LiveUser, DemoUser, LiveUserOrder, DemoUserOrder } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('./logger.service');
 const redisUserCache = require('./redis.user.cache.service');
@@ -336,6 +336,171 @@ class AdminUserManagementService {
     }
     
     return cacheableFields;
+  }
+
+  /**
+   * Fetches all open orders for a specific user (live or demo)
+   * @param {string} userType - 'live' or 'demo'
+   * @param {number} userId - The ID of the user
+   * @param {Model} ScopedUserModel - The scoped user model for access control
+   * @param {Object} adminInfo - Information about the admin performing the request
+   * @returns {Object} User orders and metadata
+   */
+  async getUserOpenOrders(userType, userId, ScopedUserModel, adminInfo) {
+    const operationId = `get_user_orders_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    try {
+      // Validate userType
+      if (!['live', 'demo'].includes(userType)) {
+        throw new Error('Invalid user type. Must be "live" or "demo"');
+      }
+
+      // Validate userId
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        throw new Error('Invalid user ID. Must be a positive integer');
+      }
+
+      // First, verify the user exists and is accessible to this admin (respects country scoping)
+      const user = await ScopedUserModel.findByPk(userIdInt, {
+        attributes: ['id', 'name', 'email', 'account_number', 'group', 'status', 'is_active']
+      });
+
+      if (!user) {
+        logger.warn('User not found or access denied for admin', {
+          operationId,
+          adminId: adminInfo.id,
+          adminRole: adminInfo.role,
+          userType,
+          userId: userIdInt,
+          message: 'User not found in accessible scope'
+        });
+        throw new Error('User not found or access denied');
+      }
+
+      // Select the appropriate order model
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      
+      // Debug logging to check if models are properly loaded
+      logger.info('Order model selection debug', {
+        operationId,
+        userType,
+        LiveUserOrderExists: !!LiveUserOrder,
+        DemoUserOrderExists: !!DemoUserOrder,
+        SelectedModelExists: !!OrderModel,
+        SelectedModelName: OrderModel?.name
+      });
+
+      // Safety check for model existence
+      if (!OrderModel || typeof OrderModel.findAll !== 'function') {
+        logger.error('Order model not properly loaded', {
+          operationId,
+          userType,
+          OrderModel: OrderModel?.toString(),
+          LiveUserOrder: LiveUserOrder?.toString(),
+          DemoUserOrder: DemoUserOrder?.toString()
+        });
+        throw new Error(`${userType} order model not properly initialized`);
+      }
+
+      // Fetch all open orders for this user (no pagination as requested)
+      const orders = await OrderModel.findAll({
+        where: {
+          order_user_id: userIdInt,
+          order_status: {
+            [Op.in]: ['OPEN', 'PENDING', 'QUEUED', 'PENDING-QUEUED']
+          }
+        },
+        attributes: [
+          'id', 'order_id', 'symbol', 'order_type', 'order_status',
+          'order_price', 'order_quantity', 'contract_value', 'margin',
+          'commission', 'swap', 'stop_loss', 'take_profit', 'net_profit',
+          'created_at', 'updated_at', 'close_message'
+        ],
+        order: [['created_at', 'DESC']]
+      });
+
+      // Calculate summary statistics
+      const summary = {
+        total_orders: orders.length,
+        open_orders: orders.filter(o => o.order_status === 'OPEN').length,
+        pending_orders: orders.filter(o => ['PENDING', 'PENDING-QUEUED'].includes(o.order_status)).length,
+        queued_orders: orders.filter(o => o.order_status === 'QUEUED').length,
+        total_margin_used: orders.reduce((sum, order) => {
+          const margin = parseFloat(order.margin) || 0;
+          return sum + margin;
+        }, 0),
+        total_contract_value: orders.reduce((sum, order) => {
+          const contractValue = parseFloat(order.contract_value) || 0;
+          return sum + contractValue;
+        }, 0),
+        symbols_traded: [...new Set(orders.map(o => o.symbol))],
+        order_types: [...new Set(orders.map(o => o.order_type))]
+      };
+
+      // Log the operation for audit purposes
+      logger.info('User orders fetched by admin', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId: userIdInt,
+        userEmail: user.email,
+        ordersCount: orders.length,
+        summary
+      });
+
+      return {
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          account_number: user.account_number,
+          group: user.group,
+          status: user.status,
+          is_active: user.is_active,
+          user_type: userType
+        },
+        orders: orders.map(order => ({
+          id: order.id,
+          order_id: order.order_id,
+          symbol: order.symbol,
+          order_type: order.order_type,
+          order_status: order.order_status,
+          order_price: parseFloat(order.order_price) || 0,
+          order_quantity: parseFloat(order.order_quantity) || 0,
+          contract_value: parseFloat(order.contract_value) || 0,
+          margin: parseFloat(order.margin) || 0,
+          commission: parseFloat(order.commission) || 0,
+          swap: parseFloat(order.swap) || 0,
+          stop_loss: order.stop_loss ? parseFloat(order.stop_loss) : null,
+          take_profit: order.take_profit ? parseFloat(order.take_profit) : null,
+          net_profit: parseFloat(order.net_profit) || 0,
+          created_at: order.created_at,
+          updated_at: order.updated_at,
+          close_message: order.close_message
+        })),
+        summary,
+        metadata: {
+          operation_id: operationId,
+          fetched_at: new Date().toISOString(),
+          fetched_by_admin: {
+            id: adminInfo.id,
+            role: adminInfo.role
+          }
+        }
+      };
+
+    } catch (error) {
+      logger.error('Failed to fetch user orders', {
+        operationId,
+        adminId: adminInfo.id,
+        userType,
+        userId,
+        error: error.message
+      });
+      throw error;
+    }
   }
 }
 

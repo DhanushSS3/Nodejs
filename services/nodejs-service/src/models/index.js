@@ -1,5 +1,7 @@
 const DemoUser = require('./demoUser.model');
 const LiveUser = require('./liveUser.model');
+const LiveUserOrder = require('./liveUserOrder.model');
+const DemoUserOrder = require('./demoUserOrder.model');
 const Admin = require('./admin.model');
 const Role = require('./role.model');
 const Permission = require('./permission.model');
@@ -22,6 +24,8 @@ try {
 module.exports = {
   DemoUser,
   LiveUser,
+  LiveUserOrder,
+  DemoUserOrder,
   Admin,
   Role,
   Permission,
