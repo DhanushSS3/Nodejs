@@ -97,6 +97,168 @@ const { authenticateAdmin, authenticateJWT, requirePermission } = require('../mi
 
 /**
  * @swagger
+ * /api/groups/admin/{groupName}:
+ *   get:
+ *     summary: Get all symbols for a group (Admin access)
+ *     description: Retrieve all trading symbols available for a specific group - Admin only
+ *     tags: [Groups]
+ *     security:
+ *       - adminAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: groupName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Group name
+ *         example: "VIP"
+ *     responses:
+ *       200:
+ *         description: Groups retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Groups retrieved successfully for VIP"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     symbols:
+ *                       type: integer
+ *                       example: 50
+ *                     groups:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Group'
+ *                     access_type:
+ *                       type: string
+ *                       example: "admin"
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: Group not found
+ *
+ * /api/groups/my-group:
+ *   get:
+ *     summary: Get user's group symbols (User access)
+ *     description: Retrieve all trading symbols for the user's group from JWT token
+ *     tags: [Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User's group retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Groups retrieved successfully for VIP"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     symbols:
+ *                       type: integer
+ *                       example: 50
+ *                     groups:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Group'
+ *                     access_type:
+ *                       type: string
+ *                       example: "user"
+ *       400:
+ *         description: User group information not available
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Group not found
+ */
+// Admin route - can query any group (MOVED TO TOP - more specific route)
+router.get('/admin/:groupName', 
+  authenticateAdmin,
+  requirePermission('GROUPS_READ'),
+  groupsController.getGroupsByName
+);
+
+// User route - gets their own group from JWT (MOVED TO TOP - more specific route)
+router.get('/my-group', 
+  authenticateJWT,
+  groupsController.getGroupsByName
+);
+
+/**
+ * @swagger
+ * /api/groups/half-spreads:
+ *   get:
+ *     summary: Get half spreads for user's group
+ *     description: Calculate and return half spreads for all instruments in user's group from JWT
+ *     tags: [Groups]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Half spreads calculated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Groups retrieved successfully for VIP"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     group_name:
+ *                       type: string
+ *                       example: "VIP"
+ *                     total_instruments:
+ *                       type: integer
+ *                       example: 50
+ *                     half_spreads:
+ *                       type: object
+ *                       additionalProperties:
+ *                         type: number
+ *                       example:
+ *                         AUDCAD: 0.000035
+ *                         USDZAR: 4
+ *                         USDSGD: 2
+ *       400:
+ *         description: User group information not available
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: No instruments found for user's group
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/half-spreads', authenticateJWT, groupsController.getHalfSpreads);
+
+/**
+ * @swagger
  * /api/groups/{groupName}/{symbol}:
  *   get:
  *     summary: Get complete group configuration
@@ -216,167 +378,5 @@ router.get('/:groupName/:symbol/fields',
   requirePermission('GROUPS_READ'),
   groupsController.getGroupFields
 );
-
-/**
- * @swagger
- * /api/groups/admin/{groupName}:
- *   get:
- *     summary: Get all symbols for a group (Admin access)
- *     description: Retrieve all trading symbols available for a specific group - Admin only
- *     tags: [Groups]
- *     security:
- *       - adminAuth: []
- *     parameters:
- *       - in: path
- *         name: groupName
- *         required: true
- *         schema:
- *           type: string
- *         description: Group name
- *         example: "VIP"
- *     responses:
- *       200:
- *         description: Groups retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Groups retrieved successfully for VIP"
- *                 data:
- *                   type: object
- *                   properties:
- *                     group_name:
- *                       type: string
- *                       example: "VIP"
- *                     symbols:
- *                       type: integer
- *                       example: 50
- *                     groups:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Group'
- *                     access_type:
- *                       type: string
- *                       example: "admin"
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Insufficient permissions
- *       404:
- *         description: Group not found
- *
- * /api/groups/my-group:
- *   get:
- *     summary: Get user's group symbols (User access)
- *     description: Retrieve all trading symbols for the user's group from JWT token
- *     tags: [Groups]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: User's group retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Groups retrieved successfully for VIP"
- *                 data:
- *                   type: object
- *                   properties:
- *                     group_name:
- *                       type: string
- *                       example: "VIP"
- *                     symbols:
- *                       type: integer
- *                       example: 50
- *                     groups:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Group'
- *                     access_type:
- *                       type: string
- *                       example: "user"
- *       400:
- *         description: User group information not available
- *       401:
- *         description: Unauthorized
- *       404:
- *         description: Group not found
- */
-// Admin route - can query any group
-router.get('/admin/:groupName', 
-  authenticateAdmin,
-  requirePermission('GROUPS_READ'),
-  groupsController.getGroupsByName
-);
-
-// User route - gets their own group from JWT
-router.get('/my-group', 
-  authenticateJWT,
-  groupsController.getGroupsByName
-);
-
-/**
- * @swagger
- * /api/groups/half-spreads:
- *   get:
- *     summary: Get half spreads for user's group
- *     description: Calculate and return half spreads for all instruments in user's group from JWT
- *     tags: [Groups]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Half spreads calculated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Half spreads calculated successfully"
- *                 data:
- *                   type: object
- *                   properties:
- *                     group_name:
- *                       type: string
- *                       example: "VIP"
- *                     total_instruments:
- *                       type: integer
- *                       example: 50
- *                     half_spreads:
- *                       type: object
- *                       additionalProperties:
- *                         type: number
- *                       example:
- *                         AUDCAD: 0.000035
- *                         USDZAR: 4
- *                         USDSGD: 2
- *       400:
- *         description: User group information not available
- *       401:
- *         description: Unauthorized
- *       404:
- *         description: No instruments found for user's group
- *       500:
- *         description: Internal server error
- */
-router.get('/half-spreads', authenticateJWT, groupsController.getHalfSpreads);
 
 module.exports = router;

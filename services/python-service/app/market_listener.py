@@ -21,7 +21,12 @@ class MarketListener:
     """WebSocket market data listener for real-time price feeds"""
     
     def __init__(self):
-        self.ws_url = "wss://quotes.livefxhub.com:9001/?token=Lkj@asd@123"
+        # Primary WebSocket URL with fallback to IP address
+        self.ws_urls = [
+            "wss://quotes.livefxhub.com:9001/?token=Lkj@asd@123",
+            "wss://188.241.62.105:9001/?token=Lkj@asd@123"  # IP fallback for DNS issues
+        ]
+        self.current_url_index = 0
         self.market_service = MarketDataService()
         self.reconnect_delay = 5  # seconds
         self.max_reconnect_attempts = 10
@@ -52,12 +57,28 @@ class MarketListener:
                     await asyncio.sleep(self.reconnect_delay)
                     
                 except websockets.exceptions.InvalidURI:
-                    logger.error(f"Invalid WebSocket URI: {self.ws_url}")
-                    break
+                    current_url = self.ws_urls[self.current_url_index]
+                    logger.error(f"Invalid WebSocket URI: {current_url}")
+                    # Try next URL if available
+                    if self._try_next_url():
+                        logger.info(f"Switching to fallback URL: {self.ws_urls[self.current_url_index]}")
+                        continue
+                    else:
+                        break
                     
-                except Exception as e:
+                except (OSError, ConnectionRefusedError, Exception) as e:
                     reconnect_count += 1
-                    logger.error(f"Unexpected error in market listener: {e}")
+                    current_url = self.ws_urls[self.current_url_index]
+                    
+                    # Handle DNS resolution errors specifically
+                    if "getaddrinfo failed" in str(e) or "Name or service not known" in str(e):
+                        logger.error(f"DNS resolution failed for {current_url}: {e}")
+                        if self._try_next_url():
+                            logger.info(f"Switching to IP fallback: {self.ws_urls[self.current_url_index]}")
+                            reconnect_count = 0  # Reset count when switching URLs
+                            continue
+                    
+                    logger.error(f"Connection error with {current_url}: {e}")
                     await asyncio.sleep(self.reconnect_delay)
             
             if reconnect_count >= self.max_reconnect_attempts:
@@ -84,12 +105,24 @@ class MarketListener:
             if self.message_queue:
                 await self._process_message_batch()
     
+    def _try_next_url(self):
+        """Try the next URL in the list. Returns True if switched, False if no more URLs."""
+        if self.current_url_index < len(self.ws_urls) - 1:
+            self.current_url_index += 1
+            return True
+        return False
+    
+    def _get_current_url(self):
+        """Get the current WebSocket URL"""
+        return self.ws_urls[self.current_url_index]
+    
     async def _connect_and_listen(self):
         """Establish WebSocket connection and listen for market data"""
-        logger.info(f"Connecting to market feed: {self.ws_url}")
+        current_url = self._get_current_url()
+        logger.info(f"Connecting to market feed: {current_url}")
         
         async with websockets.connect(
-            self.ws_url,
+            current_url,
             ping_interval=30,
             ping_timeout=10,
             close_timeout=10
@@ -208,7 +241,9 @@ class MarketListener:
         """Get current connection status"""
         return {
             "is_running": self.is_running,
-            "ws_url": self.ws_url,
+            "current_ws_url": self._get_current_url(),
+            "all_ws_urls": self.ws_urls,
+            "current_url_index": self.current_url_index,
             "reconnect_delay": self.reconnect_delay,
             "max_reconnect_attempts": self.max_reconnect_attempts,
             "batch_size": self.batch_size,

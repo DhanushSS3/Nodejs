@@ -78,8 +78,8 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Swagger UI
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+// Swagger UI - Disabled for production
+// app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 
 // Health check endpoint
 app.get('/health', (req, res) => {

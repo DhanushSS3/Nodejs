@@ -105,13 +105,14 @@ app = FastAPI(
     title="LiveFX Market Data Service",
     description="Real-time market price processing and Redis storage",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None,  # Disable /docs for production
+    redoc_url=None  # Disable /redoc for production
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure as needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
