@@ -403,4 +403,273 @@ router.put('/demo-users/:userId', requirePermissions(['user:update']), auditLog(
  */
 router.get('/:userType/:userId/orders', requirePermissions(['orders:read']), auditLog('GET_USER_ORDERS'), adminUserManagementController.getUserOpenOrders);
 
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/closed-orders:
+ *   get:
+ *     summary: Get closed orders for a specific user with pagination
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve closed orders for a specific user (live or demo) with pagination. Requires 'orders:read' permission. Country-level admins can only view orders for users from their country. Superadmins can view orders for any user.
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user whose closed orders to retrieve
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of orders per page (max 100)
+ *     responses:
+ *       200:
+ *         description: User closed orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   order_id:
+ *                     type: string
+ *                   symbol:
+ *                     type: string
+ *                   order_type:
+ *                     type: string
+ *                   order_status:
+ *                     type: string
+ *                     enum: [CLOSED]
+ *                   order_price:
+ *                     type: number
+ *                   order_quantity:
+ *                     type: number
+ *                   contract_value:
+ *                     type: number
+ *                   margin:
+ *                     type: number
+ *                   commission:
+ *                     type: number
+ *                   swap:
+ *                     type: number
+ *                   stop_loss:
+ *                     type: number
+ *                     nullable: true
+ *                   take_profit:
+ *                     type: number
+ *                     nullable: true
+ *                   net_profit:
+ *                     type: number
+ *                   close_price:
+ *                     type: number
+ *                     nullable: true
+ *                   created_at:
+ *                     type: string
+ *                     format: date-time
+ *                   updated_at:
+ *                     type: string
+ *                     format: date-time
+ *                   close_message:
+ *                     type: string
+ *                     nullable: true
+ *       400:
+ *         description: Invalid parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Invalid user type. Must be 'live' or 'demo'"
+ *       403:
+ *         description: Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Insufficient permissions"
+ *       404:
+ *         description: User not found or access denied
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Live user not found or access denied"
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Failed to retrieve user closed orders"
+ */
+router.get('/:userType/:userId/closed-orders', requirePermissions(['orders:read']), auditLog('GET_USER_CLOSED_ORDERS'), adminUserManagementController.getUserClosedOrders);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/pending-orders:
+ *   get:
+ *     summary: Get pending orders for a specific user with pagination
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve pending orders for a specific user (live or demo) with pagination. Requires 'orders:read' permission. Country-level admins can only view orders for users from their country. Superadmins can view orders for any user.
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user whose pending orders to retrieve
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of orders per page (max 100)
+ *     responses:
+ *       200:
+ *         description: User pending orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   order_id:
+ *                     type: string
+ *                   symbol:
+ *                     type: string
+ *                   order_type:
+ *                     type: string
+ *                   order_status:
+ *                     type: string
+ *                     enum: [PENDING]
+ *                   order_price:
+ *                     type: number
+ *                   order_quantity:
+ *                     type: number
+ *                   contract_value:
+ *                     type: number
+ *                   margin:
+ *                     type: number
+ *                   commission:
+ *                     type: number
+ *                   swap:
+ *                     type: number
+ *                   stop_loss:
+ *                     type: number
+ *                     nullable: true
+ *                   take_profit:
+ *                     type: number
+ *                     nullable: true
+ *                   net_profit:
+ *                     type: number
+ *                   created_at:
+ *                     type: string
+ *                     format: date-time
+ *                   updated_at:
+ *                     type: string
+ *                     format: date-time
+ *                   close_message:
+ *                     type: string
+ *                     nullable: true
+ *       400:
+ *         description: Invalid parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Invalid user type. Must be 'live' or 'demo'"
+ *       403:
+ *         description: Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Insufficient permissions"
+ *       404:
+ *         description: User not found or access denied
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Live user not found or access denied"
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: "Failed to retrieve user pending orders"
+ */
+router.get('/:userType/:userId/pending-orders', requirePermissions(['orders:read']), auditLog('GET_USER_PENDING_ORDERS'), adminUserManagementController.getUserPendingOrders);
+
 module.exports = router;

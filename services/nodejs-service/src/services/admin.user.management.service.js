@@ -502,6 +502,253 @@ class AdminUserManagementService {
       throw error;
     }
   }
+
+  /**
+   * Fetches closed orders for a specific user (live or demo) with pagination
+   * @param {string} userType - 'live' or 'demo'
+   * @param {number} userId - The ID of the user
+   * @param {Model} ScopedUserModel - The scoped user model for access control
+   * @param {Object} adminInfo - Information about the admin performing the request
+   * @param {Object} pagination - Pagination options { page, limit }
+   * @returns {Array} User closed orders array
+   */
+  async getUserClosedOrders(userType, userId, ScopedUserModel, adminInfo, pagination = {}) {
+    const operationId = `get_user_closed_orders_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    try {
+      // Validate userType
+      if (!['live', 'demo'].includes(userType)) {
+        throw new Error('Invalid user type. Must be "live" or "demo"');
+      }
+
+      // Validate userId
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        throw new Error('Invalid user ID. Must be a positive integer');
+      }
+
+      // Set default pagination
+      const page = Math.max(1, parseInt(pagination.page) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(pagination.limit) || 20));
+      const offset = (page - 1) * limit;
+
+      // First, verify the user exists and is accessible to this admin (respects country scoping)
+      const user = await ScopedUserModel.findByPk(userIdInt, {
+        attributes: ['id', 'name', 'email']
+      });
+
+      if (!user) {
+        logger.warn('User not found or access denied for admin', {
+          operationId,
+          adminId: adminInfo.id,
+          adminRole: adminInfo.role,
+          userType,
+          userId: userIdInt,
+          message: 'User not found in accessible scope'
+        });
+        throw new Error('User not found or access denied');
+      }
+
+      // Select the appropriate order model
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      
+      // Safety check for model existence
+      if (!OrderModel || typeof OrderModel.findAll !== 'function') {
+        logger.error('Order model not properly loaded', {
+          operationId,
+          userType,
+          OrderModel: OrderModel?.toString()
+        });
+        throw new Error(`${userType} order model not properly initialized`);
+      }
+
+      // Fetch closed orders for this user with pagination
+      const orders = await OrderModel.findAll({
+        where: {
+          order_user_id: userIdInt,
+          order_status: 'CLOSED'
+        },
+        attributes: [
+          'id', 'order_id', 'symbol', 'order_type', 'order_status',
+          'order_price', 'order_quantity', 'contract_value', 'margin',
+          'commission', 'swap', 'stop_loss', 'take_profit', 'net_profit',
+          'created_at', 'updated_at', 'close_message', 'close_price'
+        ],
+        order: [['updated_at', 'DESC']], // Most recently closed first
+        limit: limit,
+        offset: offset
+      });
+
+      // Log the operation for audit purposes
+      logger.info('User closed orders fetched by admin', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId: userIdInt,
+        userEmail: user.email,
+        ordersCount: orders.length,
+        page,
+        limit,
+        offset
+      });
+
+      // Return only the orders array with parsed numeric values
+      return orders.map(order => ({
+        id: order.id,
+        order_id: order.order_id,
+        symbol: order.symbol,
+        order_type: order.order_type,
+        order_status: order.order_status,
+        order_price: parseFloat(order.order_price) || 0,
+        order_quantity: parseFloat(order.order_quantity) || 0,
+        contract_value: parseFloat(order.contract_value) || 0,
+        margin: parseFloat(order.margin) || 0,
+        commission: parseFloat(order.commission) || 0,
+        swap: parseFloat(order.swap) || 0,
+        stop_loss: order.stop_loss ? parseFloat(order.stop_loss) : null,
+        take_profit: order.take_profit ? parseFloat(order.take_profit) : null,
+        net_profit: parseFloat(order.net_profit) || 0,
+        close_price: order.close_price ? parseFloat(order.close_price) : null,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        close_message: order.close_message
+      }));
+
+    } catch (error) {
+      logger.error('Failed to fetch user closed orders', {
+        operationId,
+        adminId: adminInfo.id,
+        userType,
+        userId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Fetches pending orders for a specific user (live or demo) with pagination
+   * @param {string} userType - 'live' or 'demo'
+   * @param {number} userId - The ID of the user
+   * @param {Model} ScopedUserModel - The scoped user model for access control
+   * @param {Object} adminInfo - Information about the admin performing the request
+   * @param {Object} pagination - Pagination options { page, limit }
+   * @returns {Array} User pending orders array
+   */
+  async getUserPendingOrders(userType, userId, ScopedUserModel, adminInfo, pagination = {}) {
+    const operationId = `get_user_pending_orders_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    try {
+      // Validate userType
+      if (!['live', 'demo'].includes(userType)) {
+        throw new Error('Invalid user type. Must be "live" or "demo"');
+      }
+
+      // Validate userId
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        throw new Error('Invalid user ID. Must be a positive integer');
+      }
+
+      // Set default pagination
+      const page = Math.max(1, parseInt(pagination.page) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(pagination.limit) || 20));
+      const offset = (page - 1) * limit;
+
+      // First, verify the user exists and is accessible to this admin (respects country scoping)
+      const user = await ScopedUserModel.findByPk(userIdInt, {
+        attributes: ['id', 'name', 'email']
+      });
+
+      if (!user) {
+        logger.warn('User not found or access denied for admin', {
+          operationId,
+          adminId: adminInfo.id,
+          adminRole: adminInfo.role,
+          userType,
+          userId: userIdInt,
+          message: 'User not found in accessible scope'
+        });
+        throw new Error('User not found or access denied');
+      }
+
+      // Select the appropriate order model
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      
+      // Safety check for model existence
+      if (!OrderModel || typeof OrderModel.findAll !== 'function') {
+        logger.error('Order model not properly loaded', {
+          operationId,
+          userType,
+          OrderModel: OrderModel?.toString()
+        });
+        throw new Error(`${userType} order model not properly initialized`);
+      }
+
+      // Fetch pending orders for this user with pagination
+      const orders = await OrderModel.findAll({
+        where: {
+          order_user_id: userIdInt,
+          order_status: 'PENDING'
+        },
+        attributes: [
+          'id', 'order_id', 'symbol', 'order_type', 'order_status',
+          'order_price', 'order_quantity', 'contract_value', 'margin',
+          'commission', 'swap', 'stop_loss', 'take_profit', 'net_profit',
+          'created_at', 'updated_at', 'close_message'
+        ],
+        order: [['created_at', 'DESC']], // Most recently created first
+        limit: limit,
+        offset: offset
+      });
+
+      // Log the operation for audit purposes
+      logger.info('User pending orders fetched by admin', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId: userIdInt,
+        userEmail: user.email,
+        ordersCount: orders.length,
+        page,
+        limit,
+        offset
+      });
+
+      // Return only the orders array with parsed numeric values
+      return orders.map(order => ({
+        id: order.id,
+        order_id: order.order_id,
+        symbol: order.symbol,
+        order_type: order.order_type,
+        order_status: order.order_status,
+        order_price: parseFloat(order.order_price) || 0,
+        order_quantity: parseFloat(order.order_quantity) || 0,
+        contract_value: parseFloat(order.contract_value) || 0,
+        margin: parseFloat(order.margin) || 0,
+        commission: parseFloat(order.commission) || 0,
+        swap: parseFloat(order.swap) || 0,
+        stop_loss: order.stop_loss ? parseFloat(order.stop_loss) : null,
+        take_profit: order.take_profit ? parseFloat(order.take_profit) : null,
+        net_profit: parseFloat(order.net_profit) || 0,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        close_message: order.close_message
+      }));
+
+    } catch (error) {
+      logger.error('Failed to fetch user pending orders', {
+        operationId,
+        adminId: adminInfo.id,
+        userType,
+        userId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
 }
 
 module.exports = new AdminUserManagementService();

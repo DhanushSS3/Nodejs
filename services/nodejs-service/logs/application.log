@@ -683,3 +683,58 @@
 {"level":"info","message":"Successfully retrieved 110 groups for pattern: groups:{Group B}:*","timestamp":"2025-09-28T12:46:54.698Z"}
 {"level":"info","message":"[USER] Found 110 groups for Group B","timestamp":"2025-09-28T12:46:54.698Z"}
 {"level":"info","message":"Authentication successful for user 1 on POST /instant/place","timestamp":"2025-09-28T12:47:08.615Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-28T12:53:33.970Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-28T12:53:33.984Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-28T12:53:34.458Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-28T12:53:34.923Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-28T12:53:35.316Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-28T12:53:35.754Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-28T12:53:36.083Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-28T12:53:36.508Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-28T12:53:36.916Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-28T12:53:37.360Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-28T12:53:37.835Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-28T12:53:38.106Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-28T12:53:38.501Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-28T12:53:38.885Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-28T12:53:39.210Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5237ms","timestamp":"2025-09-28T12:53:39.210Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-28T12:53:39.217Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-28T12:53:39.311Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-28T12:59:56.979Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-28T12:59:56.984Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-28T12:59:57.595Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-28T12:59:57.998Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-28T12:59:58.331Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-28T12:59:58.814Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-28T12:59:59.213Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-28T12:59:59.766Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-28T13:00:00.076Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-28T13:00:00.522Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-28T13:00:01.134Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-28T13:00:01.591Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-28T13:00:01.947Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-28T13:00:02.285Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-28T13:00:02.697Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5717ms","timestamp":"2025-09-28T13:00:02.697Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-28T13:00:02.708Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-28T13:00:02.738Z"}
+{"level":"info","message":"Authentication successful for user 1 on GET /half-spreads","timestamp":"2025-09-28T13:00:08.018Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-28T13:00:08.021Z"}
+{"level":"info","message":"User group from JWT: \"Group B\"","timestamp":"2025-09-28T13:00:08.021Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Group B}:*","timestamp":"2025-09-28T13:00:08.021Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-09-28T13:00:08.123Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-28T13:00:08.157Z"}
+{"level":"info","message":"Found 110 keys on node 127.0.0.1:7003","timestamp":"2025-09-28T13:00:08.193Z"}
+{"level":"info","message":"Total keys found across cluster: 110","timestamp":"2025-09-28T13:00:08.194Z"}
+{"level":"info","message":"Successfully processed 110/110 instruments for group Group B","timestamp":"2025-09-28T13:00:08.647Z"}
+{"level":"info","message":"Authentication successful for user 1 on POST /pending/place","timestamp":"2025-09-28T13:00:15.662Z"}
+{"level":"info","message":"Authentication successful for user 1 on GET /half-spreads","timestamp":"2025-09-28T13:00:53.988Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-28T13:00:53.989Z"}
+{"level":"info","message":"User group from JWT: \"Group B\"","timestamp":"2025-09-28T13:00:53.989Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Group B}:*","timestamp":"2025-09-28T13:00:53.989Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-09-28T13:00:53.996Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-28T13:00:54.000Z"}
+{"level":"info","message":"Found 110 keys on node 127.0.0.1:7003","timestamp":"2025-09-28T13:00:54.004Z"}
+{"level":"info","message":"Total keys found across cluster: 110","timestamp":"2025-09-28T13:00:54.004Z"}
+{"level":"info","message":"Successfully processed 110/110 instruments for group Group B","timestamp":"2025-09-28T13:00:54.214Z"}

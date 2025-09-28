@@ -219,6 +219,110 @@ class AdminUserManagementController {
       res.status(500).json({ error: 'Failed to retrieve user orders' });
     }
   }
+
+  /**
+   * Fetches closed orders for a specific user (live or demo) with pagination
+   * Requires 'orders:read' permission
+   * Country-level admins can only view orders for users from their country
+   * Superadmins can view orders for any user
+   */
+  async getUserClosedOrders(req, res, next) {
+    try {
+      const { userType, userId } = req.params;
+      const { page, limit } = req.query;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const orders = await adminUserManagementService.getUserClosedOrders(
+        userType,
+        userIdInt,
+        ScopedUserModel,
+        admin,
+        { page, limit }
+      );
+
+      // Return only the orders array directly
+      res.status(200).json(orders);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message.includes('Invalid user type') || error.message.includes('Invalid user ID')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: 'Failed to retrieve user closed orders' });
+    }
+  }
+
+  /**
+   * Fetches pending orders for a specific user (live or demo) with pagination
+   * Requires 'orders:read' permission
+   * Country-level admins can only view orders for users from their country
+   * Superadmins can view orders for any user
+   */
+  async getUserPendingOrders(req, res, next) {
+    try {
+      const { userType, userId } = req.params;
+      const { page, limit } = req.query;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const orders = await adminUserManagementService.getUserPendingOrders(
+        userType,
+        userIdInt,
+        ScopedUserModel,
+        admin,
+        { page, limit }
+      );
+
+      // Return only the orders array directly
+      res.status(200).json(orders);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message.includes('Invalid user type') || error.message.includes('Invalid user ID')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: 'Failed to retrieve user pending orders' });
+    }
+  }
 }
 
 module.exports = new AdminUserManagementController();
