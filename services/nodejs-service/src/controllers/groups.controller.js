@@ -1367,6 +1367,63 @@ class GroupsController {
       });
     }
   }
+
+  /**
+   * Clear cache and resync all groups from database
+   * POST /api/admin/groups/cache/refresh
+   */
+  async refreshCache(req, res) {
+    try {
+      logger.info('Admin initiated groups cache refresh', { admin_id: req.admin?.id });
+
+      // Clear existing cache
+      const clearResult = await groupsCacheService.clearCache();
+      logger.info(`Cleared ${clearResult.cleared} groups from cache`);
+
+      // Resync from database
+      const syncResult = await groupsCacheService.syncFromDatabase();
+      logger.info(`Resynced ${syncResult.synced} groups to cache`);
+
+      await createAuditLog(
+        req.admin?.id,
+        'GROUPS_CACHE_REFRESH',
+        req.ip,
+        { 
+          cleared_count: clearResult.cleared,
+          synced_count: syncResult.synced
+        },
+        'SUCCESS'
+      );
+
+      res.json({
+        success: true,
+        message: 'Groups cache refreshed successfully',
+        data: {
+          cleared: clearResult.cleared,
+          synced: syncResult.synced,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      logger.error('Failed to refresh groups cache:', error);
+
+      await createAuditLog(
+        req.admin?.id,
+        'GROUPS_CACHE_REFRESH',
+        req.ip,
+        {},
+        'FAILED',
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to refresh groups cache',
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = new GroupsController();

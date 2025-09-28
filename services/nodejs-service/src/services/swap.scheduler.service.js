@@ -5,12 +5,12 @@ const DemoUserOrder = require('../models/demoUserOrder.model');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
 const swapCalculationService = require('./swap.calculation.service');
-const walletService = require('./wallet.service');
 const logger = require('../utils/logger');
 const sequelize = require('../config/db');
+const portfolioEvents = require('./events/portfolio.events');
+const { redisCluster } = require('../../config/redis');
 const { 
   logSwapApplication, 
-  logSwapTransaction, 
   logDailyProcessingSummary,
   logSwapError,
   logManualSwapProcessing
@@ -33,7 +33,7 @@ class SwapSchedulerService {
     }
 
     // Schedule to run daily at 00:01 UTC
-    this.cronJob = cron.schedule('1 0 * * *', async () => {
+    this.cronJob = cron.schedule('15 12 * * *', async () => {
       await this.processDaily();
     }, {
       scheduled: true,
@@ -191,8 +191,9 @@ class SwapSchedulerService {
         }
       },
       attributes: [
-        'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
-        'swap', 'order_user_id', 'created_at'
+        'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 'order_price',
+        'swap', 'order_user_id', 'created_at', 'updated_at', 'order_status',
+        'contract_value', 'margin', 'commission', 'stop_loss', 'take_profit'
       ],
       include: [{
         model: UserModel,
@@ -215,6 +216,7 @@ class SwapSchedulerService {
     };
 
     const transaction = await sequelize.transaction();
+    const redisUpdates = []; // Store Redis updates to perform after DB transaction
 
     try {
       for (const order of orders) {
@@ -252,44 +254,31 @@ class SwapSchedulerService {
             }
           );
 
-          // Create swap transaction record
-          let swapTransaction = null;
-          if (swapCharge !== 0) {
-            try {
-              swapTransaction = await walletService.addSwap(
-                order.order_user_id,
-                orderType,
-                swapCharge,
-                order.id,
-                {
-                  symbol: order.symbol,
-                  group_name: order.group_name,
-                  order_type: order.order_type,
-                  order_quantity: order.order_quantity,
-                  calculation_date: targetDate.toISOString(),
-                  previous_swap: currentSwap,
-                  new_total_swap: newSwap
-                }
-              );
+          // Store Redis update data for after transaction commit
+          redisUpdates.push({
+            orderType,
+            order_user_id: order.order_user_id,
+            order_id: order.order_id,
+            symbol: order.symbol,
+            order_type: order.order_type,
+            order_price: order.order_price,
+            order_quantity: order.order_quantity,
+            contract_value: order.contract_value,
+            margin: order.margin,
+            commission: order.commission,
+            order_status: order.order_status,
+            stop_loss: order.stop_loss,
+            take_profit: order.take_profit,
+            created_at: order.created_at,
+            updated_at: order.updated_at,
+            newSwap,
+            swapCharge,
+            currentSwap
+          });
 
-              // Log swap transaction
-              logSwapTransaction({
-                transaction_id: swapTransaction.transaction_id,
-                user_id: order.order_user_id,
-                user_type: orderType,
-                order_id: order.id,
-                amount: swapCharge,
-                balance_before: swapTransaction.balance_before,
-                balance_after: swapTransaction.balance_after,
-                created_at: swapTransaction.created_at,
-                metadata: swapTransaction.metadata
-              });
-
-            } catch (walletError) {
-              logger.warn(`Failed to create swap transaction for order ${order.order_id}:`, walletError);
-              // Continue with order update even if transaction creation fails
-            }
-          }
+          // Note: We don't create UserTransaction records here
+          // Swap transactions are only created when the order is closed
+          // via the order.payout.service.js which handles the final swap amount
 
           // Log swap application
           logSwapApplication({
@@ -299,7 +288,7 @@ class SwapSchedulerService {
             swap_amount: swapCharge,
             previous_swap: currentSwap,
             new_swap: newSwap,
-            transaction_id: swapTransaction?.transaction_id || null,
+            transaction_id: null, // No transaction created during daily processing
             application_date: targetDate.toISOString(),
             success: true
           });
@@ -322,6 +311,91 @@ class SwapSchedulerService {
       }
 
       await transaction.commit();
+      
+      // After successful DB transaction, update Redis cache
+      for (const update of redisUpdates) {
+        try {
+          const userTypeStr = update.orderType;
+          const userIdStr = String(update.order_user_id);
+          const hashTag = `${userTypeStr}:${userIdStr}`;
+          const orderKey = `user_holdings:{${hashTag}}:${update.order_id}`;
+          const orderDataKey = `order_data:${update.order_id}`;
+          
+          logger.info(`Updating Redis keys for order ${update.order_id}:`, {
+            orderKey,
+            orderDataKey,
+            newSwap: update.newSwap,
+            userType: userTypeStr,
+            userId: userIdStr
+          });
+          
+          // Create complete Redis hash mapping like the rebuild process does
+          const holdingMapping = {
+            order_id: update.order_id,
+            symbol: update.symbol || '',
+            order_type: update.order_type || '',
+            order_price: update.order_price?.toString() || '',
+            order_quantity: update.order_quantity?.toString() || '',
+            order_status: update.order_status || 'OPEN',
+            swap: String(update.newSwap)
+          };
+          
+          // Add optional fields if they exist (same as rebuild process)
+          if (update.contract_value != null) holdingMapping.contract_value = String(update.contract_value);
+          if (update.margin != null) holdingMapping.margin = String(update.margin);
+          if (update.commission != null) holdingMapping.commission = String(update.commission);
+          if (update.stop_loss != null) holdingMapping.stop_loss = String(update.stop_loss);
+          if (update.take_profit != null) holdingMapping.take_profit = String(update.take_profit);
+          if (update.created_at) holdingMapping.created_at = update.created_at;
+          if (update.updated_at) holdingMapping.updated_at = update.updated_at;
+          
+          // Update user_holdings key with complete mapping (like rebuild process)
+          await redisCluster.hset(orderKey, holdingMapping);
+          
+          // Update order_data key with swap value
+          await redisCluster.hset(orderDataKey, 'swap', String(update.newSwap));
+          
+          logger.info(`Updated Redis keys for order ${update.order_id} with complete mapping`);
+          const pipeResults = []; // For compatibility with existing error checking
+          
+          // Check pipeline results for errors
+          pipeResults.forEach((result, index) => {
+            const [err, res] = result;
+            if (err) {
+              logger.error(`Redis pipeline error at index ${index}:`, err);
+            } else {
+              logger.info(`Redis update successful at index ${index}:`, res);
+            }
+          });
+          
+          logger.info(`Successfully updated Redis swap for order ${update.order_id}: ${update.newSwap}`);
+          
+          // Notify WebSocket clients about the swap update
+          try {
+            portfolioEvents.emitUserUpdate(update.orderType, update.order_user_id, {
+              type: 'swap_update',
+              order_id: update.order_id,
+              symbol: update.symbol || 'unknown',
+              swap_amount: update.swapCharge,
+              new_total_swap: update.newSwap,
+              timestamp: new Date().toISOString()
+            });
+          } catch (wsError) {
+            logger.warn(`Failed to emit WebSocket update for order ${update.order_id}:`, wsError);
+          }
+          
+        } catch (redisError) {
+          logger.error(`Failed to update Redis swap for order ${update.order_id}:`, {
+            error: redisError.message,
+            stack: redisError.stack,
+            orderType: update.orderType,
+            userId: update.order_user_id,
+            orderId: update.order_id,
+            newSwap: update.newSwap
+          });
+          // Continue processing other Redis updates even if one fails
+        }
+      }
       
     } catch (error) {
       await transaction.rollback();

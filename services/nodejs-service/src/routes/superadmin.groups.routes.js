@@ -717,4 +717,46 @@ router.delete('/:groupName', groupsController.deleteEntireGroup);
  */
 router.delete('/:groupName/:symbol', groupsController.deleteGroupSymbol);
 
+/**
+ * @swagger
+ * /api/superadmin/groups/cache/refresh:
+ *   post:
+ *     summary: Refresh groups cache
+ *     description: Clear and resync all groups from database to Redis cache. This will include any new fields like swap_type.
+ *     tags: [Groups Management]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Cache refreshed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Groups cache refreshed successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     cleared:
+ *                       type: integer
+ *                       example: 3000
+ *                     synced:
+ *                       type: integer
+ *                       example: 3000
+ *                     timestamp:
+ *                       type: string
+ *                       format: date-time
+ *       403:
+ *         description: Forbidden - Superadmin access required
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/cache/refresh', groupsController.refreshCache);
+
 module.exports = router;

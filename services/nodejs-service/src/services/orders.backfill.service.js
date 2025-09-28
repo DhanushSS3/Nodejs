@@ -46,6 +46,8 @@ class OrdersBackfillService {
       order_quantity: r.order_quantity?.toString?.() ?? String(r.order_quantity ?? ''),
       contract_value: r.contract_value?.toString?.() ?? undefined,
       margin: r.margin?.toString?.() ?? undefined,
+      commission: r.commission?.toString?.() ?? undefined,
+      swap: r.swap?.toString?.() ?? undefined,
       order_status: r.order_status,
       created_at: r.created_at?.toISOString?.() ?? undefined,
       updated_at: r.updated_at?.toISOString?.() ?? undefined,
@@ -92,6 +94,10 @@ class OrdersBackfillService {
     };
     if (order.contract_value != null) mapping.contract_value = String(order.contract_value);
     if (order.margin != null) mapping.margin = String(order.margin);
+    if (order.commission != null) mapping.commission = String(order.commission);
+    if (order.swap != null) mapping.swap = String(order.swap);
+    if (order.stop_loss != null) mapping.stop_loss = String(order.stop_loss);
+    if (order.take_profit != null) mapping.take_profit = String(order.take_profit);
     if (order.created_at) mapping.created_at = order.created_at;
     if (order.updated_at) mapping.updated_at = order.updated_at;
     return mapping;
@@ -168,6 +174,8 @@ class OrdersBackfillService {
         order_quantity: o.order_quantity ?? '',
         contract_value: o.contract_value ?? undefined,
         margin: o.margin ?? undefined,
+        commission: o.commission ?? undefined,
+        swap: o.swap ?? undefined,
         order_status: o.order_status || 'OPEN',
         created_at: o.created_at || undefined,
         group: userGroup,

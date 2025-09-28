@@ -5,6 +5,7 @@ const UserTransaction = require('../models/userTransaction.model');
 const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
 const { redisCluster } = require('../../config/redis');
+const { logOrderClosureSwap } = require('../utils/swap.logger');
 
 function getUserModel(userType) {
   return userType === 'live' ? LiveUser : DemoUser;
@@ -136,7 +137,27 @@ async function applyOrderClosePayout({
       netProfit: np,
       commission: com,
       profitLossAmount,
+      swap: sw,
     });
+
+    // Log swap closure details if swap amount exists
+    if (sw !== 0) {
+      logOrderClosureSwap({
+        order_id: orderIdStr || orderPk?.toString() || 'unknown',
+        user_id: parseInt(String(userId), 10),
+        user_type: String(userType),
+        symbol: symbol || 'unknown',
+        group_name: 'unknown', // Would need to be passed from caller
+        order_type: orderType || 'unknown',
+        order_quantity: 0, // Would need to be passed from caller
+        order_duration_days: 0, // Would need to be calculated from order creation date
+        total_swap_accumulated: sw,
+        final_swap_transaction_id: null, // Swap is included in profit/loss transaction
+        closure_date: new Date().toISOString(),
+        net_profit_before_swap: pUsd,
+        net_profit_after_swap: np
+      });
+    }
 
     return { ok: true, balance_before: balanceBefore, balance_after: finalBalance };
   });
