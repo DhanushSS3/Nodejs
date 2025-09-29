@@ -332,11 +332,24 @@ class CryptoPaymentService {
         throw new Error(`Payment not found for merchantOrderId: ${merchantOrderId} or orderId: ${webhookData.orderId}`);
       }
 
+      // Detect if merchantOrderId was truncated
+      const foundByMerchantId = payment.merchantOrderId === merchantOrderId;
+      const foundByOrderId = payment.orderId === webhookData.orderId;
+      const isTruncated = !foundByMerchantId && foundByOrderId;
+      
       logger.info('Payment found for webhook update', {
         paymentId: payment.id,
-        foundBy: payment.merchantOrderId === merchantOrderId ? 'merchantOrderId' : 'orderId',
+        foundBy: foundByMerchantId ? 'merchantOrderId' : 'orderId',
         currentStatus: payment.status,
-        newStatus: webhookData.status
+        newStatus: webhookData.status,
+        truncationDetected: isTruncated,
+        fullMerchantOrderId: payment.merchantOrderId,
+        receivedMerchantOrderId: merchantOrderId,
+        lengthComparison: {
+          expected: payment.merchantOrderId.length,
+          received: merchantOrderId.length,
+          difference: payment.merchantOrderId.length - merchantOrderId.length
+        }
       });
 
       const { status, baseAmountReceived, settledAmountReceived, settledAmountCredited, commission } = webhookData;
@@ -400,7 +413,8 @@ class CryptoPaymentService {
       logger.info('Duplicate detection check', {
         paymentId: payment.id,
         merchantOrderId: payment.merchantOrderId, // Use full merchantOrderId from DB
-        truncatedMerchantOrderId: merchantOrderId, // Truncated from webhook
+        receivedMerchantOrderId: merchantOrderId, // From webhook (possibly truncated)
+        truncationDetected: isTruncated,
         internalStatus,
         baseAmountReceived,
         isEligibleForCredit,
@@ -456,7 +470,8 @@ class CryptoPaymentService {
         logger.info('Wallet credit skipped', {
           paymentId: payment.id,
           merchantOrderId: payment.merchantOrderId, // Full ID from DB
-          truncatedMerchantOrderId: merchantOrderId, // Truncated from webhook
+          receivedMerchantOrderId: merchantOrderId, // From webhook (possibly truncated)
+          truncationDetected: isTruncated,
           internalStatus,
           baseAmountReceived,
           previousBaseAmountReceived: payment.baseAmountReceived,
