@@ -3,7 +3,7 @@ const http = require('http');
 const https = require('https');
 const logger = require('./logger.service');
 const { redisCluster } = require('../../config/redis');
-const { LiveUserOrder, DemoUserOrder } = require('../models');
+const { LiveUserOrder, DemoUserOrder, LiveUser, DemoUser } = require('../models');
 const idGenerator = require('./idGenerator.service');
 const orderLifecycleService = require('./orderLifecycle.service');
 
@@ -27,6 +27,17 @@ const pythonServiceAxios = axios.create({
     maxFreeSockets: 10
   })
 });
+
+// Custom error class to preserve HTTP status codes
+class AdminOrderError extends Error {
+  constructor(message, statusCode = 500, reason = null, detail = null) {
+    super(message);
+    this.name = 'AdminOrderError';
+    this.statusCode = statusCode;
+    this.reason = reason;
+    this.detail = detail;
+  }
+}
 
 // Validation functions (same as orders.controller.js)
 function normalizeStr(v) {
@@ -63,13 +74,17 @@ function validatePendingOrderPayload(body) {
   const order_type = normalizeStr(body.order_type).toUpperCase();
   const order_price = toNumber(body.price || body.order_price);
   const order_quantity = toNumber(body.quantity || body.order_quantity);
+  const user_id = normalizeStr(body.user_id);
+  const user_type = normalizeStr(body.user_type).toLowerCase();
 
   if (!symbol) errors.push('symbol');
   if (!['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'].includes(order_type)) errors.push('order_type');
   if (!(order_price > 0)) errors.push('order_price');
   if (!(order_quantity > 0)) errors.push('order_quantity');
+  if (!user_id) errors.push('user_id');
+  if (!['live', 'demo'].includes(user_type)) errors.push('user_type');
 
-  return { errors, parsed: { symbol, order_type, order_price, order_quantity } };
+  return { errors, parsed: { symbol, order_type, order_price, order_quantity, user_id, user_type } };
 }
 
 class AdminOrderManagementService {
@@ -419,11 +434,15 @@ class AdminOrderManagementService {
           error: err.message
         });
 
-        if (statusCode === 409) {
-          throw new Error(`Order conflict: ${detail?.detail?.reason || detail?.reason || 'conflict'}`);
-        }
-        
-        throw new Error(`Python service error: ${detail?.detail?.reason || detail?.reason || err.message}`);
+        // Throw AdminOrderError with preserved status code and details
+        const reason = detail?.detail?.reason || detail?.reason || 'execution_failed';
+        const errorDetail = detail?.detail || detail;
+        throw new AdminOrderError(
+          `Python service error: ${reason}`,
+          statusCode,
+          reason,
+          errorDetail
+        );
       }
 
       // 9. Post-success DB update (EXACT same logic as user orders)
@@ -820,10 +839,100 @@ class AdminOrderManagementService {
           error: err.message
         });
         
-        throw new Error(`Close order failed: ${detail?.detail?.reason || detail?.reason || err.message}`);
+        // Throw AdminOrderError with preserved status code and details
+        const reason = detail?.detail?.reason || detail?.reason || 'close_failed';
+        const errorDetail = detail?.detail || detail;
+        throw new AdminOrderError(
+          `Close order failed: ${reason}`,
+          statusCode,
+          reason,
+          errorDetail
+        );
       }
 
-      // 10. Log successful admin action
+      // 10. Handle local flow DB updates (EXACT same logic as user orders)
+      const result = pyResp.data?.data || pyResp.data || {};
+      const flow = result.flow; // 'local' or 'provider'
+
+      // If local flow, finalize DB immediately (EXACT same as user orders)
+      if (flow === 'local') {
+        try {
+          const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+          const row = await OrderModel.findOne({ where: { order_id: orderId } });
+          if (row) {
+            const updateFields = {
+              order_status: 'CLOSED',
+            };
+            if (result.close_price != null) updateFields.close_price = String(result.close_price);
+            if (result.net_profit != null) updateFields.net_profit = String(result.net_profit);
+            if (result.swap != null) updateFields.swap = String(result.swap);
+            if (result.total_commission != null) updateFields.commission = String(result.total_commission);
+            // Also persist incoming status string for historical trace
+            updateFields.status = userPayload.status;
+            await row.update(updateFields);
+
+            // Apply wallet payout + user transactions (idempotent) - EXACT same as user orders
+            try {
+              const { redisCluster } = require('../../config/redis');
+              const payoutKey = `close_payout_applied:${String(orderId)}`;
+              const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+              if (nx) {
+                const { applyOrderClosePayout } = require('./order.close.payout.service');
+                await applyOrderClosePayout({
+                  userType: userType,
+                  userId: parseInt(userId, 10),
+                  orderPk: row?.id ?? null,
+                  orderIdStr: String(orderId),
+                  netProfit: Number(result.net_profit) || 0,
+                  commission: Number(result.total_commission) || 0,
+                  profitUsd: Number(result.profit_usd) || 0,
+                  swap: Number(result.swap) || 0,
+                  symbol,
+                  orderType: order_type,
+                });
+                try {
+                  const portfolioEvents = require('./events/portfolio.events');
+                  portfolioEvents.emitUserUpdate(userType, userId.toString(), { type: 'wallet_balance_update', order_id: orderId });
+                } catch (_) {}
+              }
+            } catch (e) {
+              logger.warn('Failed to apply wallet payout on admin local close', { error: e.message, order_id: orderId });
+            }
+          }
+        } catch (e) {
+          logger.error('Failed to update SQL row after admin local close', { order_id: orderId, error: e.message });
+        }
+
+        // Update used margin mirror in SQL and emit portfolio events (EXACT same as user orders)
+        try {
+          if (typeof result.used_margin_executed === 'number') {
+            const { updateUserUsedMargin } = require('./user.margin.service');
+            await updateUserUsedMargin({ userType: userType, userId: parseInt(userId, 10), usedMargin: result.used_margin_executed });
+            try {
+              const portfolioEvents = require('./events/portfolio.events');
+              portfolioEvents.emitUserUpdate(userType, userId.toString(), { type: 'user_margin_update', used_margin_usd: result.used_margin_executed });
+            } catch (_) {}
+          }
+          try {
+            const portfolioEvents = require('./events/portfolio.events');
+            portfolioEvents.emitUserUpdate(userType, userId.toString(), { type: 'order_update', order_id: orderId, update: { order_status: 'CLOSED' } });
+          } catch (_) {}
+        } catch (mErr) {
+          logger.error('Failed to persist/emit margin updates after admin local close', { order_id: orderId, error: mErr.message });
+        }
+
+        // Increment user's aggregate net_profit with this close P/L (EXACT same as user orders)
+        try {
+          if (typeof result.net_profit === 'number') {
+            const UserModel = userType === 'live' ? LiveUser : DemoUser;
+            await UserModel.increment({ net_profit: result.net_profit }, { where: { id: parseInt(userId, 10) } });
+          }
+        } catch (e) {
+          logger.error('Failed to increment user net_profit after admin local close', { user_id: userId, error: e.message });
+        }
+      }
+
+      // 11. Log successful admin action
       logger.info('Admin order closed successfully', {
         operationId,
         adminId: adminInfo.id,
@@ -834,10 +943,11 @@ class AdminOrderManagementService {
         orderId,
         symbol,
         order_type,
+        flow,
         result: pyResp.data
       });
 
-      // 11. Return EXACT same response structure as user orders
+      // 12. Return EXACT same response structure as user orders
       return pyResp.data;
 
     } catch (error) {
@@ -871,69 +981,293 @@ class AdminOrderManagementService {
   }
 
   /**
-   * Admin places pending order on behalf of user
+   * Admin places pending order on behalf of user (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
-   * @param {Object} orderData - Pending order data
+   * @param {Object} orderData - Pending order data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Order result
    */
   async placePendingOrder(adminInfo, userType, userId, orderData, ScopedUserModel) {
-    const operationId = `admin_place_pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const operationId = `admin_place_pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 3. Prepare payload for Python service
-      const payload = {
-        user_id: userId.toString(),
-        user_type: userType,
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
         symbol: orderData.symbol,
         order_type: orderData.order_type, // BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP
-        quantity: orderData.quantity,
-        price: orderData.price,
-        leverage: orderData.leverage || user.leverage || 100,
-        stop_loss: orderData.stop_loss || null,
-        take_profit: orderData.take_profit || null,
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        order_price: orderData.order_price || orderData.price,
+        order_quantity: orderData.order_quantity || orderData.quantity,
+        user_id: userId.toString(),
+        user_type: userType
       };
 
-      // 4. Call Python service (same URL as user orders)
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/pending/place`,
-        payload
-      );
+      // 3. Validate payload (EXACT same validation as user orders)
+      let parsed;
+      try {
+        const validationResult = validatePendingOrderPayload(userPayload);
+        if (validationResult.errors.length) {
+          throw new Error(`Invalid payload fields: ${validationResult.errors.join(', ')}`);
+        }
+        parsed = validationResult.parsed;
+        
+        if (!parsed || !parsed.symbol) {
+          throw new Error('Validation failed: parsed object is invalid');
+        }
+      } catch (validationError) {
+        logger.error('Admin pending order validation failed', {
+          operationId,
+          userPayload,
+          adminId: adminInfo.id,
+          error: validationError.message
+        });
+        throw validationError;
+      }
 
-      // 5. Log admin action
-      logger.info('Admin pending order placed', {
+      // 4. Get user group from JWT or user data (EXACT same as user orders)
+      const userGroup = user.group || 'Standard';
+
+      // 5. Fetch current market prices from Redis (EXACT same as user orders)
+      let bid = null, ask = null;
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const arr = await redisCluster.hmget(`market:${parsed.symbol}`, 'bid', 'ask');
+        if (arr && arr.length >= 2) {
+          bid = arr[0] != null ? Number(arr[0]) : null;
+          ask = arr[1] != null ? Number(arr[1]) : null;
+        }
+      } catch (e) {
+        logger.error('Failed to read market price from Redis', { error: e.message, symbol: parsed.symbol });
+      }
+      if (!(bid > 0) || !(ask > 0)) {
+        throw new Error('Market price unavailable for symbol');
+      }
+
+      // 6. Compute half_spread from group cache (EXACT same as user orders)
+      let half_spread = null;
+      try {
+        const groupsCache = require('./groups.cache.service');
+        const gf = await groupsCache.getGroupFields(userGroup, parsed.symbol, ['spread', 'spread_pip']);
+        if (gf && gf.spread != null && gf.spread_pip != null) {
+          const spread = Number(gf.spread);
+          const spread_pip = Number(gf.spread_pip);
+          if (Number.isFinite(spread) && Number.isFinite(spread_pip)) {
+            half_spread = (spread * spread_pip) / 2.0;
+          }
+        }
+      } catch (e) {
+        logger.warn('Failed to get group spread config for admin pending', { error: e.message, group: userGroup, symbol: parsed.symbol });
+      }
+      if (!(half_spread >= 0)) {
+        throw new Error('Group spread configuration missing for symbol/group');
+      }
+
+      // 7. Compute compare_price (EXACT same as user orders)
+      const hs = Number.isFinite(Number(half_spread)) ? Number(half_spread) : 0;
+      const compare_price = Number((parsed.order_price - hs).toFixed(8));
+      if (!(compare_price > 0)) {
+        throw new Error('Computed compare_price invalid');
+      }
+
+      // 8. Determine if provider flow (EXACT same as user orders)
+      let isProviderFlow = false;
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const userCfgKey = `user:{${userType}:${userId}}:config`;
+        const ucfg = await redisCluster.hgetall(userCfgKey);
+        const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+        isProviderFlow = (so === 'barclays');
+      } catch (_) {
+        isProviderFlow = false;
+      }
+
+      // 9. Generate order_id and persist SQL row (EXACT same as user orders)
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const order_id = await idGenerator.generateOrderId();
+      try {
+        await OrderModel.create({
+          order_id,
+          order_user_id: parseInt(userId, 10),
+          symbol: parsed.symbol,
+          order_type: parsed.order_type,
+          order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+          order_price: parsed.order_price,
+          order_quantity: parsed.order_quantity,
+          margin: 0,
+          status: 'PENDING',
+          placed_by: 'admin',
+        });
+      } catch (dbErr) {
+        logger.error('Admin pending order DB create failed', { error: dbErr.message, order_id });
+        throw new Error(`DB error: ${dbErr.message}`);
+      }
+
+      // 10. Store pending order in Redis (EXACT same as user orders)
+      const symbol = String(parsed.symbol).toUpperCase();
+      const orderType = String(parsed.order_type).toUpperCase();
+      const zkey = `pending_index:{${symbol}}:${orderType}`;
+      const hkey = `pending_orders:${order_id}`;
+      
+      try {
+        const { redisCluster } = require('../../config/redis');
+        if (!isProviderFlow) {
+          await redisCluster.zadd(zkey, compare_price, order_id);
+          await redisCluster.hset(hkey, {
+            symbol: symbol,
+            order_type: orderType,
+            user_type: userType,
+            user_id: userId.toString(),
+            order_price_user: String(parsed.order_price),
+            order_price_compare: String(compare_price),
+            order_quantity: String(parsed.order_quantity),
+            status: 'PENDING',
+            created_at: Date.now().toString(),
+            group: userGroup,
+          });
+        }
+        
+        // Mirror minimal PENDING into user holdings and index (EXACT same as user orders)
+        try {
+          const hashTag = `${userType}:${userId}`;
+          const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
+          const indexKey = `user_orders_index:{${hashTag}}`;
+          const pipe = redisCluster.pipeline();
+          pipe.sadd(indexKey, order_id);
+          pipe.hset(orderKey, {
+            order_id: String(order_id),
+            symbol: symbol,
+            order_type: orderType,
+            order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+            status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+            execution_status: 'QUEUED',
+            order_price: String(parsed.order_price),
+            order_quantity: String(parsed.order_quantity),
+            group: userGroup,
+            created_at: Date.now().toString(),
+          });
+          await pipe.exec();
+        } catch (e3) {
+          logger.warn('Failed to mirror admin pending into user holdings/index', { error: e3.message, order_id });
+        }
+        
+        // Write canonical order_data (EXACT same as user orders)
+        try {
+          const odKey = `order_data:${String(order_id)}`;
+          await redisCluster.hset(odKey, {
+            order_id: String(order_id),
+            user_type: String(userType),
+            user_id: String(userId),
+            symbol: symbol,
+            order_type: orderType,
+            order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+            status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+            order_price: String(parsed.order_price),
+            order_quantity: String(parsed.order_quantity),
+            group: userGroup,
+            compare_price: String(compare_price),
+            half_spread: String(hs),
+          });
+        } catch (e4) {
+          logger.warn('Failed to write canonical order_data for admin pending', { error: e4.message, order_id });
+        }
+        
+        // Ensure symbol is tracked for periodic scanning (EXACT same as user orders)
+        try {
+          if (!isProviderFlow) {
+            await redisCluster.sadd('pending_active_symbols', symbol);
+          }
+        } catch (e2) {
+          logger.warn('Failed to add symbol to pending_active_symbols set', { error: e2.message, symbol });
+        }
+      } catch (e) {
+        logger.error('Failed to write admin pending order to Redis', { error: e.message, order_id, zkey });
+        throw new Error('Cache error');
+      }
+
+      // 11. Publish market_price_updates (EXACT same as user orders)
+      try {
+        const { redisCluster } = require('../../config/redis');
+        await redisCluster.publish('market_price_updates', symbol);
+        logger.info('Published market_price_updates for admin pending placement', { symbol, zkey, order_id });
+      } catch (e) {
+        logger.warn('Failed to publish market_price_updates after admin pending placement', { error: e.message, symbol, order_id });
+      }
+
+      // 12. Notify WS layer (EXACT same as user orders)
+      try {
+        const portfolioEvents = require('./events/portfolio.events');
+        portfolioEvents.emitUserUpdate(userType, userId.toString(), {
+          type: 'order_update',
+          order_id,
+          update: { order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING' },
+        });
+      } catch (e) {
+        logger.warn('Failed to emit portfolio event for admin pending order', { error: e.message, order_id });
+      }
+
+      // 13. Provider flow: send to Python if needed (EXACT same as user orders)
+      try {
+        if (isProviderFlow) {
+          try {
+            const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+            const payload = {
+              order_id,
+              symbol,
+              order_type: orderType,
+              order_price: parsed.order_price,
+              order_quantity: parsed.order_quantity,
+              user_id: userId.toString(),
+              user_type: userType,
+            };
+            pythonServiceAxios.post(
+              `${baseUrl}/api/orders/pending/place`,
+              payload,
+              { timeout: 5000 }
+            )
+              .then(() => {
+                logger.info('Dispatched admin provider pending placement', { order_id, symbol, orderType, adminId: adminInfo.id });
+              })
+              .catch((ePy) => {
+                logger.error('Python provider pending placement failed for admin', { error: ePy.message, order_id, adminId: adminInfo.id });
+              });
+          } catch (ePyOuter) {
+            logger.warn('Unable to initiate admin provider pending placement call', { error: ePyOuter.message, order_id });
+          }
+        }
+      } catch (eProv) {
+        logger.warn('Admin provider pending dispatch block failed', { error: eProv.message, order_id });
+      }
+
+      // 14. Log successful admin action
+      logger.info('Admin pending order placed successfully', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
         userType,
         userId,
         userEmail: user.email,
-        orderData: {
-          symbol: payload.symbol,
-          order_type: payload.order_type,
-          quantity: payload.quantity,
-          price: payload.price,
-          leverage: payload.leverage
-        },
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        order_id,
+        symbol,
+        order_type: orderType,
+        order_price: parsed.order_price,
+        order_quantity: parsed.order_quantity,
+        compare_price,
+        group: userGroup,
+        isProviderFlow
       });
 
-      return response.data;
+      // 15. Return EXACT same response structure as user orders
+      return {
+        success: true,
+        order_id,
+        order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+        compare_price,
+        group: userGroup,
+      };
 
     } catch (error) {
       logger.error('Failed to place admin pending order', {
@@ -945,9 +1279,6 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Pending order placement failed');
-      }
       throw error;
     }
   }
@@ -1051,43 +1382,40 @@ class AdminOrderManagementService {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Build EXACT same payload structure as user orders
-      const userPayload = {
-        order_id: orderId,
-        user_id: userId.toString(),
-        user_type: userType,
-        symbol: cancelData.symbol,
-        order_type: cancelData.order_type,
-        cancel_message: cancelData.cancel_message || 'Admin cancelled pending order',
-        status: cancelData.status || 'PENDING-CANCEL'
-      };
-
-      // 3. Validate required fields (EXACT same validation as user orders)
-      if (!userPayload.order_id || !userPayload.user_id || !userPayload.user_type || !userPayload.symbol || !['BUY_LIMIT','SELL_LIMIT','BUY_STOP','SELL_STOP'].includes(userPayload.order_type)) {
-        throw new Error('Missing/invalid fields');
-      }
-      if (!['live','demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
-      }
-
-      // 4. Load canonical order and validate (EXACT same logic as user orders)
+      // 2. First get the existing order to extract symbol and order_type
       const canonical = await this._getCanonicalOrder(orderId);
       const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
       let row = null;
       
       if (!canonical) {
-        row = await OrderModel.findOne({ where: { order_id: orderId } });
-        if (!row) {
-          throw new Error('Order not found');
+        try {
+          row = await OrderModel.findOne({ where: { order_id: orderId } });
+        } catch (e) {
+          logger.warn('Failed to fetch order from SQL', { error: e.message, orderId });
         }
-        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
-          throw new Error('Order does not belong to user');
-        }
-        const st = (row.order_status || '').toString().toUpperCase();
-        if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) {
-          throw new Error(`Order is not pending (current: ${st})`);
-        }
-      } else {
+      }
+
+      if (!canonical && !row) {
+        throw new Error('Order not found');
+      }
+
+      // Extract order details from existing order
+      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+
+      // 3. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
+        user_id: userId.toString(),
+        user_type: userType,
+        symbol: symbol,
+        order_type: order_type,
+        cancel_message: cancelData.cancel_message || 'Admin cancelled pending order',
+        status: cancelData.status || 'PENDING-CANCEL'
+      };
+
+      // 4. Validate order ownership and status
+      if (canonical) {
         if (normalizeStr(canonical.user_id) !== normalizeStr(userId) || normalizeStr(canonical.user_type).toLowerCase() !== userType) {
           throw new Error('Order does not belong to user');
         }
@@ -1095,11 +1423,23 @@ class AdminOrderManagementService {
         if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) {
           throw new Error(`Order is not pending (current: ${st})`);
         }
+      } else if (row) {
+        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (row.order_status || '').toString().toUpperCase();
+        if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) {
+          throw new Error(`Order is not pending (current: ${st})`);
+        }
       }
 
-      // 5. Extract order details (EXACT same logic as user orders)
-      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
-      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+      // 5. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id || !userPayload.user_id || !userPayload.user_type || !userPayload.symbol || !['BUY_LIMIT','SELL_LIMIT','BUY_STOP','SELL_STOP'].includes(userPayload.order_type)) {
+        throw new Error('Missing/invalid fields');
+      }
+      if (!['live','demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
 
       // 6. Flow determination (EXACT same logic as user orders)
       let isProviderFlow = false;
@@ -1292,55 +1632,117 @@ class AdminOrderManagementService {
   }
 
   /**
-   * Admin sets stop loss for an existing order
+   * Admin sets stop loss for an existing order (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
    * @param {string} orderId - Order ID
-   * @param {Object} slData - Stop loss data
+   * @param {Object} slData - Stop loss data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Stop loss result
    */
   async setStopLoss(adminInfo, userType, userId, orderId, slData, ScopedUserModel) {
-    const operationId = `admin_set_stoploss_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const operationId = `admin_add_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order access
-      const { order } = await this.validateOrderAccess(userType, userId, orderId);
-      
-      // 3. Check if order can have stop loss
-      if (!['OPEN'].includes(order.order_status)) {
-        throw new Error(`Cannot set stop loss for order with status: ${order.order_status}`);
-      }
-
-      // 4. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 5. Prepare payload for Python service
-      const payload = {
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
         user_id: userId.toString(),
         user_type: userType,
-        order_id: orderId,
-        stop_loss_price: slData.stop_loss_price,
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        stop_loss: slData.stop_loss_price || slData.stop_loss,
+        status: slData.status || 'STOPLOSS'
       };
 
-      // 6. Call Python service (same URL as user orders)
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/stoploss/add`,
-        payload
-      );
+      // 3. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id) {
+        throw new Error('order_id is required');
+      }
+      if (!userPayload.user_id) {
+        throw new Error('user_id is required');
+      }
+      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
+      if (!userPayload.stop_loss || !(Number(userPayload.stop_loss) > 0)) {
+        throw new Error('stop_loss must be a positive number');
+      }
 
-      // 7. Log admin action
-      logger.info('Admin stop loss set', {
+      // 4. Load canonical order and validate (EXACT same logic as user orders)
+      const canonical = await this._getCanonicalOrder(orderId);
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      let row = null;
+      
+      if (!canonical) {
+        row = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (!row) {
+          throw new Error('Order not found');
+        }
+        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (row.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      } else {
+        if (normalizeStr(canonical.user_id) !== normalizeStr(userId) || normalizeStr(canonical.user_type).toLowerCase() !== userType) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (canonical.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      }
+
+      // 5. Extract order details (EXACT same logic as user orders)
+      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+      const entry_price_num = canonical ? Number(canonical.order_price) : Number(row.order_price);
+      
+      if (!(entry_price_num > 0)) {
+        throw new Error('Invalid entry price for stop loss calculation');
+      }
+
+      // 6. Generate lifecycle id and persist to SQL (EXACT same as user orders)
+      const stoploss_id = await idGenerator.generateStopLossId();
+      try {
+        const toUpdate = row || (await OrderModel.findOne({ where: { order_id: orderId } }));
+        if (toUpdate) {
+          await toUpdate.update({ stoploss_id, status: userPayload.status });
+        }
+        
+        // Store in lifecycle service for complete ID history
+        await orderLifecycleService.addLifecycleId(
+          orderId, 
+          'stoploss_id', 
+          stoploss_id, 
+          `Admin stoploss added - price: ${userPayload.stop_loss}`
+        );
+      } catch (e) {
+        logger.warn('Failed to persist admin stoploss_id before send', { order_id: orderId, error: e.message });
+      }
+
+      // 7. Build payload to Python (EXACT same structure as user orders)
+      const pyPayload = {
+        order_id: orderId,
+        symbol,
+        user_id: userPayload.user_id,
+        user_type: userPayload.user_type,
+        order_type,
+        order_price: entry_price_num,
+        stoploss_id,
+        stop_loss: userPayload.stop_loss,
+        status: 'STOPLOSS',
+      };
+
+      // 8. Call Python service (EXACT same URL as user orders)
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      
+      logger.info('Admin setting stop loss', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -1348,12 +1750,92 @@ class AdminOrderManagementService {
         userId,
         userEmail: user.email,
         orderId,
-        stopLossPrice: slData.stop_loss_price,
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        symbol,
+        order_type,
+        stop_loss: userPayload.stop_loss,
+        stoploss_id
       });
 
-      return response.data;
+      let pyResp;
+      try {
+        pyResp = await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/stoploss/add`,
+          pyPayload,
+          { timeout: 15000 }
+        );
+      } catch (err) {
+        // Handle Python service error (EXACT same logic as user orders)
+        const statusCode = err?.response?.status || 500;
+        const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+        
+        logger.error('Python service error for admin stop loss', {
+          operationId,
+          adminId: adminInfo.id,
+          orderId,
+          statusCode,
+          detail,
+          error: err.message
+        });
+        
+        // Throw AdminOrderError with preserved status code and details
+        const reason = detail?.detail?.reason || detail?.reason || 'stoploss_failed';
+        const errorDetail = detail?.detail || detail;
+        throw new AdminOrderError(
+          `Stop loss failed: ${reason}`,
+          statusCode,
+          reason,
+          errorDetail
+        );
+      }
+
+      // 9. Handle response based on flow (EXACT same logic as user orders)
+      const result = pyResp.data?.data || pyResp.data || {};
+      const flow = result.flow;
+      
+      if (flow === 'local') {
+        try {
+          // Update SQL row for local flow
+          const rowNow = await OrderModel.findOne({ where: { order_id: orderId } });
+          if (rowNow) {
+            await rowNow.update({ stop_loss: String(userPayload.stop_loss) });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for admin stoploss (local flow)', { order_id: orderId, error: e.message });
+        }
+        
+        // Emit WebSocket event for local flow
+        try {
+          const portfolioEvents = require('./events/portfolio.events');
+          portfolioEvents.emitUserUpdate(userType, userId.toString(), {
+            type: 'order_update',
+            order_id: orderId,
+            update: { stop_loss: String(userPayload.stop_loss) },
+            reason: 'admin_local_stoploss_set',
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after admin local stoploss set', { order_id: orderId, error: e.message });
+        }
+      }
+
+      // 10. Log successful admin action
+      logger.info('Admin stop loss set successfully', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId,
+        userEmail: user.email,
+        orderId,
+        symbol,
+        order_type,
+        stop_loss: userPayload.stop_loss,
+        stoploss_id,
+        flow,
+        result
+      });
+
+      // 11. Return EXACT same response structure as user orders
+      return { success: true, data: result, order_id: orderId, stoploss_id };
 
     } catch (error) {
       logger.error('Failed to set admin stop loss', {
@@ -1366,61 +1848,164 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Stop loss setting failed');
-      }
       throw error;
     }
   }
 
   /**
-   * Admin removes stop loss from an existing order
+   * Admin removes stop loss from an existing order (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
    * @param {string} orderId - Order ID
+   * @param {Object} cancelData - Cancel data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Stop loss removal result
    */
-  async removeStopLoss(adminInfo, userType, userId, orderId, ScopedUserModel) {
-    const operationId = `admin_remove_stoploss_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  async removeStopLoss(adminInfo, userType, userId, orderId, cancelData, ScopedUserModel) {
+    const operationId = `admin_cancel_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order access
-      const { order } = await this.validateOrderAccess(userType, userId, orderId);
-      
-      // 3. Check if order has stop loss
-      if (!order.stop_loss || parseFloat(order.stop_loss) === 0) {
-        throw new Error('Order does not have an active stop loss');
-      }
-
-      // 4. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 5. Prepare payload for Python service
-      const payload = {
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
         user_id: userId.toString(),
         user_type: userType,
-        order_id: orderId,
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        status: cancelData.status || 'STOPLOSS-CANCEL',
+        order_status: cancelData.order_status || 'OPEN'
       };
 
-      // 6. Call Python service (same URL as user orders)
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/stoploss/cancel`,
-        payload
-      );
+      // 3. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id) {
+        throw new Error('order_id is required');
+      }
+      if (!userPayload.user_id) {
+        throw new Error('user_id is required');
+      }
+      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
 
-      // 7. Log admin action
-      logger.info('Admin stop loss removed', {
+      // 4. Load canonical order and validate (EXACT same logic as user orders)
+      const canonical = await this._getCanonicalOrder(orderId);
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      let row = null;
+      
+      if (!canonical) {
+        row = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (!row) {
+          throw new Error('Order not found');
+        }
+        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (row.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      } else {
+        if (normalizeStr(canonical.user_id) !== normalizeStr(userId) || normalizeStr(canonical.user_type).toLowerCase() !== userType) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (canonical.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      }
+
+      // 5. Check for active stop loss (EXACT same logic as user orders)
+      let hasSL = false;
+      if (canonical) {
+        const slVal = canonical.stop_loss;
+        if (slVal && Number(slVal) > 0) hasSL = true;
+      } else if (row) {
+        const slVal = row.stop_loss;
+        if (slVal && Number(slVal) > 0) hasSL = true;
+      }
+      if (!hasSL) {
+        throw new Error('No active stoploss to cancel');
+      }
+
+      // 6. Extract order details (EXACT same logic as user orders)
+      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+      const previousStopLoss = canonical ? canonical.stop_loss : row.stop_loss;
+
+      // 7. Determine sending flow (EXACT same logic as user orders)
+      let sendingOrders = null;
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const ucfg = await redisCluster.hgetall(`user:{${userType}:${userId}}:config`);
+        sendingOrders = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      } catch (e) {
+        logger.warn('Failed to fetch user config from cache', { error: e.message, user_type: userType, user_id: userId });
+      }
+
+      // 8. Resolve stoploss_id from SQL or Redis canonical (EXACT same logic as user orders)
+      let resolvedStoplossId = normalizeStr(row?.stoploss_id);
+      if (!resolvedStoplossId) {
+        try {
+          const { redisCluster } = require('../../config/redis');
+          const fromRedis = await redisCluster.hget(`order_data:${orderId}`, 'stoploss_id');
+          if (fromRedis) resolvedStoplossId = normalizeStr(fromRedis);
+        } catch (_) {}
+      }
+      if (!resolvedStoplossId) {
+        if (sendingOrders === 'barclays') {
+          throw new Error('No stoploss_id found for provider cancel');
+        }
+        // For local flow, a placeholder is acceptable
+        resolvedStoplossId = `SL-${orderId}`;
+      }
+
+      // 9. Generate cancel id and persist to SQL (EXACT same as user orders)
+      const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
+      try {
+        const toUpdate = row || (await OrderModel.findOne({ where: { order_id: orderId } }));
+        if (toUpdate) {
+          await toUpdate.update({ stoploss_cancel_id, status: userPayload.status });
+        }
+        
+        // Store in lifecycle service for complete ID history
+        await orderLifecycleService.addLifecycleId(
+          orderId, 
+          'stoploss_cancel_id', 
+          stoploss_cancel_id, 
+          `Admin stoploss cancel requested - resolved_sl_id: ${resolvedStoplossId}`
+        );
+        
+        // Mark the original stoploss as cancelled
+        if (resolvedStoplossId && resolvedStoplossId !== `SL-${orderId}`) {
+          await orderLifecycleService.updateLifecycleStatus(
+            resolvedStoplossId, 
+            'cancelled',
+            'Admin cancelled stoploss'
+          );
+        }
+      } catch (e) {
+        logger.warn('Failed to persist admin stoploss_cancel_id before send', { order_id: orderId, error: e.message });
+      }
+
+      // 10. Build payload to Python (EXACT same structure as user orders)
+      const pyPayload = {
+        order_id: orderId,
+        symbol,
+        user_id: userPayload.user_id,
+        user_type: userPayload.user_type,
+        order_type,
+        status: 'STOPLOSS-CANCEL',
+        order_status: userPayload.order_status,
+        stoploss_id: resolvedStoplossId,
+        stoploss_cancel_id,
+      };
+
+      // 11. Call Python service (EXACT same URL as user orders)
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      
+      logger.info('Admin cancelling stop loss', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -1428,12 +2013,93 @@ class AdminOrderManagementService {
         userId,
         userEmail: user.email,
         orderId,
-        previousStopLoss: order.stop_loss,
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        symbol,
+        order_type,
+        previousStopLoss,
+        resolvedStoplossId,
+        stoploss_cancel_id
       });
 
-      return response.data;
+      let pyResp;
+      try {
+        pyResp = await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/stoploss/cancel`,
+          pyPayload,
+          { timeout: 15000 }
+        );
+      } catch (err) {
+        // Handle Python service error (EXACT same logic as user orders)
+        const statusCode = err?.response?.status || 500;
+        const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+        
+        logger.error('Python service error for admin stop loss cancel', {
+          operationId,
+          adminId: adminInfo.id,
+          orderId,
+          statusCode,
+          detail,
+          error: err.message
+        });
+        
+        // Throw AdminOrderError with preserved status code and details
+        const reason = detail?.detail?.reason || detail?.reason || 'stoploss_cancel_failed';
+        const errorDetail = detail?.detail || detail;
+        throw new AdminOrderError(
+          `Stop loss cancel failed: ${reason}`,
+          statusCode,
+          reason,
+          errorDetail
+        );
+      }
+
+      // 12. Handle response based on flow (EXACT same logic as user orders)
+      const result = pyResp.data?.data || pyResp.data || {};
+      const flow = result.flow;
+      
+      if (flow === 'local') {
+        try {
+          // Update SQL row for local flow
+          const rowNow = await OrderModel.findOne({ where: { order_id: orderId } });
+          if (rowNow) {
+            await rowNow.update({ stop_loss: null });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for admin stoploss cancel (local flow)', { order_id: orderId, error: e.message });
+        }
+        
+        // Emit WebSocket event for local flow
+        try {
+          const portfolioEvents = require('./events/portfolio.events');
+          portfolioEvents.emitUserUpdate(userType, userId.toString(), {
+            type: 'order_update',
+            order_id: orderId,
+            update: { stop_loss: null },
+            reason: 'admin_local_stoploss_cancelled',
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after admin local stoploss cancel', { order_id: orderId, error: e.message });
+        }
+      }
+
+      // 13. Log successful admin action
+      logger.info('Admin stop loss removed successfully', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId,
+        userEmail: user.email,
+        orderId,
+        symbol,
+        order_type,
+        previousStopLoss,
+        stoploss_cancel_id,
+        flow,
+        result
+      });
+
+      // 14. Return EXACT same response structure as user orders
+      return { success: true, data: result, order_id: orderId, stoploss_cancel_id };
 
     } catch (error) {
       logger.error('Failed to remove admin stop loss', {
@@ -1446,63 +2112,122 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Stop loss removal failed');
-      }
       throw error;
     }
   }
 
   /**
-   * Admin sets take profit for an existing order
+   * Admin sets take profit for an existing order (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
    * @param {string} orderId - Order ID
-   * @param {Object} tpData - Take profit data
+   * @param {Object} tpData - Take profit data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Take profit result
    */
   async setTakeProfit(adminInfo, userType, userId, orderId, tpData, ScopedUserModel) {
-    const operationId = `admin_set_takeprofit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const operationId = `admin_add_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order access
-      const { order } = await this.validateOrderAccess(userType, userId, orderId);
-      
-      // 3. Check if order can have take profit
-      if (!['OPEN'].includes(order.order_status)) {
-        throw new Error(`Cannot set take profit for order with status: ${order.order_status}`);
-      }
-
-      // 4. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 5. Prepare payload for Python service
-      const payload = {
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
         user_id: userId.toString(),
         user_type: userType,
-        order_id: orderId,
-        take_profit_price: tpData.take_profit_price,
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        take_profit: tpData.take_profit_price || tpData.take_profit,
+        status: tpData.status || 'TAKEPROFIT'
       };
 
-      // 6. Call Python service (same URL as user orders)
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/takeprofit/add`,
-        payload
-      );
+      // 3. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id) {
+        throw new Error('order_id is required');
+      }
+      if (!userPayload.user_id) {
+        throw new Error('user_id is required');
+      }
+      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
+      if (!userPayload.take_profit || !(Number(userPayload.take_profit) > 0)) {
+        throw new Error('take_profit must be a positive number');
+      }
 
-      // 7. Log admin action
-      logger.info('Admin take profit set', {
+      // 4. Load canonical order and validate (EXACT same logic as user orders)
+      const canonical = await this._getCanonicalOrder(orderId);
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      let row = null;
+      
+      if (!canonical) {
+        row = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (!row) {
+          throw new Error('Order not found');
+        }
+        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (row.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      } else {
+        if (normalizeStr(canonical.user_id) !== normalizeStr(userId) || normalizeStr(canonical.user_type).toLowerCase() !== userType) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (canonical.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      }
+
+      // 5. Extract order details (EXACT same logic as user orders)
+      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+      const entry_price_num = canonical ? Number(canonical.order_price) : Number(row.order_price);
+      
+      if (!(entry_price_num > 0)) {
+        throw new Error('Invalid entry price for take profit calculation');
+      }
+
+      // 6. Generate lifecycle id and persist to SQL (EXACT same as user orders)
+      const takeprofit_id = await idGenerator.generateTakeProfitId();
+      try {
+        const toUpdate = row || (await OrderModel.findOne({ where: { order_id: orderId } }));
+        if (toUpdate) {
+          await toUpdate.update({ takeprofit_id, status: userPayload.status });
+        }
+        
+        // Store in lifecycle service for complete ID history
+        await orderLifecycleService.addLifecycleId(
+          orderId, 
+          'takeprofit_id', 
+          takeprofit_id, 
+          `Admin takeprofit added - price: ${userPayload.take_profit}`
+        );
+      } catch (e) {
+        logger.warn('Failed to persist admin takeprofit_id before send', { order_id: orderId, error: e.message });
+      }
+
+      // 7. Build payload to Python (EXACT same structure as user orders)
+      const pyPayload = {
+        order_id: orderId,
+        symbol,
+        user_id: userPayload.user_id,
+        user_type: userPayload.user_type,
+        order_type,
+        order_price: entry_price_num,
+        takeprofit_id,
+        take_profit: userPayload.take_profit,
+        status: 'TAKEPROFIT',
+      };
+
+      // 8. Call Python service (EXACT same URL as user orders)
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      
+      logger.info('Admin setting take profit', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -1510,12 +2235,92 @@ class AdminOrderManagementService {
         userId,
         userEmail: user.email,
         orderId,
-        takeProfitPrice: tpData.take_profit_price,
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        symbol,
+        order_type,
+        take_profit: userPayload.take_profit,
+        takeprofit_id
       });
 
-      return response.data;
+      let pyResp;
+      try {
+        pyResp = await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/takeprofit/add`,
+          pyPayload,
+          { timeout: 15000 }
+        );
+      } catch (err) {
+        // Handle Python service error (EXACT same logic as user orders)
+        const statusCode = err?.response?.status || 500;
+        const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+        
+        logger.error('Python service error for admin take profit', {
+          operationId,
+          adminId: adminInfo.id,
+          orderId,
+          statusCode,
+          detail,
+          error: err.message
+        });
+        
+        // Throw AdminOrderError with preserved status code and details
+        const reason = detail?.detail?.reason || detail?.reason || 'takeprofit_failed';
+        const errorDetail = detail?.detail || detail;
+        throw new AdminOrderError(
+          `Take profit failed: ${reason}`,
+          statusCode,
+          reason,
+          errorDetail
+        );
+      }
+
+      // 9. Handle response based on flow (EXACT same logic as user orders)
+      const result = pyResp.data?.data || pyResp.data || {};
+      const flow = result.flow;
+      
+      if (flow === 'local') {
+        try {
+          // Update SQL row for local flow
+          const rowNow = await OrderModel.findOne({ where: { order_id: orderId } });
+          if (rowNow) {
+            await rowNow.update({ take_profit: String(userPayload.take_profit) });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for admin takeprofit (local flow)', { order_id: orderId, error: e.message });
+        }
+        
+        // Emit WebSocket event for local flow
+        try {
+          const portfolioEvents = require('./events/portfolio.events');
+          portfolioEvents.emitUserUpdate(userType, userId.toString(), {
+            type: 'order_update',
+            order_id: orderId,
+            update: { take_profit: String(userPayload.take_profit) },
+            reason: 'admin_local_takeprofit_set',
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after admin local takeprofit set', { order_id: orderId, error: e.message });
+        }
+      }
+
+      // 10. Log successful admin action
+      logger.info('Admin take profit set successfully', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId,
+        userEmail: user.email,
+        orderId,
+        symbol,
+        order_type,
+        take_profit: userPayload.take_profit,
+        takeprofit_id,
+        flow,
+        result
+      });
+
+      // 11. Return EXACT same response structure as user orders
+      return { success: true, data: result, order_id: orderId, takeprofit_id };
 
     } catch (error) {
       logger.error('Failed to set admin take profit', {
@@ -1528,61 +2333,164 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Take profit setting failed');
-      }
       throw error;
     }
   }
 
   /**
-   * Admin removes take profit from an existing order
+   * Admin removes take profit from an existing order (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
    * @param {string} orderId - Order ID
+   * @param {Object} cancelData - Cancel data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Take profit removal result
    */
-  async removeTakeProfit(adminInfo, userType, userId, orderId, ScopedUserModel) {
-    const operationId = `admin_remove_takeprofit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  async removeTakeProfit(adminInfo, userType, userId, orderId, cancelData, ScopedUserModel) {
+    const operationId = `admin_cancel_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order access
-      const { order } = await this.validateOrderAccess(userType, userId, orderId);
-      
-      // 3. Check if order has take profit
-      if (!order.take_profit || parseFloat(order.take_profit) === 0) {
-        throw new Error('Order does not have an active take profit');
-      }
-
-      // 4. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 5. Prepare payload for Python service
-      const payload = {
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
         user_id: userId.toString(),
         user_type: userType,
-        order_id: orderId,
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        status: cancelData.status || 'TAKEPROFIT-CANCEL',
+        order_status: cancelData.order_status || 'OPEN'
       };
 
-      // 6. Call Python service (same URL as user orders)
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/takeprofit/cancel`,
-        payload
-      );
+      // 3. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id) {
+        throw new Error('order_id is required');
+      }
+      if (!userPayload.user_id) {
+        throw new Error('user_id is required');
+      }
+      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
 
-      // 7. Log admin action
-      logger.info('Admin take profit removed', {
+      // 4. Load canonical order and validate (EXACT same logic as user orders)
+      const canonical = await this._getCanonicalOrder(orderId);
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      let row = null;
+      
+      if (!canonical) {
+        row = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (!row) {
+          throw new Error('Order not found');
+        }
+        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (row.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      } else {
+        if (normalizeStr(canonical.user_id) !== normalizeStr(userId) || normalizeStr(canonical.user_type).toLowerCase() !== userType) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (canonical.order_status || '').toString().toUpperCase();
+        if (st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      }
+
+      // 5. Check for active take profit (EXACT same logic as user orders)
+      let hasTP = false;
+      if (canonical) {
+        const tpVal = canonical.take_profit;
+        if (tpVal && Number(tpVal) > 0) hasTP = true;
+      } else if (row) {
+        const tpVal = row.take_profit;
+        if (tpVal && Number(tpVal) > 0) hasTP = true;
+      }
+      if (!hasTP) {
+        throw new Error('No active takeprofit to cancel');
+      }
+
+      // 6. Extract order details (EXACT same logic as user orders)
+      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+      const previousTakeProfit = canonical ? canonical.take_profit : row.take_profit;
+
+      // 7. Determine sending flow (EXACT same logic as user orders)
+      let sendingOrders = null;
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const ucfg = await redisCluster.hgetall(`user:{${userType}:${userId}}:config`);
+        sendingOrders = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      } catch (e) {
+        logger.warn('Failed to fetch user config from cache', { error: e.message, user_type: userType, user_id: userId });
+      }
+
+      // 8. Resolve takeprofit_id from SQL or Redis canonical (EXACT same logic as user orders)
+      let resolvedTakeprofitId = normalizeStr(row?.takeprofit_id);
+      if (!resolvedTakeprofitId) {
+        try {
+          const { redisCluster } = require('../../config/redis');
+          const fromRedis = await redisCluster.hget(`order_data:${orderId}`, 'takeprofit_id');
+          if (fromRedis) resolvedTakeprofitId = normalizeStr(fromRedis);
+        } catch (_) {}
+      }
+      if (!resolvedTakeprofitId) {
+        if (sendingOrders === 'barclays') {
+          throw new Error('No takeprofit_id found for provider cancel');
+        }
+        // For local flow, a placeholder is acceptable
+        resolvedTakeprofitId = `TP-${orderId}`;
+      }
+
+      // 9. Generate cancel id and persist to SQL (EXACT same as user orders)
+      const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
+      try {
+        const toUpdate = row || (await OrderModel.findOne({ where: { order_id: orderId } }));
+        if (toUpdate) {
+          await toUpdate.update({ takeprofit_cancel_id, status: userPayload.status });
+        }
+        
+        // Store in lifecycle service for complete ID history
+        await orderLifecycleService.addLifecycleId(
+          orderId, 
+          'takeprofit_cancel_id', 
+          takeprofit_cancel_id, 
+          `Admin takeprofit cancel requested - resolved_tp_id: ${resolvedTakeprofitId}`
+        );
+        
+        // Mark the original takeprofit as cancelled
+        if (resolvedTakeprofitId && resolvedTakeprofitId !== `TP-${orderId}`) {
+          await orderLifecycleService.updateLifecycleStatus(
+            resolvedTakeprofitId, 
+            'cancelled',
+            'Admin cancelled takeprofit'
+          );
+        }
+      } catch (e) {
+        logger.warn('Failed to persist admin takeprofit_cancel_id before send', { order_id: orderId, error: e.message });
+      }
+
+      // 10. Build payload to Python (EXACT same structure as user orders)
+      const pyPayload = {
+        order_id: orderId,
+        symbol,
+        user_id: userPayload.user_id,
+        user_type: userPayload.user_type,
+        order_type,
+        status: 'TAKEPROFIT-CANCEL',
+        order_status: userPayload.order_status,
+        takeprofit_id: resolvedTakeprofitId,
+        takeprofit_cancel_id,
+      };
+
+      // 11. Call Python service (EXACT same URL as user orders)
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      
+      logger.info('Admin cancelling take profit', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -1590,12 +2498,93 @@ class AdminOrderManagementService {
         userId,
         userEmail: user.email,
         orderId,
-        previousTakeProfit: order.take_profit,
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        symbol,
+        order_type,
+        previousTakeProfit,
+        resolvedTakeprofitId,
+        takeprofit_cancel_id
       });
 
-      return response.data;
+      let pyResp;
+      try {
+        pyResp = await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/takeprofit/cancel`,
+          pyPayload,
+          { timeout: 15000 }
+        );
+      } catch (err) {
+        // Handle Python service error (EXACT same logic as user orders)
+        const statusCode = err?.response?.status || 500;
+        const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+        
+        logger.error('Python service error for admin take profit cancel', {
+          operationId,
+          adminId: adminInfo.id,
+          orderId,
+          statusCode,
+          detail,
+          error: err.message
+        });
+        
+        // Throw AdminOrderError with preserved status code and details
+        const reason = detail?.detail?.reason || detail?.reason || 'takeprofit_cancel_failed';
+        const errorDetail = detail?.detail || detail;
+        throw new AdminOrderError(
+          `Take profit cancel failed: ${reason}`,
+          statusCode,
+          reason,
+          errorDetail
+        );
+      }
+
+      // 12. Handle response based on flow (EXACT same logic as user orders)
+      const result = pyResp.data?.data || pyResp.data || {};
+      const flow = result.flow;
+      
+      if (flow === 'local') {
+        try {
+          // Update SQL row for local flow
+          const rowNow = await OrderModel.findOne({ where: { order_id: orderId } });
+          if (rowNow) {
+            await rowNow.update({ take_profit: null });
+          }
+        } catch (e) {
+          logger.warn('Failed to update SQL row for admin takeprofit cancel (local flow)', { order_id: orderId, error: e.message });
+        }
+        
+        // Emit WebSocket event for local flow
+        try {
+          const portfolioEvents = require('./events/portfolio.events');
+          portfolioEvents.emitUserUpdate(userType, userId.toString(), {
+            type: 'order_update',
+            order_id: orderId,
+            update: { take_profit: null },
+            reason: 'admin_local_takeprofit_cancelled',
+          });
+        } catch (e) {
+          logger.warn('Failed to emit WS event after admin local takeprofit cancel', { order_id: orderId, error: e.message });
+        }
+      }
+
+      // 13. Log successful admin action
+      logger.info('Admin take profit removed successfully', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId,
+        userEmail: user.email,
+        orderId,
+        symbol,
+        order_type,
+        previousTakeProfit,
+        takeprofit_cancel_id,
+        flow,
+        result
+      });
+
+      // 14. Return EXACT same response structure as user orders
+      return { success: true, data: result, order_id: orderId, takeprofit_cancel_id };
 
     } catch (error) {
       logger.error('Failed to remove admin take profit', {
@@ -1608,9 +2597,6 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Take profit removal failed');
-      }
       throw error;
     }
   }

@@ -397,6 +397,16 @@ class AdminUserManagementController {
         });
       }
 
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
+      }
+
       if (error.message.includes('Python service error')) {
         return res.status(500).json({ 
           success: false, 
@@ -453,6 +463,7 @@ class AdminUserManagementController {
         userType,
         userIdInt,
         orderId.trim(),
+        req.body || {}, // closeData parameter
         ScopedUserModel
       );
 
@@ -469,6 +480,16 @@ class AdminUserManagementController {
 
       if (error.message.includes('Cannot close order')) {
         return res.status(400).json({ error: error.message });
+      }
+
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
       }
 
       res.status(500).json({ error: error.message || 'Failed to close order' });
@@ -518,6 +539,16 @@ class AdminUserManagementController {
 
       if (error.message.includes('Invalid user type') || error.message.includes('Invalid user ID')) {
         return res.status(400).json({ error: error.message });
+      }
+
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
       }
 
       res.status(500).json({ error: error.message || 'Failed to place pending order' });
@@ -613,11 +644,15 @@ class AdminUserManagementController {
         ? req.scopedModels.LiveUser 
         : req.scopedModels.DemoUser;
       
+      // For DELETE requests, cancelData can be empty or from query params
+      const cancelData = req.body || {};
+      
       const result = await adminOrderManagementService.cancelPendingOrder(
         admin,
         userType,
         userIdInt,
         orderId.trim(),
+        cancelData,
         ScopedUserModel
       );
 
@@ -634,6 +669,16 @@ class AdminUserManagementController {
 
       if (error.message.includes('Cannot cancel order')) {
         return res.status(400).json({ error: error.message });
+      }
+
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
       }
 
       res.status(500).json({ error: error.message || 'Failed to cancel pending order' });
@@ -700,6 +745,16 @@ class AdminUserManagementController {
         return res.status(400).json({ error: error.message });
       }
 
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
+      }
+
       res.status(500).json({ error: error.message || 'Failed to set stop loss' });
     }
   }
@@ -739,6 +794,7 @@ class AdminUserManagementController {
         userType,
         userIdInt,
         orderId.trim(),
+        req.body || {}, // cancelData parameter
         ScopedUserModel
       );
 
@@ -755,6 +811,16 @@ class AdminUserManagementController {
 
       if (error.message.includes('does not have an active stop loss')) {
         return res.status(400).json({ error: error.message });
+      }
+
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
       }
 
       res.status(500).json({ error: error.message || 'Failed to remove stop loss' });
@@ -821,6 +887,16 @@ class AdminUserManagementController {
         return res.status(400).json({ error: error.message });
       }
 
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
+      }
+
       res.status(500).json({ error: error.message || 'Failed to set take profit' });
     }
   }
@@ -860,6 +936,7 @@ class AdminUserManagementController {
         userType,
         userIdInt,
         orderId.trim(),
+        req.body || {}, // cancelData parameter
         ScopedUserModel
       );
 
@@ -876,6 +953,16 @@ class AdminUserManagementController {
 
       if (error.message.includes('does not have an active take profit')) {
         return res.status(400).json({ error: error.message });
+      }
+
+      // Handle AdminOrderError with preserved status codes
+      if (error.name === 'AdminOrderError') {
+        return res.status(error.statusCode).json({ 
+          success: false, 
+          message: error.message,
+          reason: error.reason,
+          error: error.detail
+        });
       }
 
       res.status(500).json({ error: error.message || 'Failed to remove take profit' });
