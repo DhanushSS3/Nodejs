@@ -12,7 +12,7 @@ class CryptoPaymentService {
     this.tyltApiUrl = 'https://api.tylt.money/transactions/merchant/createPayinRequest';
     this.apiKey = process.env.TLP_API_KEY;
     this.apiSecret = process.env.TLP_API_SECRET;
-    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv2.livefxhub.com/api/crypto-payments/webhook';
+    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv1.livefxhub.com/api/crypto-payments/webhook';
   }
 
   /**
@@ -351,23 +351,54 @@ class CryptoPaymentService {
       let transactionId = null;
 
       // Credit user wallet if payment is successful (completed, underpayment, or overpayment)
-      // Use settledAmountReceived as this is the actual amount that should be credited to user's wallet
-      if (['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && settledAmountReceived) {
+      logger.info('Wallet credit check', {
+        merchantOrderId,
+        internalStatus,
+        baseAmountReceived,
+        shouldCredit: ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived
+      });
+
+      if (['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived) {
         try {
-          const creditResult = await this.creditUserWallet(payment.userId, parseFloat(settledAmountReceived), webhookData, transaction);
+          logger.info('Attempting wallet credit', {
+            merchantOrderId,
+            userId: payment.userId,
+            amount: baseAmountReceived,
+            internalStatus
+          });
+
+          const creditResult = await this.creditUserWallet(payment.userId, parseFloat(baseAmountReceived), webhookData, transaction);
           walletCreditSuccess = true;
-          walletCreditAmount = parseFloat(settledAmountReceived);
+          walletCreditAmount = parseFloat(baseAmountReceived);
           newWalletBalance = previousWalletBalance + walletCreditAmount;
           transactionId = creditResult.transactionId;
+
+          logger.info('Wallet credit successful', {
+            merchantOrderId,
+            userId: payment.userId,
+            amount: walletCreditAmount,
+            transactionId,
+            newBalance: newWalletBalance
+          });
         } catch (creditError) {
           logger.error('Failed to credit user wallet', { 
             merchantOrderId, 
             userId: payment.userId,
-            amount: settledAmountReceived,
-            error: creditError.message 
+            amount: baseAmountReceived,
+            error: creditError.message,
+            stack: creditError.stack
           });
           // Don't fail the entire webhook processing if wallet credit fails
         }
+      } else {
+        logger.info('Wallet credit skipped', {
+          merchantOrderId,
+          internalStatus,
+          baseAmountReceived,
+          reason: !['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) 
+            ? 'Status not eligible for credit' 
+            : 'No baseAmountReceived'
+        });
       }
 
       await transaction.commit();
@@ -395,8 +426,6 @@ class CryptoPaymentService {
         status: internalStatus,
         paymentId: payment.id,
         baseAmountReceived,
-        settledAmountReceived,
-        walletCreditedAmount: walletCreditAmount,
         walletCredited: walletCreditSuccess
       });
 
@@ -451,7 +480,9 @@ class CryptoPaymentService {
       'paid': 'COMPLETED',
       'success': 'COMPLETED',
       'underpayment': 'UNDERPAYMENT',
+      'under payment': 'UNDERPAYMENT',  // Added mapping for "Under Payment"
       'overpayment': 'OVERPAYMENT',
+      'over payment': 'OVERPAYMENT',    // Added mapping for "Over Payment"
       'failed': 'FAILED',
       'cancelled': 'CANCELLED',
       'expired': 'FAILED'
@@ -464,7 +495,7 @@ class CryptoPaymentService {
   /**
    * Credit user wallet and create transaction record (Live users only)
    * @param {number} userId - User ID
-   * @param {number} amount - Amount to credit (settledAmountReceived)
+   * @param {number} amount - Amount to credit (baseAmountReceived)
    * @param {Object} webhookData - Webhook data for reference
    * @param {Object} transaction - Database transaction
    */
