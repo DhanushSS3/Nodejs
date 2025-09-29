@@ -391,21 +391,33 @@ class CryptoPaymentService {
       let newWalletBalance = previousWalletBalance;
       let transactionId = null;
 
-      // Credit user wallet if payment is successful (completed, underpayment, or overpayment)
-      logger.info('Wallet credit check', {
-        merchantOrderId,
+      // SIMPLE DUPLICATE DETECTION: Since we create only ONE record per payment request,
+      // any subsequent webhook for the same payment record is a duplicate if wallet was already credited
+      const isEligibleForCredit = ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived;
+      const hasAlreadyBeenCredited = payment.baseAmountReceived !== null && payment.baseAmountReceived > 0;
+      const shouldCreditWallet = isEligibleForCredit && !hasAlreadyBeenCredited;
+
+      logger.info('Duplicate detection check', {
+        paymentId: payment.id,
+        merchantOrderId: payment.merchantOrderId, // Use full merchantOrderId from DB
+        truncatedMerchantOrderId: merchantOrderId, // Truncated from webhook
         internalStatus,
         baseAmountReceived,
-        shouldCredit: ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived
+        isEligibleForCredit,
+        hasAlreadyBeenCredited,
+        shouldCreditWallet,
+        previousBaseAmountReceived: payment.baseAmountReceived,
+        logic: 'One payment record = One wallet credit only'
       });
 
-      if (['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived) {
+      if (shouldCreditWallet) {
         try {
           logger.info('Attempting wallet credit', {
             merchantOrderId,
             userId: payment.userId,
             amount: baseAmountReceived,
-            internalStatus
+            internalStatus,
+            reason: 'First time processing this payment'
           });
 
           const creditResult = await this.creditUserWallet(payment.userId, parseFloat(baseAmountReceived), webhookData, transaction);
@@ -432,13 +444,25 @@ class CryptoPaymentService {
           // Don't fail the entire webhook processing if wallet credit fails
         }
       } else {
+        let skipReason = '';
+        if (!isEligibleForCredit) {
+          skipReason = !['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) 
+            ? `Status '${internalStatus}' not eligible for wallet credit` 
+            : 'No baseAmountReceived in webhook';
+        } else if (hasAlreadyBeenCredited) {
+          skipReason = 'DUPLICATE WEBHOOK: Payment record already processed for wallet credit';
+        }
+
         logger.info('Wallet credit skipped', {
-          merchantOrderId,
+          paymentId: payment.id,
+          merchantOrderId: payment.merchantOrderId, // Full ID from DB
+          truncatedMerchantOrderId: merchantOrderId, // Truncated from webhook
           internalStatus,
           baseAmountReceived,
-          reason: !['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) 
-            ? 'Status not eligible for credit' 
-            : 'No baseAmountReceived'
+          previousBaseAmountReceived: payment.baseAmountReceived,
+          reason: skipReason,
+          isDuplicateWebhook: hasAlreadyBeenCredited,
+          explanation: 'One payment record can only credit wallet once'
         });
       }
 
