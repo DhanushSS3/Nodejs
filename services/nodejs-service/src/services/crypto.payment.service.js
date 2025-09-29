@@ -12,7 +12,7 @@ class CryptoPaymentService {
     this.tyltApiUrl = 'https://api.tylt.money/transactions/merchant/createPayinRequest';
     this.apiKey = process.env.TLP_API_KEY;
     this.apiSecret = process.env.TLP_API_SECRET;
-    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv1.livefxhub.com/api/crypto-payments/webhook';
+    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv2.livefxhub.com/api/crypto-payments/webhook';
   }
 
   /**
@@ -313,14 +313,31 @@ class CryptoPaymentService {
     const processingStartTime = Date.now();
     
     try {
-      const payment = await CryptoPayment.findOne({
-        where: { merchantOrderId },
-        transaction
+      logger.info('Starting webhook payment update', {
+        merchantOrderId,
+        orderId: webhookData.orderId,
+        status: webhookData.status,
+        baseAmountReceived: webhookData.baseAmountReceived
       });
 
+      // Try to find payment by merchantOrderId first, then by orderId
+      const payment = await CryptoPayment.findByOrderIds(merchantOrderId, webhookData.orderId);
+
       if (!payment) {
-        throw new Error('Payment not found for webhook update');
+        logger.error('Payment not found for webhook update', {
+          merchantOrderId,
+          orderId: webhookData.orderId,
+          searchedBy: 'both merchantOrderId and orderId'
+        });
+        throw new Error(`Payment not found for merchantOrderId: ${merchantOrderId} or orderId: ${webhookData.orderId}`);
       }
+
+      logger.info('Payment found for webhook update', {
+        paymentId: payment.id,
+        foundBy: payment.merchantOrderId === merchantOrderId ? 'merchantOrderId' : 'orderId',
+        currentStatus: payment.status,
+        newStatus: webhookData.status
+      });
 
       const { status, baseAmountReceived, settledAmountReceived, settledAmountCredited, commission } = webhookData;
       
@@ -329,8 +346,26 @@ class CryptoPaymentService {
       
       // Get user's current wallet balance for logging
       const user = await LiveUser.findByPk(payment.userId, { transaction });
-      const previousWalletBalance = user ? parseFloat(user.wallet_balance) || 0 : 0;
+      if (!user) {
+        logger.error('User not found for payment', {
+          paymentId: payment.id,
+          userId: payment.userId,
+          merchantOrderId
+        });
+        throw new Error(`User not found with ID: ${payment.userId}`);
+      }
       
+      const previousWalletBalance = parseFloat(user.wallet_balance) || 0;
+      
+      logger.info('Updating payment record', {
+        paymentId: payment.id,
+        userId: payment.userId,
+        previousStatus: payment.status,
+        newStatus: internalStatus,
+        previousBaseAmountReceived: payment.baseAmountReceived,
+        newBaseAmountReceived: baseAmountReceived
+      });
+
       // Update payment with webhook data
       const updatedPayment = await payment.update({
         status: internalStatus,
@@ -344,6 +379,12 @@ class CryptoPaymentService {
           lastUpdated: new Date().toISOString()
         }
       }, { transaction });
+
+      logger.info('Payment record updated successfully', {
+        paymentId: updatedPayment.id,
+        newStatus: updatedPayment.status,
+        newBaseAmountReceived: updatedPayment.baseAmountReceived
+      });
 
       let walletCreditSuccess = false;
       let walletCreditAmount = 0;
@@ -439,6 +480,49 @@ class CryptoPaymentService {
       
       const processingTime = Date.now() - processingStartTime;
       
+      // Enhanced error logging
+      logger.error('CRITICAL: Webhook processing failed', {
+        merchantOrderId,
+        orderId: webhookData.orderId,
+        status: webhookData.status,
+        baseAmountReceived: webhookData.baseAmountReceived,
+        errorType: error.constructor.name,
+        errorMessage: error.message,
+        errorStack: error.stack,
+        processingTime,
+        transactionRolledBack: true
+      });
+
+      // Check if it's a specific type of error
+      if (error.message.includes('Payment not found')) {
+        logger.error('Payment lookup failed - possible data inconsistency', {
+          merchantOrderId,
+          orderId: webhookData.orderId,
+          suggestion: 'Check if payment record exists in database'
+        });
+      } else if (error.message.includes('User not found')) {
+        logger.error('User lookup failed - data integrity issue', {
+          merchantOrderId,
+          orderId: webhookData.orderId,
+          suggestion: 'Check if user record exists and is valid'
+        });
+      } else if (error.name === 'SequelizeValidationError') {
+        logger.error('Database validation error', {
+          merchantOrderId,
+          validationErrors: error.errors?.map(e => ({
+            field: e.path,
+            message: e.message,
+            value: e.value
+          }))
+        });
+      } else if (error.name === 'SequelizeDatabaseError') {
+        logger.error('Database constraint or SQL error', {
+          merchantOrderId,
+          sqlMessage: error.original?.message,
+          sqlCode: error.original?.code
+        });
+      }
+      
       // Log webhook processing failure
       cryptoPaymentLogger.logWebhookProcessing(webhookData, {
         receivedAt: new Date().toISOString(),
@@ -453,14 +537,10 @@ class CryptoPaymentService {
         newWalletBalance: 0,
         transactionId: null,
         processingTime,
-        error: error.message
+        error: error.message,
+        errorType: error.constructor.name
       });
       
-      logger.error('Error updating payment from webhook', { 
-        merchantOrderId, 
-        error: error.message,
-        stack: error.stack 
-      });
       throw error;
     }
   }

@@ -104,6 +104,10 @@ const CryptoPayment = sequelize.define('CryptoPayment', {
       name: 'idx_crypto_payments_merchant_order_id',
     },
     {
+      fields: ['orderId'],
+      name: 'idx_crypto_payments_order_id',
+    },
+    {
       fields: ['status'],
       name: 'idx_crypto_payments_status',
     },
@@ -120,6 +124,28 @@ const CryptoPayment = sequelize.define('CryptoPayment', {
  */
 CryptoPayment.generateMerchantOrderId = function() {
   return `livefx_${uuidv4().replace(/-/g, '')}`;
+};
+
+/**
+ * Static method to find payment by merchantOrderId or orderId
+ * @param {string} merchantOrderId - Merchant order ID
+ * @param {string} orderId - Provider order ID (fallback)
+ * @returns {Promise<CryptoPayment|null>} Payment record or null
+ */
+CryptoPayment.findByOrderIds = async function(merchantOrderId, orderId) {
+  // First try to find by merchantOrderId
+  let payment = await this.findOne({
+    where: { merchantOrderId }
+  });
+  
+  // If not found and orderId is provided, try orderId
+  if (!payment && orderId) {
+    payment = await this.findOne({
+      where: { orderId }
+    });
+  }
+  
+  return payment;
 };
 
 /**

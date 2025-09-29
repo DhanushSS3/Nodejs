@@ -2663,3 +2663,86 @@
 {"level":"info","message":"Groups sync completed: 1292 groups in 3712ms","timestamp":"2025-09-29T11:38:31.051Z"}
 {"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-29T11:38:31.061Z"}
 {"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-29T11:38:31.083Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-29T12:28:32.576Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-29T12:28:32.604Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-29T12:28:33.051Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-29T12:28:33.539Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-29T12:28:34.002Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-29T12:28:34.640Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-29T12:28:35.075Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-29T12:28:35.465Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-29T12:28:35.815Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-29T12:28:36.211Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-29T12:28:36.672Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-29T12:28:37.063Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-29T12:28:37.456Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-29T12:28:37.878Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-29T12:28:38.204Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5626ms","timestamp":"2025-09-29T12:28:38.204Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-29T12:28:38.217Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-29T12:28:38.320Z"}
+{"body":{"data":{"baseAmount":100,"baseAmountReceived":10,"baseCurrency":"USDT","commission":0.05,"depositAddress":"0xf9b2508E2360059b25A3A692073c7BCF75F44B50","merchantOrderId":"livefx_4af07a6496ed430fa01057dc25b42c67","network":"BSC","networkSymbol":"BSC","orderId":"977a0233-9d2d-11f0-9b9d-42010a2801c2","settledAmountCredited":10,"settledAmountReceived":9.95,"settledCurrency":"USDT","status":"Under Payment","transactions":[{"amount":10,"confirmationStatus":1,"createdAt":"2025-09-29T12:13:43Z","fromAddress":"0x1B3ec402Df254a66B97DE199541295AF2e0F5baA","transactionHash":"0xc0ade00abc39d87fbd8a8e172c396ce2dd5edd1388ec31b96d52e58bd089e27f","updatedAt":"2025-09-29T12:13:48Z"}]}},"headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br","authorization":"Bearer a74d10865ba52e3294b33a12b5e0953c5264a86c54273cae3fcf5166af4c1781","cache-control":"no-cache","connection":"keep-alive","content-length":"873","content-type":"application/json","host":"localhost:3000","postman-token":"fc09a088-0df8-4985-8b93-c170a4be7561","user-agent":"PostmanRuntime/7.48.0","x-tlp-signature":"aaca94332eb4e3cf5e9bba4f43a66b3ed3a68bc7f49963d005bb75e3832edba9"},"level":"info","message":"Received Tylt webhook","timestamp":"2025-09-29T12:29:56.882Z"}
+{"bodyLength":676,"bodyType":"object","hasRawBody":true,"hasSignature":true,"level":"info","message":"Webhook signature validation details","signatureHeader":"present","timestamp":"2025-09-29T12:29:56.887Z"}
+{"level":"error","message":"Invalid webhook signature","signature":"aaca94332eb4e3cf5e9bba4f43a66b3ed3a68bc7f49963d005bb75e3832edba9","timestamp":"2025-09-29T12:29:56.901Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /half-spreads","timestamp":"2025-09-29T12:31:47.059Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-29T12:31:47.062Z"}
+{"level":"info","message":"User group from JWT: \"Elite\"","timestamp":"2025-09-29T12:31:47.062Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Elite}:*","timestamp":"2025-09-29T12:31:47.062Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-09-29T12:31:47.066Z"}
+{"level":"info","message":"Found 132 keys on node 127.0.0.1:7002","timestamp":"2025-09-29T12:31:47.068Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-29T12:31:47.071Z"}
+{"level":"info","message":"Total keys found across cluster: 132","timestamp":"2025-09-29T12:31:47.072Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /me","timestamp":"2025-09-29T12:31:47.145Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /me","timestamp":"2025-09-29T12:31:47.213Z"}
+{"level":"info","message":"Successfully processed 132/132 instruments for group Elite","timestamp":"2025-09-29T12:31:47.481Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /my-group","timestamp":"2025-09-29T12:31:47.811Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-29T12:31:47.816Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Elite\"","timestamp":"2025-09-29T12:31:47.817Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Elite\"","timestamp":"2025-09-29T12:31:47.817Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-29T12:28:38.217Z\",\"total_synced\":1292,\"sync_duration_ms\":5626,\"sync_version\":\"1.0\"}","timestamp":"2025-09-29T12:31:47.851Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Elite}:* for group: Elite","timestamp":"2025-09-29T12:31:47.852Z"}
+{"level":"info","message":"Found 132 total keys matching pattern: groups:{Elite}:*","timestamp":"2025-09-29T12:31:47.860Z"}
+{"level":"info","message":"Processing 132 keys: [\"groups:{Elite}:EURMXN\",\"groups:{Elite}:CHFHKD\",\"groups:{Elite}:BTCUSD\"]...","timestamp":"2025-09-29T12:31:47.860Z"}
+{"level":"info","message":"Successfully retrieved 132 groups for pattern: groups:{Elite}:*","timestamp":"2025-09-29T12:31:48.171Z"}
+{"level":"info","message":"[USER] Found 132 groups for Elite","timestamp":"2025-09-29T12:31:48.171Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /my-group","timestamp":"2025-09-29T12:31:48.184Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-29T12:31:48.185Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Elite\"","timestamp":"2025-09-29T12:31:48.185Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Elite\"","timestamp":"2025-09-29T12:31:48.185Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-29T12:28:38.217Z\",\"total_synced\":1292,\"sync_duration_ms\":5626,\"sync_version\":\"1.0\"}","timestamp":"2025-09-29T12:31:48.203Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Elite}:* for group: Elite","timestamp":"2025-09-29T12:31:48.204Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /","timestamp":"2025-09-29T12:31:48.220Z"}
+{"level":"info","message":"Found 132 total keys matching pattern: groups:{Elite}:*","timestamp":"2025-09-29T12:31:48.270Z"}
+{"level":"info","message":"Processing 132 keys: [\"groups:{Elite}:EURMXN\",\"groups:{Elite}:CHFHKD\",\"groups:{Elite}:BTCUSD\"]...","timestamp":"2025-09-29T12:31:48.270Z"}
+{"level":"info","message":"Successfully retrieved 132 groups for pattern: groups:{Elite}:*","timestamp":"2025-09-29T12:31:48.618Z"}
+{"level":"info","message":"[USER] Found 132 groups for Elite","timestamp":"2025-09-29T12:31:48.619Z"}
+{"level":"info","message":"Authentication successful for user 63 on GET /?offset=0","timestamp":"2025-09-29T12:31:51.956Z"}
+{"level":"info","message":"Authentication successful for user 63 on POST /deposit","timestamp":"2025-09-29T12:31:56.597Z"}
+{"amount":"100","currency":"USDT","level":"info","message":"Creating crypto deposit request","network":"BSC","timestamp":"2025-09-29T12:31:56.600Z","userId":63}
+{"body":{"data":{"baseAmount":100,"baseAmountReceived":10,"baseCurrency":"USDT","commission":0.05,"depositAddress":"0xf9b2508E2360059b25A3A692073c7BCF75F44B50","merchantOrderId":"livefx_5cc716b80ed446cdb212bc7653e9","network":"BSC","networkSymbol":"BSC","orderId":"49f2686e-9d30-11f0-9b9d-42010a2801c2","settledAmountCredited":10,"settledAmountReceived":9.95,"settledCurrency":"USDT","status":"Under Payment","transactions":[{"amount":10,"confirmationStatus":1,"createdAt":"2025-09-29T12:13:43Z","fromAddress":"0x1B3ec402Df254a66B97DE199541295AF2e0F5baA","transactionHash":"0xc0ade00abc39d87fbd8a8e172c396ce2dd5edd1388ec31b96d52e58bd089e27f","updatedAt":"2025-09-29T12:13:48Z"}]}},"headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br","authorization":"Bearer 5ed3e5d98ea5e86f10331cdf34c1ddd8caa87184760693fb9d311766acdf5ee3","cache-control":"no-cache","connection":"keep-alive","content-length":"869","content-type":"application/json","host":"localhost:3000","postman-token":"9940b3b9-6d2a-4fa2-bae2-be741cfaf879","user-agent":"PostmanRuntime/7.48.0","x-tlp-signature":"aaca94332eb4e3cf5e9bba4f43a66b3ed3a68bc7f49963d005bb75e3832edba9"},"level":"info","message":"Received Tylt webhook","timestamp":"2025-09-29T12:32:45.170Z"}
+{"bodyLength":672,"bodyType":"object","hasRawBody":true,"hasSignature":true,"level":"info","message":"Webhook signature validation details","signatureHeader":"present","timestamp":"2025-09-29T12:32:45.170Z"}
+{"level":"error","message":"Invalid webhook signature","signature":"aaca94332eb4e3cf5e9bba4f43a66b3ed3a68bc7f49963d005bb75e3832edba9","timestamp":"2025-09-29T12:32:45.171Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-29T12:33:06.966Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-29T12:33:06.974Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-29T12:33:07.411Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-29T12:33:07.867Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-29T12:33:08.271Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-29T12:33:08.740Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-29T12:33:09.187Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-29T12:33:09.609Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-29T12:33:10.093Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-29T12:33:10.677Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-29T12:33:11.083Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-29T12:33:11.565Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-29T12:33:12.152Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-29T12:33:12.587Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-29T12:33:13.043Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 6076ms","timestamp":"2025-09-29T12:33:13.043Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-29T12:33:13.055Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-29T12:33:13.154Z"}
+{"body":{"data":{"baseAmount":100,"baseAmountReceived":10,"baseCurrency":"USDT","commission":0.05,"depositAddress":"0xf9b2508E2360059b25A3A692073c7BCF75F44B50","merchantOrderId":"livefx_5cc716b80ed446cdb212bc7653e9","network":"BSC","networkSymbol":"BSC","orderId":"49f2686e-9d30-11f0-9b9d-42010a2801c2","settledAmountCredited":10,"settledAmountReceived":9.95,"settledCurrency":"USDT","status":"Under Payment","transactions":[{"amount":10,"confirmationStatus":1,"createdAt":"2025-09-29T12:13:43Z","fromAddress":"0x1B3ec402Df254a66B97DE199541295AF2e0F5baA","transactionHash":"0xc0ade00abc39d87fbd8a8e172c396ce2dd5edd1388ec31b96d52e58bd089e27f","updatedAt":"2025-09-29T12:13:48Z"}]}},"headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br","authorization":"Bearer 0ff8e173e4a20529ebf0d95cc4a5766d152564495276d2796a6605edd37fb7cd","cache-control":"no-cache","connection":"keep-alive","content-length":"869","content-type":"application/json","host":"localhost:3000","postman-token":"cc73708a-5ed6-4319-96b8-24b98a7a512e","user-agent":"PostmanRuntime/7.48.0","x-tlp-signature":"aaca94332eb4e3cf5e9bba4f43a66b3ed3a68bc7f49963d005bb75e3832edba9"},"level":"info","message":"Received Tylt webhook","timestamp":"2025-09-29T12:33:32.397Z"}
+{"bodyLength":672,"bodyType":"object","hasRawBody":true,"hasSignature":true,"level":"info","message":"Webhook signature validation details","signatureHeader":"present","timestamp":"2025-09-29T12:33:32.397Z"}
+{"level":"error","message":"Invalid webhook signature","signature":"aaca94332eb4e3cf5e9bba4f43a66b3ed3a68bc7f49963d005bb75e3832edba9","timestamp":"2025-09-29T12:33:32.399Z"}
+{"body":{"data":{"baseAmount":100,"baseAmountReceived":10,"baseCurrency":"USDT","commission":0.05,"depositAddress":"0xf9b2508E2360059b25A3A692073c7BCF75F44B50","merchantOrderId":"livefx_5cc716b80ed446cdb212bc7653e9","network":"BSC","networkSymbol":"BSC","orderId":"49f2686e-9d30-11f0-9b9d-42010a2801c2","settledAmountCredited":10,"settledAmountReceived":9.95,"settledCurrency":"USDT","status":"Under Payment","transactions":[{"amount":10,"confirmationStatus":1,"createdAt":"2025-09-29T12:13:43Z","fromAddress":"0x1B3ec402Df254a66B97DE199541295AF2e0F5baA","transactionHash":"0xc0ade00abc39d87fbd8a8e172c396ce2dd5edd1388ec31b96d52e58bd089e27f","updatedAt":"2025-09-29T12:13:48Z"}]}},"headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br","authorization":"Bearer 0ff8e173e4a20529ebf0d95cc4a5766d152564495276d2796a6605edd37fb7cd","cache-control":"no-cache","connection":"keep-alive","content-length":"869","content-type":"application/json","host":"localhost:3000","postman-token":"b4142fb3-53cd-40f1-a73a-4603b2afbc4d","user-agent":"PostmanRuntime/7.48.0","x-tlp-signature":"0ff8e173e4a20529ebf0d95cc4a5766d152564495276d2796a6605edd37fb7cd"},"level":"info","message":"Received Tylt webhook","timestamp":"2025-09-29T12:33:51.383Z"}
+{"bodyLength":672,"bodyType":"object","hasRawBody":true,"hasSignature":true,"level":"info","message":"Webhook signature validation details","signatureHeader":"present","timestamp":"2025-09-29T12:33:51.383Z"}
+{"level":"info","merchantOrderId":"livefx_5cc716b80ed446cdb212bc7653e9","message":"Payment updated from webhook","paymentId":12,"status":"Under Payment","timestamp":"2025-09-29T12:33:51.522Z"}
