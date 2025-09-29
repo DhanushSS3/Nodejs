@@ -12,7 +12,7 @@ class CryptoPaymentService {
     this.tyltApiUrl = 'https://api.tylt.money/transactions/merchant/createPayinRequest';
     this.apiKey = process.env.TLP_API_KEY;
     this.apiSecret = process.env.TLP_API_SECRET;
-    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv1.livefxhub.com/api/crypto-payments/webhook';
+    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv2.livefxhub.com/api/crypto-payments/webhook';
   }
 
   /**
@@ -351,18 +351,19 @@ class CryptoPaymentService {
       let transactionId = null;
 
       // Credit user wallet if payment is successful (completed, underpayment, or overpayment)
-      if (['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived) {
+      // Use settledAmountReceived as this is the actual amount that should be credited to user's wallet
+      if (['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && settledAmountReceived) {
         try {
-          const creditResult = await this.creditUserWallet(payment.userId, parseFloat(baseAmountReceived), webhookData, transaction);
+          const creditResult = await this.creditUserWallet(payment.userId, parseFloat(settledAmountReceived), webhookData, transaction);
           walletCreditSuccess = true;
-          walletCreditAmount = parseFloat(baseAmountReceived);
+          walletCreditAmount = parseFloat(settledAmountReceived);
           newWalletBalance = previousWalletBalance + walletCreditAmount;
           transactionId = creditResult.transactionId;
         } catch (creditError) {
           logger.error('Failed to credit user wallet', { 
             merchantOrderId, 
             userId: payment.userId,
-            amount: baseAmountReceived,
+            amount: settledAmountReceived,
             error: creditError.message 
           });
           // Don't fail the entire webhook processing if wallet credit fails
@@ -394,6 +395,8 @@ class CryptoPaymentService {
         status: internalStatus,
         paymentId: payment.id,
         baseAmountReceived,
+        settledAmountReceived,
+        walletCreditedAmount: walletCreditAmount,
         walletCredited: walletCreditSuccess
       });
 
@@ -461,7 +464,7 @@ class CryptoPaymentService {
   /**
    * Credit user wallet and create transaction record (Live users only)
    * @param {number} userId - User ID
-   * @param {number} amount - Amount to credit (baseAmountReceived)
+   * @param {number} amount - Amount to credit (settledAmountReceived)
    * @param {Object} webhookData - Webhook data for reference
    * @param {Object} transaction - Database transaction
    */
