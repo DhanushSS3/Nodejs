@@ -12,7 +12,7 @@ class CryptoPaymentService {
     this.tyltApiUrl = 'https://api.tylt.money/transactions/merchant/createPayinRequest';
     this.apiKey = process.env.TLP_API_KEY;
     this.apiSecret = process.env.TLP_API_SECRET;
-    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://your-domain.com/api/crypto-payments/webhook';
+    this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv1.livefxhub.com/api/crypto-payments/webhook';
   }
 
   /**

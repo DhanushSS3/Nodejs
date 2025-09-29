@@ -1134,3 +1134,39 @@
 {"level":"info","message":"Groups sync completed: 1292 groups in 5435ms","timestamp":"2025-09-29T05:38:53.274Z"}
 {"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-29T05:38:53.278Z"}
 {"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-29T05:38:53.298Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-29T05:42:37.554Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-29T05:42:37.561Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-29T05:42:38.092Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-29T05:42:38.568Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-29T05:42:39.019Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-29T05:42:39.370Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-29T05:42:39.793Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-29T05:42:40.054Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-29T05:42:40.473Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-29T05:42:40.880Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-29T05:42:41.260Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-29T05:42:41.593Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-29T05:42:41.926Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-29T05:42:42.319Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-29T05:42:42.753Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5197ms","timestamp":"2025-09-29T05:42:42.753Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-29T05:42:42.767Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-29T05:42:42.802Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-29T05:47:15.828Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-29T05:47:15.843Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-29T05:47:16.308Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-29T05:47:16.778Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-29T05:47:17.191Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-29T05:47:17.676Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-29T05:47:18.081Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-29T05:47:18.517Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-29T05:47:18.884Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-29T05:47:19.382Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-29T05:47:19.824Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-29T05:47:20.307Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-29T05:47:20.741Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-29T05:47:21.088Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-29T05:47:21.514Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5683ms","timestamp":"2025-09-29T05:47:21.514Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-29T05:47:21.521Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-29T05:47:21.546Z"}
