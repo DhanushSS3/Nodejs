@@ -42,15 +42,19 @@ function validateInstantOrderPayload(body) {
   const errors = [];
   const symbol = normalizeStr(body.symbol).toUpperCase();
   const order_type = normalizeStr(body.order_type).toUpperCase();
+  const user_type = normalizeStr(body.user_type).toLowerCase();
   const order_price = toNumber(body.order_price);
   const order_quantity = toNumber(body.order_quantity);
+  const user_id = normalizeStr(body.user_id);
 
   if (!symbol) errors.push('symbol');
   if (!['BUY', 'SELL'].includes(order_type)) errors.push('order_type');
   if (!(order_price > 0)) errors.push('order_price');
   if (!(order_quantity > 0)) errors.push('order_quantity');
+  if (!user_id) errors.push('user_id');
+  if (!['live', 'demo'].includes(user_type)) errors.push('user_type');
 
-  return { errors, parsed: { symbol, order_type, order_price, order_quantity } };
+  return { errors, parsed: { symbol, order_type, user_type, order_price, order_quantity, user_id } };
 }
 
 function validatePendingOrderPayload(body) {
@@ -240,11 +244,11 @@ class AdminOrderManagementService {
   }
 
   /**
-   * Admin places instant order on behalf of user (follows exact same flow as user orders)
+   * Admin places instant order on behalf of user (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
-   * @param {Object} orderData - Order data
+   * @param {Object} orderData - Order data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Order result
    */
@@ -255,16 +259,33 @@ class AdminOrderManagementService {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order payload (same validation as user orders)
-      const { errors, parsed } = validateInstantOrderPayload(orderData);
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        symbol: orderData.symbol,
+        order_type: orderData.order_type,
+        order_price: orderData.order_price || orderData.price,
+        order_quantity: orderData.order_quantity || orderData.quantity,
+        user_id: userId.toString(),
+        user_type: userType,
+        status: orderData.status || 'OPEN',
+        order_status: orderData.order_status || 'OPEN'
+      };
+      
+      // Add optional fields if provided
+      if (orderData.idempotency_key) {
+        userPayload.idempotency_key = orderData.idempotency_key;
+      }
+
+      // 3. Validate payload (same validation as user orders)
+      const { errors, parsed } = validateInstantOrderPayload(userPayload);
       if (errors.length) {
         throw new Error(`Invalid payload fields: ${errors.join(', ')}`);
       }
 
-      // 3. Generate order_id in ord_YYYYMMDD_seq format (same as user orders)
+      // 4. Generate order_id in ord_YYYYMMDD_seq format (same as user orders)
       const order_id = await idGenerator.generateOrderId();
       
-      // 4. Store main order_id in lifecycle service (same as user orders)
+      // 5. Store main order_id in lifecycle service (same as user orders)
       try {
         await orderLifecycleService.addLifecycleId(
           order_id, 
@@ -278,50 +299,54 @@ class AdminOrderManagementService {
         });
       }
 
-      // 5. Persist initial order (QUEUED) - same as user orders
+      // 6. Persist initial order (QUEUED) - same as user orders
       const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
       let initialOrder;
-      try {
-        initialOrder = await OrderModel.create({
-          order_id,
-          order_user_id: parseInt(userId),
-          symbol: parsed.symbol,
-          order_type: parsed.order_type,
-          order_status: 'QUEUED',
-          order_price: parsed.order_price,
-          order_quantity: parsed.order_quantity,
-          margin: 0,
-          status: normalizeStr(orderData.status || 'OPEN'),
-          placed_by: 'admin'  // Mark as admin-placed
-        });
-      } catch (dbErr) {
-        logger.error('Admin order DB create failed', { 
-          error: dbErr.message, 
-          order_id,
-          adminId: adminInfo.id,
-          userId
-        });
-        throw new Error(`DB error: ${dbErr.message}`);
+      const hasIdempotency = !!userPayload.idempotency_key;
+      
+      if (!hasIdempotency) {
+        try {
+          initialOrder = await OrderModel.create({
+            order_id,
+            order_user_id: parseInt(userId),
+            symbol: parsed.symbol,
+            order_type: parsed.order_type,
+            order_status: 'QUEUED',
+            order_price: parsed.order_price,
+            order_quantity: parsed.order_quantity,
+            margin: 0,
+            status: normalizeStr(userPayload.status || 'OPEN'),
+            placed_by: 'admin'  // Mark as admin-placed
+          });
+        } catch (dbErr) {
+          logger.error('Admin order DB create failed', { 
+            error: dbErr.message, 
+            order_id,
+            adminId: adminInfo.id,
+            userId
+          });
+          throw new Error(`DB error: ${dbErr.message}`);
+        }
       }
 
-      // 6. Build payload to Python (exact same structure as user orders)
+      // 7. Build payload to Python (EXACT same structure as user orders)
       const pyPayload = {
         symbol: parsed.symbol,
         order_type: parsed.order_type,
         order_price: parsed.order_price,
         order_quantity: parsed.order_quantity,
-        user_id: userId.toString(),
-        user_type: userType,
+        user_id: parsed.user_id,
+        user_type: parsed.user_type,
         order_id,
-        status: normalizeStr(orderData.status || 'OPEN'),
-        order_status: normalizeStr(orderData.order_status || 'OPEN'),
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role
+        status: normalizeStr(userPayload.status || 'OPEN'),
+        order_status: normalizeStr(userPayload.order_status || 'OPEN')
       };
+      
+      if (userPayload.idempotency_key) {
+        pyPayload.idempotency_key = normalizeStr(userPayload.idempotency_key);
+      }
 
-      // 7. Call Python service (same URL and endpoint as user orders)
+      // 8. Call Python service (EXACT same URL and endpoint as user orders)
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       
       logger.info('Admin placing instant order', {
@@ -345,17 +370,38 @@ class AdminOrderManagementService {
           pyPayload
         );
       } catch (err) {
-        // Handle Python service error (same as user orders)
+        // Handle Python service error (EXACT same logic as user orders)
         const statusCode = err?.response?.status || 500;
         const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
 
         // Update DB as REJECTED with reason
         try {
           const reasonStr = normalizeStr(detail?.detail?.reason || detail?.reason || 'execution_failed');
-          await initialOrder.update({
+          const rejectStatus = {
             order_status: 'REJECTED',
             close_message: reasonStr,
-          });
+          };
+          if (initialOrder) {
+            await initialOrder.update(rejectStatus);
+          } else {
+            // Upsert a row for idempotent path where we skipped pre-insert
+            const [row, created] = await OrderModel.findOrCreate({
+              where: { order_id },
+              defaults: {
+                order_id,
+                order_user_id: parseInt(userId),
+                symbol: parsed.symbol,
+                order_type: parsed.order_type,
+                order_status: 'QUEUED',
+                order_price: parsed.order_price,
+                order_quantity: parsed.order_quantity,
+                margin: 0,
+                status: normalizeStr(userPayload.status || 'OPEN'),
+                placed_by: 'admin'
+              }
+            });
+            await row.update(rejectStatus);
+          }
         } catch (uErr) {
           logger.error('Failed to update admin order after Python error', { 
             error: uErr.message, 
@@ -380,7 +426,7 @@ class AdminOrderManagementService {
         throw new Error(`Python service error: ${detail?.detail?.reason || detail?.reason || err.message}`);
       }
 
-      // 8. Post-success DB update (same logic as user orders)
+      // 9. Post-success DB update (EXACT same logic as user orders)
       const result = pyResp.data?.data || pyResp.data || {};
       const flow = result.flow; // 'local' or 'provider'
       const exec_price = result.exec_price;
@@ -389,7 +435,7 @@ class AdminOrderManagementService {
       const commission_entry = result.commission_entry;
       const used_margin_executed = (result.used_margin_executed !== undefined) ? result.used_margin_executed : result.used_margin_usd;
 
-      // Build update fields based on flow (same as user orders)
+      // Build update fields based on flow (EXACT same as user orders)
       const updateFields = {};
       if (typeof exec_price === 'number') {
         updateFields.order_price = exec_price;
@@ -405,7 +451,7 @@ class AdminOrderManagementService {
         updateFields.commission = commission_entry;
       }
       
-      // Map to requested statuses (CRITICAL: This is what was missing!)
+      // Map to requested statuses (EXACT same as user orders)
       if (flow === 'local') {
         // Executed instantly -> OPEN
         updateFields.order_status = 'OPEN';
@@ -416,11 +462,40 @@ class AdminOrderManagementService {
         updateFields.order_status = 'OPEN'; // sane default
       }
 
-      // Update the order with execution results
+      // Upsert by final order_id to avoid duplicate rows on idempotent replays (EXACT same as user orders)
       const finalOrderId = normalizeStr(result.order_id || order_id);
-      try {
-        if (normalizeStr(initialOrder.order_id) !== finalOrderId) {
-          // Handle ID mismatch (shouldn't happen for admin orders but keeping consistency)
+      if (initialOrder) {
+        try {
+          // If IDs diverge (shouldn't for non-idempotent), fall back to updating by final ID
+          if (normalizeStr(initialOrder.order_id) !== finalOrderId) {
+            const [row, created] = await OrderModel.findOrCreate({
+              where: { order_id: finalOrderId },
+              defaults: {
+                order_id: finalOrderId,
+                order_user_id: parseInt(userId),
+                symbol: parsed.symbol,
+                order_type: parsed.order_type,
+                order_status: 'QUEUED',
+                order_price: parsed.order_price,
+                order_quantity: parsed.order_quantity,
+                margin: 0,
+                status: normalizeStr(userPayload.status || 'OPEN'),
+                placed_by: 'admin'
+              }
+            });
+            await row.update(updateFields);
+          } else {
+            await initialOrder.update(updateFields);
+          }
+        } catch (uErr) {
+          logger.error('Failed to update admin order after success', { 
+            error: uErr.message, 
+            order_id: finalOrderId,
+            adminId: adminInfo.id
+          });
+        }
+      } else {
+        try {
           const [row, created] = await OrderModel.findOrCreate({
             where: { order_id: finalOrderId },
             defaults: {
@@ -432,23 +507,21 @@ class AdminOrderManagementService {
               order_price: parsed.order_price,
               order_quantity: parsed.order_quantity,
               margin: 0,
-              status: normalizeStr(orderData.status || 'OPEN'),
+              status: normalizeStr(userPayload.status || 'OPEN'),
               placed_by: 'admin'
             }
           });
           await row.update(updateFields);
-        } else {
-          await initialOrder.update(updateFields);
+        } catch (uErr) {
+          logger.error('Failed to upsert admin order after success', { 
+            error: uErr.message, 
+            order_id: finalOrderId,
+            adminId: adminInfo.id
+          });
         }
-      } catch (uErr) {
-        logger.error('Failed to update admin order after success', { 
-          error: uErr.message, 
-          order_id: finalOrderId,
-          adminId: adminInfo.id
-        });
       }
 
-      // 9. Emit WS event for local execution order update (same as user orders)
+      // 10. Emit WS event for local execution order update (EXACT same as user orders)
       if (flow === 'local') {
         try {
           const portfolioEvents = require('./events/portfolio.events');
@@ -466,7 +539,7 @@ class AdminOrderManagementService {
         }
       }
 
-      // 10. Update user margin for local execution (same as user orders)
+      // 11. Update user margin for local execution (EXACT same as user orders)
       if (flow === 'local' && typeof used_margin_executed === 'number') {
         try {
           const { updateUserUsedMargin } = require('./user.margin.service');
@@ -500,7 +573,7 @@ class AdminOrderManagementService {
         }
       }
 
-      // 11. Log successful admin action
+      // 12. Log successful admin action
       logger.info('Admin instant order placed successfully', {
         operationId,
         adminId: adminInfo.id,
@@ -515,7 +588,17 @@ class AdminOrderManagementService {
         result: result
       });
 
-      return pyResp.data;
+      // 13. Return EXACT same response structure as user orders
+      return {
+        success: true,
+        order_id: finalOrderId,
+        order_status: updateFields.order_status,
+        execution_mode: flow,
+        margin: margin_usd,
+        exec_price: exec_price,
+        contract_value: typeof contract_value === 'number' ? contract_value : undefined,
+        commission: typeof commission_entry === 'number' ? commission_entry : undefined,
+      };
 
     } catch (error) {
       logger.error('Failed to place admin instant order', {
@@ -532,57 +615,176 @@ class AdminOrderManagementService {
   }
 
   /**
-   * Admin closes order on behalf of user
+   * Admin closes order on behalf of user (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
    * @param {string} orderId - Order ID to close
+   * @param {Object} closeData - Close data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Close result
    */
-  async closeOrder(adminInfo, userType, userId, orderId, ScopedUserModel) {
+  async closeOrder(adminInfo, userType, userId, orderId, closeData, ScopedUserModel) {
     const operationId = `admin_close_order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order access
-      const { order } = await this.validateOrderAccess(userType, userId, orderId);
-      
-      // 3. Check if order can be closed
-      if (!['OPEN', 'PENDING'].includes(order.order_status)) {
-        throw new Error(`Cannot close order with status: ${order.order_status}`);
-      }
-
-      // 4. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 5. Prepare payload for Python service (must match CloseOrderRequest schema)
-      const payload = {
-        symbol: order.symbol,
-        order_type: order.order_type,
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
         user_id: userId.toString(),
         user_type: userType,
-        order_id: orderId,
-        status: "CLOSED",
-        order_status: "CLOSED",
-        // Admin context (additional fields)
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        status: closeData.status || 'CLOSED',
+        order_status: closeData.order_status || 'CLOSED'
       };
+      
+      // Add optional fields if provided
+      if (closeData.close_price && closeData.close_price > 0) {
+        userPayload.close_price = closeData.close_price;
+      }
+      if (closeData.idempotency_key) {
+        userPayload.idempotency_key = closeData.idempotency_key;
+      }
+      if (closeData.symbol) {
+        userPayload.symbol = closeData.symbol;
+      }
+      if (closeData.order_type) {
+        userPayload.order_type = closeData.order_type;
+      }
 
-      // 6. Call Python service (same URL as user orders)
+      // 3. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id) {
+        throw new Error('order_id is required');
+      }
+      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
+      if (!userPayload.user_id) {
+        throw new Error('user_id is required');
+      }
+      if (userPayload.close_price && !(userPayload.close_price > 0)) {
+        throw new Error('close_price must be greater than 0 when provided');
+      }
+
+      // 4. Load canonical order (EXACT same logic as user orders)
+      const canonical = await this._getCanonicalOrder(orderId);
+      let sqlRow = null;
+      
+      if (!canonical) {
+        // Fallback to SQL
+        const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+        sqlRow = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (!sqlRow) {
+          throw new Error('Order not found');
+        }
+        // Basic ownership check with SQL row
+        const sqlUserId = normalizeStr(sqlRow.order_user_id);
+        const reqUserId = normalizeStr(userId);
+        if (sqlUserId !== reqUserId) {
+          throw new Error('Order does not belong to user');
+        }
+        // Must be currently OPEN
+        const stRow = (sqlRow.order_status || '').toString().toUpperCase();
+        if (stRow && stRow !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${stRow})`);
+        }
+      } else {
+        // Ownership check using canonical
+        const canonicalUserId = normalizeStr(canonical.user_id);
+        const reqUserId = normalizeStr(userId);
+        const canonicalUserType = normalizeStr(canonical.user_type).toLowerCase();
+        if (canonicalUserId !== reqUserId || canonicalUserType !== userType) {
+          throw new Error('Order does not belong to user');
+        }
+        // Must be currently OPEN
+        const st = (canonical.order_status || '').toString().toUpperCase();
+        if (st && st !== 'OPEN') {
+          throw new Error(`Order is not OPEN (current: ${st})`);
+        }
+      }
+
+      // 5. Extract order details (EXACT same logic as user orders)
+      const symbol = (canonical && canonical.symbol)
+        ? normalizeStr(canonical.symbol).toUpperCase()
+        : (sqlRow ? normalizeStr(sqlRow.symbol || sqlRow.order_company_name).toUpperCase() : normalizeStr(userPayload.symbol).toUpperCase());
+      const order_type = (canonical && canonical.order_type)
+        ? normalizeStr(canonical.order_type).toUpperCase()
+        : (sqlRow ? normalizeStr(sqlRow.order_type).toUpperCase() : normalizeStr(userPayload.order_type).toUpperCase());
+      const willCancelTP = canonical
+        ? (canonical.take_profit != null && Number(canonical.take_profit) > 0)
+        : (sqlRow ? (sqlRow.take_profit != null && Number(sqlRow.take_profit) > 0) : false);
+      const willCancelSL = canonical
+        ? (canonical.stop_loss != null && Number(canonical.stop_loss) > 0)
+        : (sqlRow ? (sqlRow.stop_loss != null && Number(sqlRow.stop_loss) > 0) : false);
+
+      // 6. Generate lifecycle ids (EXACT same as user orders)
+      const close_id = await idGenerator.generateCloseOrderId();
+      const takeprofit_cancel_id = willCancelTP ? await idGenerator.generateTakeProfitCancelId() : undefined;
+      const stoploss_cancel_id = willCancelSL ? await idGenerator.generateStopLossCancelId() : undefined;
+
+      // 7. Persist lifecycle ids into SQL row (EXACT same as user orders)
+      try {
+        const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+        const rowToUpdate = sqlRow || await OrderModel.findOne({ where: { order_id: orderId } });
+        if (rowToUpdate) {
+          const idUpdates = { close_id };
+          if (takeprofit_cancel_id) idUpdates.takeprofit_cancel_id = takeprofit_cancel_id;
+          if (stoploss_cancel_id) idUpdates.stoploss_cancel_id = stoploss_cancel_id;
+          idUpdates.status = userPayload.status; // persist whatever admin sent as status
+          await rowToUpdate.update(idUpdates);
+        }
+        
+        // Store in lifecycle service for complete ID history
+        await orderLifecycleService.addLifecycleId(
+          orderId, 
+          'close_id', 
+          close_id, 
+          `Admin close order initiated - status: ${userPayload.status}`
+        );
+        
+        if (takeprofit_cancel_id) {
+          await orderLifecycleService.addLifecycleId(
+            orderId, 
+            'takeprofit_cancel_id', 
+            takeprofit_cancel_id, 
+            'Admin takeprofit cancel during close'
+          );
+        }
+        
+        if (stoploss_cancel_id) {
+          await orderLifecycleService.addLifecycleId(
+            orderId, 
+            'stoploss_cancel_id', 
+            stoploss_cancel_id, 
+            'Admin stoploss cancel during close'
+          );
+        }
+      } catch (e) {
+        logger.warn('Failed to persist lifecycle ids before admin close', { order_id: orderId, error: e.message });
+      }
+
+      // 8. Build payload to Python (EXACT same structure as user orders)
+      const pyPayload = {
+        symbol,
+        order_type,
+        user_id: userPayload.user_id,
+        user_type: userPayload.user_type,
+        order_id: orderId,
+        status: userPayload.status,
+        order_status: userPayload.order_status,
+        close_id,
+      };
+      if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
+      if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
+      if (userPayload.close_price) pyPayload.close_price = userPayload.close_price;
+      if (userPayload.idempotency_key) pyPayload.idempotency_key = normalizeStr(userPayload.idempotency_key);
+
+      // 9. Call Python service (EXACT same URL as user orders)
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/close`,
-        payload
-      );
-
-      // 7. Log admin action
-      logger.info('Admin order closed', {
+      
+      logger.info('Admin closing order', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -590,13 +792,53 @@ class AdminOrderManagementService {
         userId,
         userEmail: user.email,
         orderId,
-        orderSymbol: order.symbol,
-        orderType: order.order_type,
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        symbol,
+        order_type,
+        close_id,
+        willCancelTP,
+        willCancelSL
       });
 
-      return response.data;
+      let pyResp;
+      try {
+        pyResp = await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/close`,
+          pyPayload,
+          { timeout: 20000 }
+        );
+      } catch (err) {
+        // Handle Python service error (EXACT same logic as user orders)
+        const statusCode = err?.response?.status || 500;
+        const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+
+        logger.error('Python service error for admin close order', {
+          operationId,
+          adminId: adminInfo.id,
+          orderId,
+          statusCode,
+          detail,
+          error: err.message
+        });
+        
+        throw new Error(`Close order failed: ${detail?.detail?.reason || detail?.reason || err.message}`);
+      }
+
+      // 10. Log successful admin action
+      logger.info('Admin order closed successfully', {
+        operationId,
+        adminId: adminInfo.id,
+        adminRole: adminInfo.role,
+        userType,
+        userId,
+        userEmail: user.email,
+        orderId,
+        symbol,
+        order_type,
+        result: pyResp.data
+      });
+
+      // 11. Return EXACT same response structure as user orders
+      return pyResp.data;
 
     } catch (error) {
       logger.error('Failed to close admin order', {
@@ -609,11 +851,23 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Order close failed');
-      }
       throw error;
     }
+  }
+
+  /**
+   * Helper method to get canonical order (EXACT same as user orders)
+   */
+  async _getCanonicalOrder(order_id) {
+    try {
+      const { redisCluster } = require('../../config/redis');
+      const key = `order_data:${String(order_id)}`;
+      const od = await redisCluster.hgetall(key);
+      if (od && Object.keys(od).length > 0) return od;
+    } catch (e) {
+      logger.warn('Failed to fetch canonical order from Redis', { order_id, error: e.message });
+    }
+    return null;
   }
 
   /**
@@ -781,52 +1035,233 @@ class AdminOrderManagementService {
   }
 
   /**
-   * Admin cancels pending order on behalf of user
+   * Admin cancels pending order on behalf of user (EXACT SAME FLOW as user orders)
    * @param {Object} adminInfo - Admin information
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - User ID
    * @param {string} orderId - Order ID to cancel
+   * @param {Object} cancelData - Cancel data (EXACT same structure as user payload)
    * @param {Model} ScopedUserModel - Scoped user model
    * @returns {Object} Cancel result
    */
-  async cancelPendingOrder(adminInfo, userType, userId, orderId, ScopedUserModel) {
+  async cancelPendingOrder(adminInfo, userType, userId, orderId, cancelData, ScopedUserModel) {
     const operationId = `admin_cancel_pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
       
-      // 2. Validate order access and status
-      const { order } = await this.validateOrderAccess(userType, userId, orderId);
-      
-      if (order.order_status !== 'PENDING') {
-        throw new Error(`Cannot cancel order with status: ${order.order_status}`);
-      }
-
-      // 3. Get user execution flow
-      const flowInfo = await this.getUserExecutionFlow(userType, userId);
-      
-      // 4. Prepare payload for Python service
-      const payload = {
+      // 2. Build EXACT same payload structure as user orders
+      const userPayload = {
+        order_id: orderId,
         user_id: userId.toString(),
         user_type: userType,
-        order_id: orderId,
-        // Admin context
-        admin_initiated: true,
-        admin_id: adminInfo.id,
-        admin_role: adminInfo.role,
-        operation_id: operationId
+        symbol: cancelData.symbol,
+        order_type: cancelData.order_type,
+        cancel_message: cancelData.cancel_message || 'Admin cancelled pending order',
+        status: cancelData.status || 'PENDING-CANCEL'
       };
 
-      // 5. Call Python service (same URL as user orders)
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/pending/cancel`,
-        payload
-      );
+      // 3. Validate required fields (EXACT same validation as user orders)
+      if (!userPayload.order_id || !userPayload.user_id || !userPayload.user_type || !userPayload.symbol || !['BUY_LIMIT','SELL_LIMIT','BUY_STOP','SELL_STOP'].includes(userPayload.order_type)) {
+        throw new Error('Missing/invalid fields');
+      }
+      if (!['live','demo'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live or demo');
+      }
 
-      // 6. Log admin action
-      logger.info('Admin pending order cancelled', {
+      // 4. Load canonical order and validate (EXACT same logic as user orders)
+      const canonical = await this._getCanonicalOrder(orderId);
+      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      let row = null;
+      
+      if (!canonical) {
+        row = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (!row) {
+          throw new Error('Order not found');
+        }
+        if (normalizeStr(row.order_user_id) !== normalizeStr(userId)) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (row.order_status || '').toString().toUpperCase();
+        if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) {
+          throw new Error(`Order is not pending (current: ${st})`);
+        }
+      } else {
+        if (normalizeStr(canonical.user_id) !== normalizeStr(userId) || normalizeStr(canonical.user_type).toLowerCase() !== userType) {
+          throw new Error('Order does not belong to user');
+        }
+        const st = (canonical.order_status || '').toString().toUpperCase();
+        if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) {
+          throw new Error(`Order is not pending (current: ${st})`);
+        }
+      }
+
+      // 5. Extract order details (EXACT same logic as user orders)
+      const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+      const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+
+      // 6. Flow determination (EXACT same logic as user orders)
+      let isProviderFlow = false;
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const ucfg = await redisCluster.hgetall(`user:{${userType}:${userId}}:config`);
+        const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+        isProviderFlow = (so === 'barclays');
+      } catch (_) { 
+        isProviderFlow = false; 
+      }
+
+      // 7. Frontend-intended engine status to persist (EXACT same as user orders)
+      const statusReq = normalizeStr(userPayload.status || 'PENDING-CANCEL').toUpperCase();
+
+      if (!isProviderFlow) {
+        // 8. Local finalize (EXACT same logic as user orders)
+        try {
+          const { redisCluster } = require('../../config/redis');
+          await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, orderId);
+          await redisCluster.delete(`pending_orders:${orderId}`);
+        } catch (e) { 
+          logger.warn('Failed to remove from pending ZSET/HASH', { error: e.message, order_id: orderId }); 
+        }
+        
+        try {
+          const { redisCluster } = require('../../config/redis');
+          const tag = `${userType}:${userId}`;
+          const idx = `user_orders_index:{${tag}}`;
+          const h = `user_holdings:{${tag}}:${orderId}`;
+          // Use pipeline only for same-slot keys (idx, h)
+          const p1 = redisCluster.pipeline();
+          p1.srem(idx, orderId);
+          p1.delete(h);
+          await p1.exec();
+          // Delete canonical separately to avoid cross-slot pipeline error
+          try { 
+            await redisCluster.delete(`order_data:${orderId}`); 
+          } catch (eDel) {
+            logger.warn('Failed to delete order_data for admin pending cancel', { error: eDel.message, order_id: orderId });
+          }
+        } catch (e2) { 
+          logger.warn('Failed to remove holdings/index for admin pending cancel', { error: e2.message, order_id: orderId }); 
+        }
+        
+        try {
+          const rowNow = await OrderModel.findOne({ where: { order_id: orderId } });
+          if (rowNow) await rowNow.update({ order_status: 'CANCELLED', close_message: userPayload.cancel_message });
+        } catch (e3) { 
+          logger.warn('SQL update failed for admin pending cancel', { error: e3.message, order_id: orderId }); 
+        }
+        
+        // Small delay to ensure database transaction is committed before WebSocket update
+        await new Promise(resolve => setTimeout(resolve, 10));
+        
+        // Emit immediate WebSocket update for local pending cancellation
+        try { 
+          const portfolioEvents = require('./events/portfolio.events');
+          portfolioEvents.emitUserUpdate(userType, userId.toString(), { 
+            type: 'order_update', 
+            order_id: orderId, 
+            update: { order_status: 'CANCELLED' }, 
+            reason: 'admin_local_pending_cancel' 
+          }); 
+          // Also emit a dedicated pending_cancelled event for immediate UI refresh
+          portfolioEvents.emitUserUpdate(userType, userId.toString(), {
+            type: 'pending_cancelled',
+            order_id: orderId,
+            reason: 'admin_local_pending_cancel'
+          });
+        } catch (_) {}
+        
+        logger.info('Admin local pending order cancelled', {
+          operationId,
+          adminId: adminInfo.id,
+          adminRole: adminInfo.role,
+          userType,
+          userId,
+          userEmail: user.email,
+          orderId,
+          symbol,
+          order_type
+        });
+        
+        return { success: true, order_id: orderId, order_status: 'CANCELLED' };
+      }
+
+      // 9. Provider path (EXACT same logic as user orders)
+      let cancel_id = null;
+      try { 
+        cancel_id = await idGenerator.generateCancelOrderId(); 
+      } catch (e) { 
+        logger.warn('Failed to generate cancel_id', { error: e.message, order_id: orderId }); 
+      }
+      if (!cancel_id) {
+        throw new Error('Failed to generate cancel id');
+      }
+      
+      try {
+        const rowNow = await OrderModel.findOne({ where: { order_id: orderId } });
+        if (rowNow) await rowNow.update({ cancel_id, status: statusReq });
+      } catch (e) { 
+        logger.warn('Failed to persist cancel_id', { error: e.message, order_id: orderId }); 
+      }
+      
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const tag = `${userType}:${userId}`;
+        const h = `user_holdings:{${tag}}:${orderId}`;
+        const od = `order_data:${orderId}`;
+        // Avoid cross-slot pipelines in Redis Cluster: perform per-key writes
+        try { 
+          await redisCluster.hset(h, 'cancel_id', String(cancel_id)); 
+        } catch (e1) { 
+          logger.warn('HSET cancel_id failed on user_holdings', { error: e1.message, order_id: orderId }); 
+        }
+        try { 
+          await redisCluster.hset(od, 'cancel_id', String(cancel_id)); 
+        } catch (e2) { 
+          logger.warn('HSET cancel_id failed on order_data', { error: e2.message, order_id: orderId }); 
+        }
+        // Mirror engine-intended status for dispatcher routing (do not touch order_status here)
+        try { 
+          await redisCluster.hset(h, 'status', statusReq); 
+        } catch (e3) { 
+          logger.warn('HSET status failed on user_holdings', { error: e3.message, order_id: orderId }); 
+        }
+        try { 
+          await redisCluster.hset(od, 'status', statusReq); 
+        } catch (e4) { 
+          logger.warn('HSET status failed on order_data', { error: e4.message, order_id: orderId }); 
+        }
+      } catch (e) { 
+        logger.warn('Failed to mirror cancel status in Redis', { error: e.message, order_id: orderId }); 
+      }
+      
+      // Register lifecycle ID
+      try {
+        const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+        pythonServiceAxios.post(
+          `${baseUrl}/api/orders/registry/lifecycle-id`,
+          { order_id: orderId, new_id: cancel_id, id_type: 'cancel_id' },
+          { timeout: 5000 }
+        ).catch(() => {});
+      } catch (_) {}
+      
+      // Call Python service for provider cancellation
+      try {
+        const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+        const pyPayload = { order_id: orderId, cancel_id, order_type, user_id: userId.toString(), user_type: userType, status: 'CANCELLED' };
+        pythonServiceAxios.post(
+          `${baseUrl}/api/orders/pending/cancel`,
+          pyPayload,
+          { timeout: 5000 }
+        ).then(() => {
+          logger.info('Dispatched admin provider pending cancel', { order_id: orderId, cancel_id, order_type, adminId: adminInfo.id });
+        }).catch((ePy) => { 
+          logger.error('Python pending cancel failed for admin', { error: ePy.message, order_id: orderId, adminId: adminInfo.id }); 
+        });
+      } catch (_) {}
+      
+      logger.info('Admin provider pending order cancel initiated', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -834,13 +1269,12 @@ class AdminOrderManagementService {
         userId,
         userEmail: user.email,
         orderId,
-        orderSymbol: order.symbol,
-        orderType: order.order_type,
-        executionFlow: flowInfo.isProviderFlow ? 'provider' : 'local',
-        result: response.data
+        symbol,
+        order_type,
+        cancel_id
       });
-
-      return response.data;
+      
+      return { success: true, order_id: orderId, order_status: 'PENDING-CANCEL', cancel_id };
 
     } catch (error) {
       logger.error('Failed to cancel admin pending order', {
@@ -853,9 +1287,6 @@ class AdminOrderManagementService {
         stack: error.stack
       });
       
-      if (error.response?.data) {
-        throw new Error(error.response.data.message || 'Pending order cancellation failed');
-      }
       throw error;
     }
   }
