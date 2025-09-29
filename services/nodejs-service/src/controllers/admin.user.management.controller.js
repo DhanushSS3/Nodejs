@@ -1,4 +1,5 @@
 const adminUserManagementService = require('../services/admin.user.management.service');
+const adminOrderManagementService = require('../services/admin.order.management.service');
 const { validationResult } = require('express-validator');
 
 class AdminUserManagementController {
@@ -321,6 +322,563 @@ class AdminUserManagementController {
       }
 
       res.status(500).json({ error: 'Failed to retrieve user pending orders' });
+    }
+  }
+
+  /**
+   * Admin places instant order on behalf of user
+   * Requires 'orders:place' permission
+   */
+  async adminPlaceInstantOrder(req, res, next) {
+    try {
+      const { userType, userId } = req.params;
+      const orderData = req.body;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid user type. Must be "live" or "demo"' 
+        });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid user ID. Must be a positive integer.' 
+        });
+      }
+
+      // Basic payload validation
+      if (!orderData.symbol || !orderData.order_type || !orderData.order_price || !orderData.order_quantity) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Missing required fields: symbol, order_type, order_price, order_quantity' 
+        });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.placeInstantOrder(
+        admin,
+        userType,
+        userIdInt,
+        orderData,
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ 
+          success: false, 
+          message: `${req.params.userType} user not found or access denied` 
+        });
+      }
+
+      if (error.message.includes('Invalid payload fields')) {
+        return res.status(400).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+
+      if (error.message.includes('DB error')) {
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Database error occurred' 
+        });
+      }
+
+      if (error.message.includes('Python service error')) {
+        return res.status(500).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+
+      if (error.message.includes('Order conflict')) {
+        return res.status(409).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Failed to place instant order' 
+      });
+    }
+  }
+
+  /**
+   * Admin closes order on behalf of user
+   * Requires 'orders:close' permission
+   */
+  async adminCloseOrder(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.closeOrder(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('Cannot close order')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to close order' });
+    }
+  }
+
+  /**
+   * Admin places pending order on behalf of user
+   * Requires 'orders:place' permission
+   */
+  async adminPlacePendingOrder(req, res, next) {
+    try {
+      const { userType, userId } = req.params;
+      const orderData = req.body;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.placePendingOrder(
+        admin,
+        userType,
+        userIdInt,
+        orderData,
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message.includes('Invalid user type') || error.message.includes('Invalid user ID')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to place pending order' });
+    }
+  }
+
+  /**
+   * Admin modifies pending order on behalf of user
+   * Requires 'orders:modify' permission
+   */
+  async adminModifyPendingOrder(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const updateData = req.body;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.modifyPendingOrder(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        updateData,
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('Cannot modify order')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to modify pending order' });
+    }
+  }
+
+  /**
+   * Admin cancels pending order on behalf of user
+   * Requires 'orders:modify' permission
+   */
+  async adminCancelPendingOrder(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.cancelPendingOrder(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('Cannot cancel order')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to cancel pending order' });
+    }
+  }
+
+  /**
+   * Admin sets stop loss for an existing order
+   * Requires 'orders:stoploss' permission
+   */
+  async adminSetStopLoss(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const slData = req.body;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Validate stop loss price
+      if (!slData.stop_loss_price || isNaN(parseFloat(slData.stop_loss_price))) {
+        return res.status(400).json({ error: 'Valid stop loss price is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.setStopLoss(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        slData,
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('Cannot set stop loss')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to set stop loss' });
+    }
+  }
+
+  /**
+   * Admin removes stop loss from an existing order
+   * Requires 'orders:stoploss' permission
+   */
+  async adminRemoveStopLoss(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.removeStopLoss(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('does not have an active stop loss')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to remove stop loss' });
+    }
+  }
+
+  /**
+   * Admin sets take profit for an existing order
+   * Requires 'orders:takeprofit' permission
+   */
+  async adminSetTakeProfit(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const tpData = req.body;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Validate take profit price
+      if (!tpData.take_profit_price || isNaN(parseFloat(tpData.take_profit_price))) {
+        return res.status(400).json({ error: 'Valid take profit price is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.setTakeProfit(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        tpData,
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('Cannot set take profit')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to set take profit' });
+    }
+  }
+
+  /**
+   * Admin removes take profit from an existing order
+   * Requires 'orders:takeprofit' permission
+   */
+  async adminRemoveTakeProfit(req, res, next) {
+    try {
+      const { userType, userId, orderId } = req.params;
+      const admin = req.admin;
+
+      // Validate userType parameter
+      if (!['live', 'demo'].includes(userType)) {
+        return res.status(400).json({ error: 'Invalid user type. Must be "live" or "demo"' });
+      }
+
+      // Validate userId parameter
+      const userIdInt = parseInt(userId, 10);
+      if (isNaN(userIdInt) || userIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid user ID. Must be a positive integer.' });
+      }
+
+      // Validate orderId parameter
+      if (!orderId || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+
+      // Use scoped model to ensure country-level access control
+      const ScopedUserModel = userType === 'live' 
+        ? req.scopedModels.LiveUser 
+        : req.scopedModels.DemoUser;
+      
+      const result = await adminOrderManagementService.removeTakeProfit(
+        admin,
+        userType,
+        userIdInt,
+        orderId.trim(),
+        ScopedUserModel
+      );
+
+      res.status(200).json(result);
+
+    } catch (error) {
+      if (error.message === 'User not found or access denied') {
+        return res.status(404).json({ error: `${req.params.userType} user not found or access denied` });
+      }
+
+      if (error.message === 'Order not found or access denied') {
+        return res.status(404).json({ error: 'Order not found or access denied' });
+      }
+
+      if (error.message.includes('does not have an active take profit')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || 'Failed to remove take profit' });
     }
   }
 }

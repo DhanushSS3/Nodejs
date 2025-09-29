@@ -30,15 +30,29 @@ class CryptoPaymentService {
   /**
    * Validate HMAC signature from Tylt webhook
    * @param {string} signature - Signature from X-TLP-SIGNATURE header
-   * @param {string} rawBody - Raw request body
+   * @param {string|Object} body - Raw request body string or parsed object
    * @returns {boolean} True if signature is valid
    */
-  validateWebhookSignature(signature, rawBody) {
+  validateWebhookSignature(signature, body) {
     try {
-      const calculatedSignature = this.createSignature(this.apiSecret, rawBody);
+      // Ensure we're using the correct format for HMAC calculation
+      const bodyString = typeof body === 'string' ? body : JSON.stringify(body);
+      const calculatedSignature = this.createSignature(this.apiSecret, bodyString);
+      
+      logger.info('HMAC Signature Validation', {
+        receivedSignature: signature,
+        calculatedSignature: calculatedSignature,
+        bodyLength: bodyString.length,
+        match: calculatedSignature === signature
+      });
+      
       return calculatedSignature === signature;
     } catch (error) {
-      logger.error('Error validating webhook signature', { error: error.message });
+      logger.error('Error validating webhook signature', { 
+        error: error.message,
+        signature,
+        bodyType: typeof body
+      });
       return false;
     }
   }

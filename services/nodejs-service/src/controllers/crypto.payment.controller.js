@@ -208,12 +208,20 @@ class CryptoPaymentController {
       const signature = req.headers['x-tlp-signature'];
       const rawBody = req.rawBody || JSON.stringify(req.body);
       
+      logger.info('Webhook signature validation details', {
+        hasSignature: !!signature,
+        hasRawBody: !!req.rawBody,
+        bodyType: typeof req.body,
+        signatureHeader: signature ? 'present' : 'missing',
+        bodyLength: rawBody ? rawBody.length : 0
+      });
+      
       if (!signature) {
-        logger.warn('Webhook received without signature');
-        return res.status(400).json({
-          status: false,
-          message: 'Missing X-TLP-SIGNATURE header'
+        logger.warn('Webhook received without signature', {
+          headers: req.headers,
+          body: req.body
         });
+        return res.status(400).send('Missing X-TLP-SIGNATURE header');
       }
 
       const isValidSignature = cryptoPaymentService.validateWebhookSignature(signature, rawBody);

@@ -672,4 +672,488 @@ router.get('/:userType/:userId/closed-orders', requirePermissions(['orders:read'
  */
 router.get('/:userType/:userId/pending-orders', requirePermissions(['orders:read']), auditLog('GET_USER_PENDING_ORDERS'), adminUserManagementController.getUserPendingOrders);
 
+// Admin Order Management Routes
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/instant:
+ *   post:
+ *     summary: Admin places instant order on behalf of user
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Place an instant order on behalf of a user. Requires 'orders:place' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user to place order for
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - symbol
+ *               - order_type
+ *               - quantity
+ *             properties:
+ *               symbol:
+ *                 type: string
+ *                 example: "EURUSD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY, SELL]
+ *                 example: "BUY"
+ *               quantity:
+ *                 type: number
+ *                 example: 100000
+ *               leverage:
+ *                 type: integer
+ *                 example: 100
+ *               stop_loss:
+ *                 type: number
+ *                 nullable: true
+ *                 example: 1.0800
+ *               take_profit:
+ *                 type: number
+ *                 nullable: true
+ *                 example: 1.0900
+ *     responses:
+ *       200:
+ *         description: Order placed successfully
+ *       400:
+ *         description: Invalid parameters or validation error
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/:userType/:userId/orders/instant', requirePermissions(['orders:place']), auditLog('ADMIN_PLACE_INSTANT_ORDER'), adminUserManagementController.adminPlaceInstantOrder);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/{orderId}/close:
+ *   post:
+ *     summary: Admin closes order on behalf of user
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Close an existing order on behalf of a user. Requires 'orders:close' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the order to close
+ *     responses:
+ *       200:
+ *         description: Order closed successfully
+ *       400:
+ *         description: Invalid parameters or order cannot be closed
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/:userType/:userId/orders/:orderId/close', requirePermissions(['orders:close']), auditLog('ADMIN_CLOSE_ORDER'), adminUserManagementController.adminCloseOrder);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/pending:
+ *   post:
+ *     summary: Admin places pending order on behalf of user
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Place a pending order on behalf of a user. Requires 'orders:place' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user to place order for
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - symbol
+ *               - order_type
+ *               - quantity
+ *               - price
+ *             properties:
+ *               symbol:
+ *                 type: string
+ *                 example: "EURUSD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP]
+ *                 example: "BUY_LIMIT"
+ *               quantity:
+ *                 type: number
+ *                 example: 100000
+ *               price:
+ *                 type: number
+ *                 example: 1.0800
+ *               leverage:
+ *                 type: integer
+ *                 example: 100
+ *               stop_loss:
+ *                 type: number
+ *                 nullable: true
+ *                 example: 1.0750
+ *               take_profit:
+ *                 type: number
+ *                 nullable: true
+ *                 example: 1.0850
+ *     responses:
+ *       200:
+ *         description: Pending order placed successfully
+ *       400:
+ *         description: Invalid parameters or validation error
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/:userType/:userId/orders/pending', requirePermissions(['orders:place']), auditLog('ADMIN_PLACE_PENDING_ORDER'), adminUserManagementController.adminPlacePendingOrder);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/pending/{orderId}:
+ *   put:
+ *     summary: Admin modifies pending order on behalf of user
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Modify an existing pending order on behalf of a user. Requires 'orders:modify' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the pending order to modify
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - price
+ *             properties:
+ *               price:
+ *                 type: number
+ *                 example: 1.0820
+ *                 description: New price for the pending order
+ *     responses:
+ *       200:
+ *         description: Pending order modified successfully
+ *       400:
+ *         description: Invalid parameters or order cannot be modified
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.put('/:userType/:userId/orders/pending/:orderId', requirePermissions(['orders:modify']), auditLog('ADMIN_MODIFY_PENDING_ORDER'), adminUserManagementController.adminModifyPendingOrder);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/pending/{orderId}:
+ *   delete:
+ *     summary: Admin cancels pending order on behalf of user
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Cancel an existing pending order on behalf of a user. Requires 'orders:modify' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the pending order to cancel
+ *     responses:
+ *       200:
+ *         description: Pending order cancelled successfully
+ *       400:
+ *         description: Invalid parameters or order cannot be cancelled
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.delete('/:userType/:userId/orders/pending/:orderId', requirePermissions(['orders:modify']), auditLog('ADMIN_CANCEL_PENDING_ORDER'), adminUserManagementController.adminCancelPendingOrder);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/{orderId}/stoploss:
+ *   post:
+ *     summary: Admin sets stop loss for an existing order
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Set stop loss for an existing order on behalf of a user. Requires 'orders:stoploss' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the order to set stop loss for
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - stop_loss_price
+ *             properties:
+ *               stop_loss_price:
+ *                 type: number
+ *                 example: 1.0800
+ *                 description: Stop loss price level
+ *     responses:
+ *       200:
+ *         description: Stop loss set successfully
+ *       400:
+ *         description: Invalid parameters or order cannot have stop loss
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/:userType/:userId/orders/:orderId/stoploss', requirePermissions(['orders:stoploss']), auditLog('ADMIN_SET_STOPLOSS'), adminUserManagementController.adminSetStopLoss);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/{orderId}/stoploss:
+ *   delete:
+ *     summary: Admin removes stop loss from an existing order
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Remove stop loss from an existing order on behalf of a user. Requires 'orders:stoploss' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the order to remove stop loss from
+ *     responses:
+ *       200:
+ *         description: Stop loss removed successfully
+ *       400:
+ *         description: Invalid parameters or order does not have active stop loss
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.delete('/:userType/:userId/orders/:orderId/stoploss', requirePermissions(['orders:stoploss']), auditLog('ADMIN_REMOVE_STOPLOSS'), adminUserManagementController.adminRemoveStopLoss);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/{orderId}/takeprofit:
+ *   post:
+ *     summary: Admin sets take profit for an existing order
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Set take profit for an existing order on behalf of a user. Requires 'orders:takeprofit' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the order to set take profit for
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - take_profit_price
+ *             properties:
+ *               take_profit_price:
+ *                 type: number
+ *                 example: 1.0900
+ *                 description: Take profit price level
+ *     responses:
+ *       200:
+ *         description: Take profit set successfully
+ *       400:
+ *         description: Invalid parameters or order cannot have take profit
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/:userType/:userId/orders/:orderId/takeprofit', requirePermissions(['orders:takeprofit']), auditLog('ADMIN_SET_TAKEPROFIT'), adminUserManagementController.adminSetTakeProfit);
+
+/**
+ * @swagger
+ * /api/admin/users/{userType}/{userId}/orders/{orderId}/takeprofit:
+ *   delete:
+ *     summary: Admin removes take profit from an existing order
+ *     tags: [Admin Order Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Remove take profit from an existing order on behalf of a user. Requires 'orders:takeprofit' permission. Follows user's execution flow (provider/local).
+ *     parameters:
+ *       - in: path
+ *         name: userType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, demo]
+ *         description: The type of user (live or demo)
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the user who owns the order
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The ID of the order to remove take profit from
+ *     responses:
+ *       200:
+ *         description: Take profit removed successfully
+ *       400:
+ *         description: Invalid parameters or order does not have active take profit
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: User or order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.delete('/:userType/:userId/orders/:orderId/takeprofit', requirePermissions(['orders:takeprofit']), auditLog('ADMIN_REMOVE_TAKEPROFIT'), adminUserManagementController.adminRemoveTakeProfit);
+
 module.exports = router;
