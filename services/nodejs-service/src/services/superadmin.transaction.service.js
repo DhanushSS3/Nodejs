@@ -66,9 +66,11 @@ class SuperadminTransactionService {
    * @param {number} params.adminId - Admin ID performing the operation
    * @param {string} [params.notes] - Optional notes
    * @param {string} [params.referenceId] - Optional external reference
+   * @param {string} [params.userEmail] - User email (will be fetched if not provided)
+   * @param {string} [params.methodType] - Payment method type
    * @returns {Promise<Object>} Transaction result
    */
-  async processDeposit({ userId, userType, amount, adminId, notes = null, referenceId = null }) {
+  async processDeposit({ userId, userType, amount, adminId, notes = null, referenceId = null, userEmail = null, methodType = null }) {
     // Validate input
     if (!userId || !userType || !amount || !adminId) {
       throw new Error('Missing required parameters: userId, userType, amount, adminId');
@@ -121,6 +123,8 @@ class SuperadminTransactionService {
         balance_after: balanceAfter,
         status: 'completed',
         admin_id: adminId,
+        user_email: userEmail || user.email, // Use provided email or fetch from user
+        method_type: methodType,
         reference_id: referenceId,
         notes: notes,
         metadata: {
@@ -183,9 +187,11 @@ class SuperadminTransactionService {
    * @param {number} params.adminId - Admin ID performing the operation
    * @param {string} [params.notes] - Optional notes
    * @param {string} [params.referenceId] - Optional external reference
+   * @param {string} [params.userEmail] - User email (will be fetched if not provided)
+   * @param {string} [params.methodType] - Payment method type
    * @returns {Promise<Object>} Transaction result
    */
-  async processWithdrawal({ userId, userType, amount, adminId, notes = null, referenceId = null }) {
+  async processWithdrawal({ userId, userType, amount, adminId, notes = null, referenceId = null, userEmail = null, methodType = null }) {
     // Validate input
     if (!userId || !userType || !amount || !adminId) {
       throw new Error('Missing required parameters: userId, userType, amount, adminId');
@@ -244,6 +250,8 @@ class SuperadminTransactionService {
         balance_after: balanceAfter,
         status: 'completed',
         admin_id: adminId,
+        user_email: userEmail || user.email, // Use provided email or fetch from user
+        method_type: methodType,
         reference_id: referenceId,
         notes: notes,
         metadata: {

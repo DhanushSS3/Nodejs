@@ -54,7 +54,9 @@ class WalletService {
       adminId = null,
       notes = null,
       metadata = null,
-      currency = 'USD'
+      currency = 'USD',
+      userEmail = null,
+      methodType = null
     } = transactionData;
 
     const operationId = `wallet_transaction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -90,6 +92,8 @@ class WalletService {
           status: 'completed',
           reference_id: referenceId,
           admin_id: adminId,
+          user_email: userEmail,
+          method_type: methodType,
           notes,
           metadata
         }, { transaction: dbTransaction });

@@ -248,3 +248,4 @@
 {"component":"python_api","endpoint":"orders/instant/execute","status":"error","reason":"missing_group_data","durations_ms":{"executor_ms":18}}
 {"component":"python_repo_lua","event":"order_place_eval","user_type":"live","user_id":"4","order_id":"2189333479000","symbol":"EURUSD","ok":true,"reason":null,"timing_us":{"exists_order":6,"portfolio_updates":9,"total":1499,"exists_user":30,"hget_leverage":17,"json_decode":72,"hset_order":420}}
 {"component":"python_api","endpoint":"orders/instant/execute","status":"success","order_id":"2189333479000","flow":"local","durations_ms":{"executor_ms":34,"provider_send_ms":null}}
+{"component":"python_api","endpoint":"orders/instant/execute","status":"error","reason":"missing_group_data","durations_ms":{"executor_ms":28}}

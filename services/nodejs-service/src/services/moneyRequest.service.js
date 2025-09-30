@@ -241,8 +241,17 @@ class MoneyRequestService {
     try {
       logger.info(`[${operationId}] Approving request ${requestId} by admin ${adminId}`);
 
-      // Get the request
-      const request = await MoneyRequest.findByPk(requestId, { transaction });
+      // Get the request with user information
+      const request = await MoneyRequest.findByPk(requestId, { 
+        transaction,
+        include: [
+          {
+            model: LiveUser,
+            as: 'user',
+            attributes: ['id', 'name', 'email', 'account_number']
+          }
+        ]
+      });
       if (!request) {
         throw new Error('Money request not found');
       }
@@ -267,12 +276,15 @@ class MoneyRequestService {
         amount: request.type === 'withdraw' ? -Math.abs(request.amount) : Math.abs(request.amount),
         referenceId: request.request_id,
         adminId: adminId,
+        userEmail: request.user.email, // Add user email from the included user data
+        methodType: request.method_type, // Add method type from the request
         notes: notes || `${request.type} approved via money request ${request.request_id}`,
         metadata: {
           money_request_id: request.id,
           approved_by_admin: adminId,
           original_request_amount: request.amount,
-          currency: request.currency
+          currency: request.currency,
+          method_details: request.method_details // Store method details in metadata for reference
         }
       };
 

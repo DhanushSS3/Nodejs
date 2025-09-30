@@ -12,7 +12,7 @@ class SuperadminTransactionController {
   async processDeposit(req, res) {
     try {
       const { userId } = req.params;
-      const { userType, amount, notes, referenceId } = req.body;
+      const { userType, amount, notes, referenceId, method_type } = req.body;
       const { admin } = req;
 
       // Validate required fields
@@ -49,7 +49,8 @@ class SuperadminTransactionController {
         amount: depositAmount,
         adminId: admin.id,
         notes,
-        referenceId
+        referenceId,
+        methodType: method_type || 'OTHER' // Default to 'OTHER' if not provided
       });
 
       // Create audit log
@@ -115,7 +116,7 @@ class SuperadminTransactionController {
   async processWithdrawal(req, res) {
     try {
       const { userId } = req.params;
-      const { userType, amount, notes, referenceId } = req.body;
+      const { userType, amount, notes, referenceId, method_type } = req.body;
       const { admin } = req;
 
       // Validate required fields
@@ -152,7 +153,8 @@ class SuperadminTransactionController {
         amount: withdrawalAmount,
         adminId: admin.id,
         notes,
-        referenceId
+        referenceId,
+        methodType: method_type || 'OTHER' // Default to 'OTHER' if not provided
       });
 
       // Create audit log

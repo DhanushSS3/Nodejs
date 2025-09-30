@@ -25,6 +25,7 @@ const internalProviderRoutes = require('./routes/internal.provider.lookup.routes
 const { financialSummaryRouter } = require('./routes/financial.summary.routes');
 const redisHealthRoutes = require('./routes/redis.health.routes');
 const swapRoutes = require('./routes/swap.routes');
+const adminTransactionRoutes = require('./routes/admin.transaction.routes');
 
 const app = express();
 
@@ -113,6 +114,7 @@ app.use('/api/transactions', transactionsRoutes);
 app.use('/api/financial-summary', financialSummaryRouter);
 app.use('/api/redis-health', redisHealthRoutes);
 app.use('/api/admin/swap', swapRoutes);
+app.use('/api/admin/transactions', adminTransactionRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

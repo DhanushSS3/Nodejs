@@ -3240,3 +3240,482 @@
 {"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T08:49:26.069Z"}
 {"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T08:50:24.495Z"}
 {"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T08:52:25.273Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T08:53:10.634Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T08:53:10.664Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T08:53:11.096Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T08:53:11.555Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T08:53:11.963Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T08:53:12.433Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T08:53:12.838Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T08:53:13.251Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T08:53:13.732Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T08:53:14.145Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T08:53:14.556Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T08:53:14.945Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T08:53:15.372Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T08:53:15.815Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T08:53:16.210Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5574ms","timestamp":"2025-09-30T08:53:16.210Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T08:53:16.218Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T08:53:16.251Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T08:54:23.933Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T09:10:33.168Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T09:10:33.176Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T09:10:33.552Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T09:10:34.019Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T09:10:34.562Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T09:10:34.946Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T09:10:35.468Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T09:10:36.025Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T09:10:36.479Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T09:10:36.914Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T09:10:37.349Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T09:10:37.794Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T09:10:38.199Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T09:10:38.668Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T09:10:39.149Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5979ms","timestamp":"2025-09-30T09:10:39.149Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T09:10:39.163Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T09:10:39.316Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:11:29.605Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:13:11.215Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:15:30.077Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:17:39.720Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:19:42.813Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T09:19:49.884Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T09:19:49.887Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T09:19:49.887Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:19:49.887Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T09:19:49.890Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T09:19:49.900Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T09:19:49.916Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T09:19:49.916Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-09-30T09:19:49.930Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-09-30T09:19:50.012Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-09-30T09:19:50.089Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-30T09:19:50.093Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"VIP\"","timestamp":"2025-09-30T09:19:50.094Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"VIP\"","timestamp":"2025-09-30T09:19:50.098Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-30T09:10:39.163Z\",\"total_synced\":1292,\"sync_duration_ms\":5979,\"sync_version\":\"1.0\"}","timestamp":"2025-09-30T09:19:50.180Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{VIP}:* for group: VIP","timestamp":"2025-09-30T09:19:50.182Z"}
+{"level":"info","message":"Found 173 total keys matching pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:19:50.195Z"}
+{"level":"info","message":"Processing 173 keys: [\"groups:{VIP}:COFFEE_ARABICA\",\"groups:{VIP}:GER40\",\"groups:{VIP}:USOil\"]...","timestamp":"2025-09-30T09:19:50.196Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T09:19:50.962Z"}
+{"level":"info","message":"Successfully retrieved 173 groups for pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:19:50.994Z"}
+{"level":"info","message":"[USER] Found 173 groups for VIP","timestamp":"2025-09-30T09:19:50.995Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-09-30T09:19:51.015Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-30T09:19:51.015Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"VIP\"","timestamp":"2025-09-30T09:19:51.015Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"VIP\"","timestamp":"2025-09-30T09:19:51.015Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /","timestamp":"2025-09-30T09:19:51.031Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-30T09:10:39.163Z\",\"total_synced\":1292,\"sync_duration_ms\":5979,\"sync_version\":\"1.0\"}","timestamp":"2025-09-30T09:19:51.058Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{VIP}:* for group: VIP","timestamp":"2025-09-30T09:19:51.059Z"}
+{"level":"info","message":"Found 173 total keys matching pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:19:51.070Z"}
+{"level":"info","message":"Processing 173 keys: [\"groups:{VIP}:COFFEE_ARABICA\",\"groups:{VIP}:GER40\",\"groups:{VIP}:USOil\"]...","timestamp":"2025-09-30T09:19:51.070Z"}
+{"level":"info","message":"Successfully retrieved 173 groups for pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:19:51.761Z"}
+{"level":"info","message":"[USER] Found 173 groups for VIP","timestamp":"2025-09-30T09:19:51.761Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T09:20:50.234Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T09:20:50.235Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T09:20:50.235Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:20:50.236Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T09:20:50.238Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T09:20:50.241Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T09:20:50.243Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T09:20:50.243Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T09:20:50.693Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T09:21:49.913Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T09:21:49.914Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T09:21:49.914Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:21:49.915Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T09:21:49.918Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T09:21:49.923Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T09:21:49.926Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T09:21:49.927Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T09:21:50.697Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T09:22:52.095Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T09:22:52.097Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T09:22:52.097Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T09:22:52.097Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T09:22:52.102Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T09:22:52.106Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T09:22:52.110Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T09:22:52.111Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T09:22:52.646Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:24:41.003Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T09:24:49.894Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /pending/place","timestamp":"2025-09-30T09:25:01.680Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /pending/place","timestamp":"2025-09-30T09:25:13.870Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T10:15:33.990Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T10:15:34.002Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T10:15:34.272Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T10:15:34.573Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T10:15:34.937Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T10:15:35.260Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T10:15:35.755Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T10:15:36.346Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T10:15:36.843Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T10:15:37.468Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T10:15:37.801Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T10:15:38.144Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T10:15:38.501Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T10:15:38.891Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T10:15:39.239Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5247ms","timestamp":"2025-09-30T10:15:39.239Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T10:15:39.252Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T10:15:39.346Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T10:24:43.672Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T10:24:43.687Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T10:24:43.936Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T10:24:44.246Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T10:24:44.669Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T10:24:45.014Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T10:24:45.360Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T10:24:45.708Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T10:24:46.019Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T10:24:46.345Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T10:24:46.677Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T10:24:47.063Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T10:24:47.418Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T10:24:47.692Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T10:24:47.942Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4267ms","timestamp":"2025-09-30T10:24:47.942Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T10:24:47.949Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T10:24:48.031Z"}
+{"level":"info","message":"Deposit request received: live user 4, amount: 1000.5, admin: 1","timestamp":"2025-09-30T10:28:25.844Z"}
+{"level":"info","message":"Deposit processed successfully: live user 4, amount: 1000.5, new balance: 95655.690996","timestamp":"2025-09-30T10:28:26.034Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 500, admin: 1","timestamp":"2025-09-30T10:29:53.315Z"}
+{"level":"info","message":"Withdrawal processed successfully: live user 4, amount: 500, new balance: 95155.690996","timestamp":"2025-09-30T10:29:53.374Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 500, admin: 1","timestamp":"2025-09-30T10:30:29.790Z"}
+{"level":"error","message":"Withdrawal failed for live user 4: Data truncated for column 'method_type' at row 1","name":"SequelizeDatabaseError","original":{"code":"WARN_DATA_TRUNCATED","errno":1265,"parameters":["TXN9228229797454000",4,"live","withdraw",-500,95155.690996,94655.690996,"completed","WITHDRAWAL_REQ_789",1,"dhanush777ss@gmail.com","CRYPTOO","Withdrawal request approved","{\"processed_by\":\"superadmin\",\"processing_timestamp\":\"2025-09-30T10:30:29.797Z\"}","2025-09-30 10:30:29","2025-09-30 10:30:29"],"sql":"INSERT INTO `user_transactions` (`id`,`transaction_id`,`user_id`,`user_type`,`type`,`amount`,`balance_before`,`balance_after`,`status`,`reference_id`,`admin_id`,`user_email`,`method_type`,`notes`,`metadata`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data truncated for column 'method_type' at row 1","sqlState":"01000"},"parameters":["TXN9228229797454000",4,"live","withdraw",-500,95155.690996,94655.690996,"completed","WITHDRAWAL_REQ_789",1,"dhanush777ss@gmail.com","CRYPTOO","Withdrawal request approved","{\"processed_by\":\"superadmin\",\"processing_timestamp\":\"2025-09-30T10:30:29.797Z\"}","2025-09-30 10:30:29","2025-09-30 10:30:29"],"parent":{"code":"WARN_DATA_TRUNCATED","errno":1265,"parameters":["TXN9228229797454000",4,"live","withdraw",-500,95155.690996,94655.690996,"completed","WITHDRAWAL_REQ_789",1,"dhanush777ss@gmail.com","CRYPTOO","Withdrawal request approved","{\"processed_by\":\"superadmin\",\"processing_timestamp\":\"2025-09-30T10:30:29.797Z\"}","2025-09-30 10:30:29","2025-09-30 10:30:29"],"sql":"INSERT INTO `user_transactions` (`id`,`transaction_id`,`user_id`,`user_type`,`type`,`amount`,`balance_before`,`balance_after`,`status`,`reference_id`,`admin_id`,`user_email`,`method_type`,`notes`,`metadata`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data truncated for column 'method_type' at row 1","sqlState":"01000"},"sql":"INSERT INTO `user_transactions` (`id`,`transaction_id`,`user_id`,`user_type`,`type`,`amount`,`balance_before`,`balance_after`,`status`,`reference_id`,`admin_id`,`user_email`,`method_type`,`notes`,`metadata`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.insert (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async model.save (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async UserTransaction.create (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async SuperadminTransactionService.processWithdrawal (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\superadmin.transaction.service.js:243:33)\n    at async processWithdrawal (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\superadmin.transaction.controller.js:150:22)","timestamp":"2025-09-30T10:30:29.813Z"}
+{"level":"error","message":"Withdrawal failed for user 4: Data truncated for column 'method_type' at row 1","name":"SequelizeDatabaseError","original":{"code":"WARN_DATA_TRUNCATED","errno":1265,"parameters":["TXN9228229797454000",4,"live","withdraw",-500,95155.690996,94655.690996,"completed","WITHDRAWAL_REQ_789",1,"dhanush777ss@gmail.com","CRYPTOO","Withdrawal request approved","{\"processed_by\":\"superadmin\",\"processing_timestamp\":\"2025-09-30T10:30:29.797Z\"}","2025-09-30 10:30:29","2025-09-30 10:30:29"],"sql":"INSERT INTO `user_transactions` (`id`,`transaction_id`,`user_id`,`user_type`,`type`,`amount`,`balance_before`,`balance_after`,`status`,`reference_id`,`admin_id`,`user_email`,`method_type`,`notes`,`metadata`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data truncated for column 'method_type' at row 1","sqlState":"01000"},"parameters":["TXN9228229797454000",4,"live","withdraw",-500,95155.690996,94655.690996,"completed","WITHDRAWAL_REQ_789",1,"dhanush777ss@gmail.com","CRYPTOO","Withdrawal request approved","{\"processed_by\":\"superadmin\",\"processing_timestamp\":\"2025-09-30T10:30:29.797Z\"}","2025-09-30 10:30:29","2025-09-30 10:30:29"],"parent":{"code":"WARN_DATA_TRUNCATED","errno":1265,"parameters":["TXN9228229797454000",4,"live","withdraw",-500,95155.690996,94655.690996,"completed","WITHDRAWAL_REQ_789",1,"dhanush777ss@gmail.com","CRYPTOO","Withdrawal request approved","{\"processed_by\":\"superadmin\",\"processing_timestamp\":\"2025-09-30T10:30:29.797Z\"}","2025-09-30 10:30:29","2025-09-30 10:30:29"],"sql":"INSERT INTO `user_transactions` (`id`,`transaction_id`,`user_id`,`user_type`,`type`,`amount`,`balance_before`,`balance_after`,`status`,`reference_id`,`admin_id`,`user_email`,`method_type`,`notes`,`metadata`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data truncated for column 'method_type' at row 1","sqlState":"01000"},"sql":"INSERT INTO `user_transactions` (`id`,`transaction_id`,`user_id`,`user_type`,`type`,`amount`,`balance_before`,`balance_after`,`status`,`reference_id`,`admin_id`,`user_email`,`method_type`,`notes`,`metadata`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.insert (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async model.save (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async UserTransaction.create (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async SuperadminTransactionService.processWithdrawal (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\superadmin.transaction.service.js:243:33)\n    at async processWithdrawal (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\superadmin.transaction.controller.js:150:22)","timestamp":"2025-09-30T10:30:29.813Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 500, admin: 1","timestamp":"2025-09-30T10:30:47.672Z"}
+{"level":"info","message":"Withdrawal processed successfully: live user 4, amount: 500, new balance: 94655.690996","timestamp":"2025-09-30T10:30:47.742Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T10:32:48.524Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T10:32:48.552Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T10:32:48.562Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:32:48.563Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-09-30T10:32:48.633Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T10:32:48.642Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T10:32:48.671Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-09-30T10:32:48.682Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T10:32:48.685Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T10:32:48.688Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-09-30T10:32:48.848Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-30T10:32:48.854Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"VIP\"","timestamp":"2025-09-30T10:32:48.854Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"VIP\"","timestamp":"2025-09-30T10:32:48.854Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-30T10:24:47.950Z\",\"total_synced\":1292,\"sync_duration_ms\":4267,\"sync_version\":\"1.0\"}","timestamp":"2025-09-30T10:32:48.876Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{VIP}:* for group: VIP","timestamp":"2025-09-30T10:32:48.877Z"}
+{"level":"info","message":"Found 173 total keys matching pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:32:48.886Z"}
+{"level":"info","message":"Processing 173 keys: [\"groups:{VIP}:COFFEE_ARABICA\",\"groups:{VIP}:GER40\",\"groups:{VIP}:USOil\"]...","timestamp":"2025-09-30T10:32:48.887Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T10:32:49.072Z"}
+{"level":"info","message":"Successfully retrieved 173 groups for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:32:49.204Z"}
+{"level":"info","message":"[USER] Found 173 groups for VIP","timestamp":"2025-09-30T10:32:49.204Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-09-30T10:32:49.218Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-30T10:32:49.218Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"VIP\"","timestamp":"2025-09-30T10:32:49.218Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"VIP\"","timestamp":"2025-09-30T10:32:49.218Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /","timestamp":"2025-09-30T10:32:49.229Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-30T10:24:47.950Z\",\"total_synced\":1292,\"sync_duration_ms\":4267,\"sync_version\":\"1.0\"}","timestamp":"2025-09-30T10:32:49.240Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{VIP}:* for group: VIP","timestamp":"2025-09-30T10:32:49.240Z"}
+{"level":"info","message":"Found 173 total keys matching pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:32:49.250Z"}
+{"level":"info","message":"Processing 173 keys: [\"groups:{VIP}:COFFEE_ARABICA\",\"groups:{VIP}:GER40\",\"groups:{VIP}:USOil\"]...","timestamp":"2025-09-30T10:32:49.250Z"}
+{"level":"info","message":"Successfully retrieved 173 groups for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:32:49.963Z"}
+{"level":"info","message":"[USER] Found 173 groups for VIP","timestamp":"2025-09-30T10:32:49.964Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /?offset=0","timestamp":"2025-09-30T10:32:56.631Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-09-30T10:33:14.185Z"}
+{"level":"info","message":"[create_money_request_1759228394186_o7rq83d3u] Creating withdraw request for user 4, amount: 100","timestamp":"2025-09-30T10:33:14.186Z"}
+{"level":"error","message":"[create_money_request_1759228394186_o7rq83d3u] Error creating money request: Data too long for column 'request_id' at row 1","name":"SequelizeDatabaseError","original":{"code":"ER_DATA_TOO_LONG","errno":1406,"parameters":["REQ462725634942615552",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:33:14","2025-09-30 10:33:14"],"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data too long for column 'request_id' at row 1","sqlState":"22001"},"parameters":["REQ462725634942615552",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:33:14","2025-09-30 10:33:14"],"parent":{"code":"ER_DATA_TOO_LONG","errno":1406,"parameters":["REQ462725634942615552",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:33:14","2025-09-30 10:33:14"],"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data too long for column 'request_id' at row 1","sqlState":"22001"},"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.insert (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async model.save (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async MoneyRequest.create (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async MoneyRequestService.createRequest (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\moneyRequest.service.js:59:28)\n    at async createWithdrawalRequest (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\withdrawals.controller.js:46:21)","timestamp":"2025-09-30T10:33:14.224Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-09-30T10:33:26.622Z"}
+{"level":"info","message":"[create_money_request_1759228406627_rfxt9vpc3] Creating withdraw request for user 4, amount: 100","timestamp":"2025-09-30T10:33:26.627Z"}
+{"level":"error","message":"[create_money_request_1759228406627_rfxt9vpc3] Error creating money request: Data too long for column 'request_id' at row 1","name":"SequelizeDatabaseError","original":{"code":"ER_DATA_TOO_LONG","errno":1406,"parameters":["REQ462725739322064896",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:33:26","2025-09-30 10:33:26"],"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data too long for column 'request_id' at row 1","sqlState":"22001"},"parameters":["REQ462725739322064896",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:33:26","2025-09-30 10:33:26"],"parent":{"code":"ER_DATA_TOO_LONG","errno":1406,"parameters":["REQ462725739322064896",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:33:26","2025-09-30 10:33:26"],"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data too long for column 'request_id' at row 1","sqlState":"22001"},"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.insert (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async model.save (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async MoneyRequest.create (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async MoneyRequestService.createRequest (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\moneyRequest.service.js:59:28)\n    at async createWithdrawalRequest (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\withdrawals.controller.js:46:21)","timestamp":"2025-09-30T10:33:26.646Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T10:33:48.450Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T10:33:48.451Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T10:33:48.451Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:33:48.451Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T10:33:48.455Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T10:33:48.458Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T10:33:48.461Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T10:33:48.461Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T10:33:48.867Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-09-30T10:34:05.897Z"}
+{"level":"info","message":"[create_money_request_1759228445898_iynqclory] Creating withdraw request for user 4, amount: 100","timestamp":"2025-09-30T10:34:05.898Z"}
+{"level":"error","message":"[create_money_request_1759228445898_iynqclory] Error creating money request: Data too long for column 'request_id' at row 1","name":"SequelizeDatabaseError","original":{"code":"ER_DATA_TOO_LONG","errno":1406,"parameters":["REQ462726068675592192",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:34:05","2025-09-30 10:34:05"],"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data too long for column 'request_id' at row 1","sqlState":"22001"},"parameters":["REQ462726068675592192",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:34:05","2025-09-30 10:34:05"],"parent":{"code":"ER_DATA_TOO_LONG","errno":1406,"parameters":["REQ462726068675592192",4,"DYY5A","UPI","{\"additionalProp1\":{\"upi_id\":\"dhanush777ss@gmail.com\"}}","withdraw",100,"USD","pending","2025-09-30 10:34:05","2025-09-30 10:34:05"],"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","sqlMessage":"Data too long for column 'request_id' at row 1","sqlState":"22001"},"sql":"INSERT INTO `money_requests` (`id`,`request_id`,`user_id`,`account_number`,`method_type`,`method_details`,`type`,`amount`,`currency`,`status`,`created_at`,`updated_at`) VALUES (DEFAULT,?,?,?,?,?,?,?,?,?,?,?);","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.insert (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async model.save (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async MoneyRequest.create (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async MoneyRequestService.createRequest (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\moneyRequest.service.js:59:28)\n    at async createWithdrawalRequest (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\withdrawals.controller.js:46:21)","timestamp":"2025-09-30T10:34:05.909Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T10:35:04.614Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T10:35:04.614Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T10:35:04.614Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:35:04.614Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T10:35:04.616Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T10:35:04.618Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T10:35:04.621Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T10:35:04.621Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T10:35:04.969Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T10:36:17.943Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T10:36:52.455Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /: jwt expired","timestamp":"2025-09-30T10:37:34.201Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /logout: jwt expired","timestamp":"2025-09-30T10:37:52.956Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /logout: jwt expired","timestamp":"2025-09-30T10:37:55.811Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T10:37:56.297Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /logout: jwt expired","timestamp":"2025-09-30T10:37:57.348Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T10:38:04.812Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T10:38:04.813Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T10:38:04.813Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:38:04.813Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T10:38:04.815Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T10:38:04.817Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T10:38:04.820Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T10:38:04.821Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-09-30T10:38:04.943Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-09-30T10:38:04.990Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-09-30T10:38:05.310Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-30T10:38:05.310Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"VIP\"","timestamp":"2025-09-30T10:38:05.310Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"VIP\"","timestamp":"2025-09-30T10:38:05.316Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-30T10:24:47.950Z\",\"total_synced\":1292,\"sync_duration_ms\":4267,\"sync_version\":\"1.0\"}","timestamp":"2025-09-30T10:38:05.386Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{VIP}:* for group: VIP","timestamp":"2025-09-30T10:38:05.389Z"}
+{"level":"info","message":"Found 173 total keys matching pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:38:05.399Z"}
+{"level":"info","message":"Processing 173 keys: [\"groups:{VIP}:COFFEE_ARABICA\",\"groups:{VIP}:GER40\",\"groups:{VIP}:USOil\"]...","timestamp":"2025-09-30T10:38:05.400Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T10:38:05.616Z"}
+{"level":"info","message":"Successfully retrieved 173 groups for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:38:05.810Z"}
+{"level":"info","message":"[USER] Found 173 groups for VIP","timestamp":"2025-09-30T10:38:05.810Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-09-30T10:38:05.822Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-09-30T10:38:05.823Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"VIP\"","timestamp":"2025-09-30T10:38:05.823Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"VIP\"","timestamp":"2025-09-30T10:38:05.823Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-09-30T10:24:47.950Z\",\"total_synced\":1292,\"sync_duration_ms\":4267,\"sync_version\":\"1.0\"}","timestamp":"2025-09-30T10:38:05.838Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{VIP}:* for group: VIP","timestamp":"2025-09-30T10:38:05.838Z"}
+{"level":"info","message":"Found 173 total keys matching pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:38:05.845Z"}
+{"level":"info","message":"Processing 173 keys: [\"groups:{VIP}:COFFEE_ARABICA\",\"groups:{VIP}:GER40\",\"groups:{VIP}:USOil\"]...","timestamp":"2025-09-30T10:38:05.845Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /","timestamp":"2025-09-30T10:38:05.867Z"}
+{"level":"info","message":"Successfully retrieved 173 groups for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:38:06.397Z"}
+{"level":"info","message":"[USER] Found 173 groups for VIP","timestamp":"2025-09-30T10:38:06.398Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /?offset=0","timestamp":"2025-09-30T10:38:11.811Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-09-30T10:38:20.442Z"}
+{"level":"info","message":"[create_money_request_1759228700450_udy548lst] Creating withdraw request for user 4, amount: 100","timestamp":"2025-09-30T10:38:20.450Z"}
+{"level":"info","message":"[create_money_request_1759228700450_udy548lst] Money request created successfully: REQ462728204188696576","timestamp":"2025-09-30T10:38:20.524Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T10:39:05.482Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T10:39:05.483Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T10:39:05.483Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:39:05.483Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T10:39:05.485Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T10:39:05.487Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T10:39:05.488Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T10:39:05.488Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T10:39:05.750Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-09-30T10:40:05.963Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-09-30T10:40:05.965Z"}
+{"level":"info","message":"User group from JWT: \"VIP\"","timestamp":"2025-09-30T10:40:05.965Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{VIP}:*","timestamp":"2025-09-30T10:40:05.965Z"}
+{"level":"info","message":"Found 173 keys on node 127.0.0.1:7001","timestamp":"2025-09-30T10:40:05.967Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-09-30T10:40:05.969Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-09-30T10:40:05.976Z"}
+{"level":"info","message":"Total keys found across cluster: 173","timestamp":"2025-09-30T10:40:05.976Z"}
+{"level":"info","message":"Successfully processed 173/173 instruments for group VIP","timestamp":"2025-09-30T10:40:06.286Z"}
+{"level":"info","message":"[approve_request_1759228824064_o8vftqhxe] Approving request 2 by admin 1","timestamp":"2025-09-30T10:40:24.066Z"}
+{"level":"info","message":"[approve_request_1759228824064_o8vftqhxe] Request approved successfully. Transaction ID: TXN9228824097454000","timestamp":"2025-09-30T10:40:24.125Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:01:34.527Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:01:34.549Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:01:34.816Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:01:35.067Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:01:35.375Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:01:35.699Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:01:36.065Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:01:36.411Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T11:01:36.703Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T11:01:36.988Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T11:01:37.254Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T11:01:37.558Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T11:01:37.840Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T11:01:38.160Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T11:01:38.520Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 3992ms","timestamp":"2025-09-30T11:01:38.520Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T11:01:38.530Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T11:01:38.601Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:04:13.649Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:04:13.657Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:04:13.983Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:04:14.276Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:04:14.537Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:04:14.837Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:04:15.194Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:04:15.476Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T11:04:15.727Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T11:04:16.040Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T11:04:16.326Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T11:04:16.618Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T11:04:16.928Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T11:04:17.188Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T11:04:17.481Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 3831ms","timestamp":"2025-09-30T11:04:17.481Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T11:04:17.488Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T11:04:17.561Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:04:22.309Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:05:29.431Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:05:29.440Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:05:29.788Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:05:30.089Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:05:30.451Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:05:30.754Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:05:31.129Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:05:31.435Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:37:39.374Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:37:39.400Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:37:39.690Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:37:40.024Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:37:40.429Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:37:40.789Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:37:41.080Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:37:41.389Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T11:37:41.750Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T11:37:42.046Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T11:37:42.429Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T11:37:42.827Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T11:37:43.217Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T11:37:43.555Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T11:37:43.790Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4413ms","timestamp":"2025-09-30T11:37:43.790Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T11:37:43.796Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T11:37:43.826Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:38:17.429Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:40:21.783Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:42:00.789Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:42:00.801Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:42:01.106Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:42:01.391Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:42:01.674Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:42:01.952Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:42:02.295Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:42:02.603Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T11:42:02.937Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T11:42:03.284Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T11:42:03.610Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T11:42:03.932Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T11:42:04.275Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T11:42:04.585Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T11:42:04.892Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4103ms","timestamp":"2025-09-30T11:42:04.892Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T11:42:04.897Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T11:42:04.920Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:42:14.085Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:43:26.533Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:43:26.542Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:43:26.913Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:43:27.236Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:43:27.696Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:43:28.053Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:43:28.464Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:43:28.846Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T11:43:29.211Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T11:43:29.500Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T11:43:29.778Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T11:43:30.155Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T11:43:30.510Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T11:43:30.845Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T11:43:31.161Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4627ms","timestamp":"2025-09-30T11:43:31.161Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T11:43:31.166Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T11:43:31.196Z"}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:43:33.582Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759232613582_8tgulkiuo] Fetching deposit transactions","page":1,"timestamp":"2025-09-30T11:43:33.582Z"}
+{"level":"error","message":"[get_filtered_transactions_1759232613582_8tgulkiuo] Error fetching filtered transactions: transactions.reduce is not a function","stack":"TypeError: transactions.reduce is not a function\n    at AdminTransactionService.getFilteredTransactions (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\admin.transaction.service.js:154:40)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getDeposits (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\admin.transaction.controller.js:47:22)","timestamp":"2025-09-30T11:43:33.620Z"}
+{"level":"error","message":"Error fetching deposit transactions for admin 1: transactions.reduce is not a function","stack":"TypeError: transactions.reduce is not a function\n    at AdminTransactionService.getFilteredTransactions (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\admin.transaction.service.js:154:40)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getDeposits (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\admin.transaction.controller.js:47:22)","timestamp":"2025-09-30T11:43:33.621Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T11:47:26.740Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T11:47:26.751Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T11:47:27.105Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T11:47:27.457Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T11:47:27.887Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T11:47:28.195Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T11:47:28.544Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T11:47:28.891Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T11:47:29.213Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T11:47:29.574Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T11:47:29.943Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T11:47:30.214Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T11:47:30.619Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T11:47:30.898Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T11:47:31.142Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4401ms","timestamp":"2025-09-30T11:47:31.143Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T11:47:31.147Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T11:47:31.170Z"}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:47:35.150Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759232855151_kqkskz7lt] Fetching deposit transactions","page":1,"timestamp":"2025-09-30T11:47:35.151Z"}
+{"filtered_sum":11199.279999999995,"level":"info","message":"[get_filtered_transactions_1759232855151_kqkskz7lt] Successfully fetched 20 transactions","timestamp":"2025-09-30T11:47:35.165Z","total_count":73,"total_sum":11155.87}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:47:58.029Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759232878029_1ijgs2sgt] Fetching deposit transactions","page":1,"timestamp":"2025-09-30T11:47:58.029Z"}
+{"filtered_sum":11199.279999999995,"level":"info","message":"[get_filtered_transactions_1759232878029_1ijgs2sgt] Successfully fetched 20 transactions","timestamp":"2025-09-30T11:47:58.035Z","total_count":73,"total_sum":11155.87}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":2,"timestamp":"2025-09-30T11:48:02.675Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759232882675_eruwtjxtv] Fetching deposit transactions","page":2,"timestamp":"2025-09-30T11:48:02.675Z"}
+{"filtered_sum":1.01,"level":"info","message":"[get_filtered_transactions_1759232882675_eruwtjxtv] Successfully fetched 20 transactions","timestamp":"2025-09-30T11:48:02.684Z","total_count":73,"total_sum":11155.87}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:49:13.582Z"}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:50:21.076Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233021077_04w2fcqw6] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T11:50:21.077Z"}
+{"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759233021077_04w2fcqw6] Successfully fetched 12 transactions","timestamp":"2025-09-30T11:50:21.082Z","total_count":12,"total_sum":-16390}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:51:10.629Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233070629_gplmln9kj] Fetching deposit transactions","page":1,"timestamp":"2025-09-30T11:51:10.629Z"}
+{"filtered_sum":11199.279999999995,"level":"info","message":"[get_filtered_transactions_1759233070629_gplmln9kj] Successfully fetched 20 transactions","timestamp":"2025-09-30T11:51:10.634Z","total_count":73,"total_sum":11155.87}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:51:16.069Z"}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:51:33.186Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233093186_sebearkei] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T11:51:33.186Z"}
+{"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759233093186_sebearkei] Successfully fetched 12 transactions","timestamp":"2025-09-30T11:51:33.191Z","total_count":12,"total_sum":-16390}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:53:12.930Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233192931_5knx1amsq] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T11:53:12.931Z"}
+{"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759233192931_5knx1amsq] Successfully fetched 12 transactions","timestamp":"2025-09-30T11:53:12.936Z","total_count":12,"total_sum":-16390}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:53:13.369Z"}
+{"level":"info","message":"Transaction statistics request from admin 1","timestamp":"2025-09-30T11:54:00.250Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","message":"[get_transaction_stats_1759233240250_zhw4y2f0h] Fetching transaction statistics","timestamp":"2025-09-30T11:54:00.250Z"}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:55:01.887Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233301887_xkdf5keqq] Fetching deposit transactions","page":1,"timestamp":"2025-09-30T11:55:01.887Z"}
+{"filtered_sum":11199.279999999995,"level":"info","message":"[get_filtered_transactions_1759233301887_xkdf5keqq] Successfully fetched 20 transactions","timestamp":"2025-09-30T11:55:01.892Z","total_count":73,"total_sum":11155.87}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:55:07.901Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233307901_07pfoh9ji] Fetching deposit transactions","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:55:07.901Z"}
+{"filtered_sum":0,"level":"info","message":"[get_filtered_transactions_1759233307901_07pfoh9ji] Successfully fetched 0 transactions","timestamp":"2025-09-30T11:55:07.911Z","total_count":0,"total_sum":0}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:55:08.765Z"}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","method_type":"OTHER","page":1,"timestamp":"2025-09-30T11:55:17.832Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233317833_d1knqa4w0] Fetching deposit transactions","method_type":"OTHER","page":1,"timestamp":"2025-09-30T11:55:17.833Z"}
+{"filtered_sum":11199.279999999995,"level":"info","message":"[get_filtered_transactions_1759233317833_d1knqa4w0] Successfully fetched 20 transactions","timestamp":"2025-09-30T11:55:17.850Z","total_count":73,"total_sum":11155.87}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:55:30.217Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233330218_7n7grfovz] Fetching deposit transactions","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:55:30.218Z"}
+{"filtered_sum":0,"level":"info","message":"[get_filtered_transactions_1759233330218_7n7grfovz] Successfully fetched 0 transactions","timestamp":"2025-09-30T11:55:30.221Z","total_count":0,"total_sum":0}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:56:20.611Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233380611_0ewenth09] Fetching deposit transactions","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:56:20.611Z"}
+{"filtered_sum":-0.13,"level":"info","message":"[get_filtered_transactions_1759233380611_0ewenth09] Successfully fetched 2 transactions","timestamp":"2025-09-30T11:56:20.628Z","total_count":2,"total_sum":-0.13}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:57:21.823Z"}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:58:02.902Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233482902_13bxby0pv] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T11:58:02.902Z"}
+{"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759233482902_13bxby0pv] Successfully fetched 12 transactions","timestamp":"2025-09-30T11:58:02.906Z","total_count":12,"total_sum":-16390}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T11:58:48.920Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233528920_ujzlggdzo] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T11:58:48.920Z"}
+{"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759233528920_ujzlggdzo] Successfully fetched 12 transactions","timestamp":"2025-09-30T11:58:48.923Z","total_count":12,"total_sum":-16390}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T11:59:21.141Z"}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:59:42.525Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233582525_ebcj1mhxo] Fetching withdraw transactions","method_type":"BANK","page":1,"timestamp":"2025-09-30T11:59:42.525Z"}
+{"filtered_sum":-100,"level":"info","message":"[get_filtered_transactions_1759233582525_ebcj1mhxo] Successfully fetched 1 transactions","timestamp":"2025-09-30T11:59:42.528Z","total_count":1,"total_sum":-100}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","method_type":"BANK","page":1,"timestamp":"2025-09-30T12:00:08.999Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759233608999_e1u6z1hka] Fetching withdraw transactions","method_type":"BANK","page":1,"timestamp":"2025-09-30T12:00:08.999Z"}
+{"filtered_sum":-100,"level":"info","message":"[get_filtered_transactions_1759233608999_e1u6z1hka] Successfully fetched 1 transactions","timestamp":"2025-09-30T12:00:09.003Z","total_count":1,"total_sum":-100}
+{"email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T12:00:52.190Z"}
+{"admin_id":1,"admin_role":"superadmin","email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"[get_filtered_transactions_1759233652190_rgoqcgjco] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T12:00:52.190Z"}
+{"level":"error","message":"[get_filtered_transactions_1759233652190_rgoqcgjco] Error fetching filtered transactions: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ILIKE '%dhanush777ss@gmail.com%'' at line 1","name":"SequelizeDatabaseError","original":{"code":"ER_PARSE_ERROR","errno":1064,"sql":"SELECT `id` FROM `live_users` AS `LiveUser` WHERE `LiveUser`.`email` ILIKE '%dhanush777ss@gmail.com%';","sqlMessage":"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ILIKE '%dhanush777ss@gmail.com%'' at line 1","sqlState":"42000"},"parameters":{},"parent":{"code":"ER_PARSE_ERROR","errno":1064,"sql":"SELECT `id` FROM `live_users` AS `LiveUser` WHERE `LiveUser`.`email` ILIKE '%dhanush777ss@gmail.com%';","sqlMessage":"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ILIKE '%dhanush777ss@gmail.com%'' at line 1","sqlState":"42000"},"sql":"SELECT `id` FROM `live_users` AS `LiveUser` WHERE `LiveUser`.`email` ILIKE '%dhanush777ss@gmail.com%';","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.select (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:407:12)\n    at async LiveUser.findAll (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1140:21)\n    at async Promise.all (index 0)\n    at async AdminTransactionService.getFilteredTransactions (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\admin.transaction.service.js:62:40)\n    at async getWithdrawals (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\admin.transaction.controller.js:115:22)","timestamp":"2025-09-30T12:00:52.201Z"}
+{"level":"error","message":"Error fetching withdrawal transactions for admin 1: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ILIKE '%dhanush777ss@gmail.com%'' at line 1","name":"SequelizeDatabaseError","original":{"code":"ER_PARSE_ERROR","errno":1064,"sql":"SELECT `id` FROM `live_users` AS `LiveUser` WHERE `LiveUser`.`email` ILIKE '%dhanush777ss@gmail.com%';","sqlMessage":"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ILIKE '%dhanush777ss@gmail.com%'' at line 1","sqlState":"42000"},"parameters":{},"parent":{"code":"ER_PARSE_ERROR","errno":1064,"sql":"SELECT `id` FROM `live_users` AS `LiveUser` WHERE `LiveUser`.`email` ILIKE '%dhanush777ss@gmail.com%';","sqlMessage":"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ILIKE '%dhanush777ss@gmail.com%'' at line 1","sqlState":"42000"},"sql":"SELECT `id` FROM `live_users` AS `LiveUser` WHERE `LiveUser`.`email` ILIKE '%dhanush777ss@gmail.com%';","stack":"Error\n    at Query.run (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async MySQLQueryInterface.select (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:407:12)\n    at async LiveUser.findAll (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\node_modules\\sequelize\\lib\\model.js:1140:21)\n    at async Promise.all (index 0)\n    at async AdminTransactionService.getFilteredTransactions (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\admin.transaction.service.js:62:40)\n    at async getWithdrawals (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\admin.transaction.controller.js:115:22)","timestamp":"2025-09-30T12:00:52.201Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:01:25.214Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T12:02:41.060Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T12:02:41.073Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T12:02:41.442Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T12:02:41.799Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T12:02:42.164Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T12:02:42.551Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T12:02:42.968Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T12:02:43.390Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T12:02:43.826Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T12:02:44.198Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T12:02:44.579Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T12:02:44.931Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T12:02:45.283Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T12:02:45.659Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T12:02:46.011Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4949ms","timestamp":"2025-09-30T12:02:46.011Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T12:02:46.019Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T12:02:46.049Z"}
+{"email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T12:02:46.335Z"}
+{"admin_id":1,"admin_role":"superadmin","email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"[get_filtered_transactions_1759233766335_qn4p6zmku] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T12:02:46.335Z"}
+{"filtered_sum":-1100,"level":"info","message":"[get_filtered_transactions_1759233766335_qn4p6zmku] Successfully fetched 3 transactions","timestamp":"2025-09-30T12:02:46.371Z","total_count":3,"total_sum":-1100}

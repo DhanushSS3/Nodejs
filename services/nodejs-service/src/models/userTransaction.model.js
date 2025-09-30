@@ -72,6 +72,16 @@ const UserTransaction = sequelize.define('UserTransaction', {
     allowNull: true,
     comment: 'Admin who approved/processed the transaction',
   },
+  user_email: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'User email at the time of transaction (snapshot for audit purposes)',
+  },
+  method_type: {
+    type: DataTypes.ENUM('BANK', 'UPI', 'SWIFT', 'IBAN', 'PAYPAL', 'CRYPTO', 'OTHER'),
+    allowNull: true,
+    comment: 'Payment method type used for deposit/withdraw transactions',
+  },
   notes: {
     type: DataTypes.TEXT,
     allowNull: true,
@@ -123,6 +133,14 @@ const UserTransaction = sequelize.define('UserTransaction', {
     {
       name: 'idx_user_transactions_user_created',
       fields: ['user_id', 'created_at']
+    },
+    {
+      name: 'idx_user_transactions_user_email',
+      fields: ['user_email']
+    },
+    {
+      name: 'idx_user_transactions_method_type',
+      fields: ['method_type']
     }
   ],
   scopes: {

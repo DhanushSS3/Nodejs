@@ -28,6 +28,10 @@ const { handleValidationErrors } = require('../middlewares/error.middleware');
  *         referenceId:
  *           type: string
  *           description: Optional external reference ID
+ *         method_type:
+ *           type: string
+ *           enum: [BANK, UPI, SWIFT, IBAN, PAYPAL, CRYPTO, OTHER]
+ *           description: Payment method type (defaults to 'OTHER' if not provided)
  *     
  *     TransactionResponse:
  *       type: object
@@ -86,19 +90,19 @@ const { handleValidationErrors } = require('../middlewares/error.middleware');
  *           type: integer
  *         description: User ID
  *     requestBody:
- *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             $ref: '#/components/schemas/TransactionRequest'
  *           example:
- *             userType: "live"
- *             amount: 1000.50
- *             notes: "Initial deposit for new user"
- *             referenceId: "BANK_REF_123456"
+             userType: "live"
+             amount: 1000.50
+             notes: "Initial deposit for new user"
+             referenceId: "BANK_REF_123456"
+             method_type: "BANK"
  *     responses:
  *       200:
- *         description: Deposit processed successfully
+ *         description: deposit processed successfully
  *         content:
  *           application/json:
  *             schema:
@@ -145,6 +149,7 @@ router.post('/users/:userId/deposit',
  *             amount: 500.00
  *             notes: "Withdrawal request approved"
  *             referenceId: "WITHDRAWAL_REQ_789"
+ *             method_type: "UPI"
  *     responses:
  *       200:
  *         description: Withdrawal processed successfully
