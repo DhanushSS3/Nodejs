@@ -255,8 +255,12 @@ class SwapCalculationService {
       let marketData = await this.getMarketPrice(symbol);
       
       if (marketData && marketData.bid > 0) {
-        // For USDJPY, use direct rate
-        return marketData.bid;
+        // For USD to currency pairs (e.g., USDJPY = 148.739)
+        // To convert currency to USD, we need 1/rate
+        // Example: 1 JPY = 1/148.739 USD = 0.00672 USD
+        const conversionRate = 1 / marketData.bid;
+        logger.info(`Conversion rate for ${currency} to USD: 1/${marketData.bid} = ${conversionRate}`);
+        return conversionRate;
       }
 
       // Try inverse pair (e.g., JPYUSD)
@@ -264,8 +268,9 @@ class SwapCalculationService {
       marketData = await this.getMarketPrice(symbol);
       
       if (marketData && marketData.bid > 0) {
-        // For JPYUSD, use 1/rate
-        return 1 / marketData.bid;
+        // For currency to USD pairs, use direct rate
+        logger.info(`Conversion rate for ${currency} to USD: ${marketData.bid}`);
+        return marketData.bid;
       }
 
       // Try EUR pairs as intermediate conversion
