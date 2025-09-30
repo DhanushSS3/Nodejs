@@ -172,7 +172,8 @@ class AdminUserManagementController {
   }
 
   /**
-   * Fetches all open orders for a specific user (live or demo)
+   * Fetches open and queued orders for a specific user (live or demo)
+   * Only returns orders with status 'OPEN' or 'QUEUED' (excludes 'PENDING')
    * Requires 'orders:read' permission
    * Country-level admins can only view orders for users from their country
    * Superadmins can view orders for any user

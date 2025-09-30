@@ -339,7 +339,8 @@ class AdminUserManagementService {
   }
 
   /**
-   * Fetches all open orders for a specific user (live or demo)
+   * Fetches open and queued orders for a specific user (live or demo)
+   * Only returns orders with status 'OPEN' or 'QUEUED' (excludes 'PENDING')
    * @param {string} userType - 'live' or 'demo'
    * @param {number} userId - The ID of the user
    * @param {Model} ScopedUserModel - The scoped user model for access control
@@ -403,12 +404,12 @@ class AdminUserManagementService {
         throw new Error(`${userType} order model not properly initialized`);
       }
 
-      // Fetch all open orders for this user (no pagination as requested)
+      // Fetch only OPEN and QUEUED orders for this user (excluding PENDING orders)
       const orders = await OrderModel.findAll({
         where: {
           order_user_id: userIdInt,
           order_status: {
-            [Op.in]: ['OPEN', 'PENDING', 'QUEUED', 'PENDING-QUEUED']
+            [Op.in]: ['OPEN', 'QUEUED']
           }
         },
         attributes: [
@@ -420,11 +421,10 @@ class AdminUserManagementService {
         order: [['created_at', 'DESC']]
       });
 
-      // Calculate summary statistics
+      // Calculate summary statistics (only OPEN and QUEUED orders)
       const summary = {
         total_orders: orders.length,
         open_orders: orders.filter(o => o.order_status === 'OPEN').length,
-        pending_orders: orders.filter(o => ['PENDING', 'PENDING-QUEUED'].includes(o.order_status)).length,
         queued_orders: orders.filter(o => o.order_status === 'QUEUED').length,
         total_margin_used: orders.reduce((sum, order) => {
           const margin = parseFloat(order.margin) || 0;
@@ -439,7 +439,7 @@ class AdminUserManagementService {
       };
 
       // Log the operation for audit purposes
-      logger.info('User orders fetched by admin', {
+      logger.info('User open orders fetched by admin (OPEN and QUEUED only)', {
         operationId,
         adminId: adminInfo.id,
         adminRole: adminInfo.role,
@@ -447,6 +447,7 @@ class AdminUserManagementService {
         userId: userIdInt,
         userEmail: user.email,
         ordersCount: orders.length,
+        filterApplied: 'OPEN and QUEUED orders only (PENDING excluded)',
         summary
       });
 

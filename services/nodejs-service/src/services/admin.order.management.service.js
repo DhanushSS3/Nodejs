@@ -973,7 +973,17 @@ class AdminOrderManagementService {
       const { redisCluster } = require('../../config/redis');
       const key = `order_data:${String(order_id)}`;
       const od = await redisCluster.hgetall(key);
-      if (od && Object.keys(od).length > 0) return od;
+      if (od && Object.keys(od).length > 0) {
+        // Check if order_status is missing or empty - indicates stale cache
+        if (!od.order_status || od.order_status.trim() === '') {
+          logger.warn('Redis canonical order has empty status - possible stale cache', { 
+            order_id, 
+            redisData: od 
+          });
+          return null; // Force fallback to database
+        }
+        return od;
+      }
     } catch (e) {
       logger.warn('Failed to fetch canonical order from Redis', { order_id, error: e.message });
     }
