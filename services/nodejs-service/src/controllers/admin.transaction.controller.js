@@ -8,7 +8,7 @@ class AdminTransactionController {
    */
   async getDeposits(req, res) {
     try {
-      const { email, method_type, page, limit } = req.query;
+      const { email, method_type, start_date, end_date, page, limit } = req.query;
       const { admin } = req;
 
       // Validate pagination parameters
@@ -41,13 +41,15 @@ class AdminTransactionController {
       }
 
       logger.info(`Deposit transactions request from admin ${admin.id}`, {
-        email, method_type, page: pageNum, limit: limitNum
+        email, method_type, start_date, end_date, page: pageNum, limit: limitNum
       });
 
       const result = await adminTransactionService.getFilteredTransactions({
         type: 'deposit',
         email,
         method_type: method_type?.toUpperCase(),
+        start_date,
+        end_date,
         page: pageNum,
         limit: limitNum,
         admin
@@ -76,7 +78,7 @@ class AdminTransactionController {
    */
   async getWithdrawals(req, res) {
     try {
-      const { email, method_type, page, limit } = req.query;
+      const { email, method_type, start_date, end_date, page, limit } = req.query;
       const { admin } = req;
 
       // Validate pagination parameters
@@ -109,13 +111,15 @@ class AdminTransactionController {
       }
 
       logger.info(`Withdrawal transactions request from admin ${admin.id}`, {
-        email, method_type, page: pageNum, limit: limitNum
+        email, method_type, start_date, end_date, page: pageNum, limit: limitNum
       });
 
       const result = await adminTransactionService.getFilteredTransactions({
         type: 'withdraw',
         email,
         method_type: method_type?.toUpperCase(),
+        start_date,
+        end_date,
         page: pageNum,
         limit: limitNum,
         admin

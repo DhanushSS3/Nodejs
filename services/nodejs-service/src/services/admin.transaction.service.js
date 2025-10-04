@@ -10,12 +10,14 @@ class AdminTransactionService {
    * @param {string} params.type - 'deposit' or 'withdraw'
    * @param {string} [params.email] - User email filter
    * @param {string} [params.method_type] - Payment method filter
+   * @param {string} [params.start_date] - Start date filter (ISO 8601 format)
+   * @param {string} [params.end_date] - End date filter (ISO 8601 format)
    * @param {number} [params.page=1] - Page number
    * @param {number} [params.limit=20] - Records per page
    * @param {Object} params.admin - Admin information
    * @returns {Promise<Object>} Paginated transactions with total sum
    */
-  async getFilteredTransactions({ type, email, method_type, page = 1, limit = 20, admin }) {
+  async getFilteredTransactions({ type, email, method_type, start_date, end_date, page = 1, limit = 20, admin }) {
     const operationId = `get_filtered_transactions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
@@ -33,7 +35,13 @@ class AdminTransactionService {
       const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
       const offset = (pageNum - 1) * limitNum;
 
-      // Build base where clause
+      // Build base where clause for ALL records (no filters except type)
+      const baseWhereAll = {
+        type: type,
+        status: 'completed' // Only show completed transactions
+      };
+
+      // Build filtered where clause (includes all filters)
       const baseWhere = {
         type: type,
         status: 'completed' // Only show completed transactions
@@ -42,6 +50,31 @@ class AdminTransactionService {
       // Add method_type filter if provided
       if (method_type) {
         baseWhere.method_type = method_type;
+      }
+
+      // Add date range filter if provided
+      if (start_date || end_date) {
+        baseWhere.created_at = {};
+        
+        if (start_date) {
+          const startDate = new Date(start_date);
+          if (isNaN(startDate.getTime())) {
+            throw new Error('Invalid start_date format. Use ISO 8601 format (e.g., 2024-01-01 or 2024-01-01T00:00:00Z)');
+          }
+          baseWhere.created_at[Op.gte] = startDate;
+        }
+        
+        if (end_date) {
+          const endDate = new Date(end_date);
+          if (isNaN(endDate.getTime())) {
+            throw new Error('Invalid end_date format. Use ISO 8601 format (e.g., 2024-12-31 or 2024-12-31T23:59:59Z)');
+          }
+          // Set to end of day if no time specified
+          if (!end_date.includes('T')) {
+            endDate.setHours(23, 59, 59, 999);
+          }
+          baseWhere.created_at[Op.lte] = endDate;
+        }
       }
 
       // Build country filter for non-superadmin
@@ -130,35 +163,48 @@ class AdminTransactionService {
             user_id: user_id,
             user_type: user_type
           }));
+          // Also apply to baseWhereAll for country-scoped admins
+          baseWhereAll[Op.or] = userIds.map(({ user_id, user_type }) => ({
+            user_id: user_id,
+            user_type: user_type
+          }));
         }
       }
 
       // Execute queries in parallel for efficiency
-      const [transactions, totalSum, totalCount] = await Promise.all([
+      const [transactions, filteredSumDb, filteredCount, totalSumAll, totalCountAll] = await Promise.all([
         // Get paginated transactions with user details
         this._getTransactionsWithUserDetails(baseWhere, offset, limitNum),
         
-        // Get total sum of all matching transactions (not just current page)
+        // Get sum of filtered transactions (matching all filters)
         UserTransaction.sum('amount', { where: baseWhere }),
         
-        // Get total count of all matching transactions
-        UserTransaction.count({ where: baseWhere })
+        // Get count of filtered transactions
+        UserTransaction.count({ where: baseWhere }),
+        
+        // Get total sum of ALL records (only type filter, no other filters)
+        UserTransaction.sum('amount', { where: baseWhereAll }),
+        
+        // Get total count of ALL records (only type filter, no other filters)
+        UserTransaction.count({ where: baseWhereAll })
       ]);
 
-      // Calculate pagination info
-      const totalPages = Math.ceil(totalCount / limitNum);
+      // Calculate pagination info (based on filtered count)
+      const totalPages = Math.ceil(filteredCount / limitNum);
       const hasNextPage = pageNum < totalPages;
       const hasPreviousPage = pageNum > 1;
 
-      // Calculate filtered sum (sum of current page)
-      const filteredSum = Array.isArray(transactions) 
+      // Calculate page sum (sum of current page only)
+      const pageSumOnly = Array.isArray(transactions) 
         ? transactions.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0)
         : 0;
 
       logger.info(`[${operationId}] Successfully fetched ${Array.isArray(transactions) ? transactions.length : 0} transactions`, {
-        total_sum: totalSum || 0,
-        total_count: totalCount,
-        filtered_sum: filteredSum
+        total_sum_all: totalSumAll || 0,
+        total_count_all: totalCountAll,
+        filtered_sum: filteredSumDb || 0,
+        filtered_count: filteredCount,
+        page_sum: pageSumOnly
       });
 
       return {
@@ -179,16 +225,18 @@ class AdminTransactionService {
         pagination: {
           page: pageNum,
           limit: limitNum,
-          total: totalCount,
+          total: filteredCount,
           totalPages,
           hasNextPage,
           hasPreviousPage
         },
         summary: {
-          total_sum: Math.abs(totalSum || 0), // Use absolute value for display
-          total_records: totalCount,
-          filtered_sum: Math.abs(filteredSum),
-          filtered_records: Array.isArray(transactions) ? transactions.length : 0
+          total_sum_all_records: Math.abs(totalSumAll || 0), // Sum of ALL records (no filters except type)
+          total_count_all_records: totalCountAll, // Count of ALL records (no filters except type)
+          filtered_sum: Math.abs(filteredSumDb || 0), // Sum of filtered records
+          filtered_count: filteredCount, // Count of filtered records
+          page_sum: Math.abs(pageSumOnly), // Sum of current page only
+          page_count: Array.isArray(transactions) ? transactions.length : 0 // Count of current page only
         }
       };
 
@@ -259,6 +307,16 @@ class AdminTransactionService {
       conditions.push('ut.method_type = :method_type');
     }
     
+    // Handle date range filters
+    if (whereClause.created_at) {
+      if (whereClause.created_at[Op.gte]) {
+        conditions.push('ut.created_at >= :start_date');
+      }
+      if (whereClause.created_at[Op.lte]) {
+        conditions.push('ut.created_at <= :end_date');
+      }
+    }
+    
     if (whereClause[Op.or]) {
       const orConditions = whereClause[Op.or].map((condition, index) => 
         `(ut.user_id = :user_id_${index} AND ut.user_type = :user_type_${index})`
@@ -279,6 +337,16 @@ class AdminTransactionService {
     if (whereClause.type) values.type = whereClause.type;
     if (whereClause.status) values.status = whereClause.status;
     if (whereClause.method_type) values.method_type = whereClause.method_type;
+    
+    // Extract date range values
+    if (whereClause.created_at) {
+      if (whereClause.created_at[Op.gte]) {
+        values.start_date = whereClause.created_at[Op.gte];
+      }
+      if (whereClause.created_at[Op.lte]) {
+        values.end_date = whereClause.created_at[Op.lte];
+      }
+    }
     
     if (whereClause[Op.or]) {
       whereClause[Op.or].forEach((condition, index) => {

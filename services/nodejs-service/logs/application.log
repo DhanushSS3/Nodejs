@@ -3719,3 +3719,320 @@
 {"email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-09-30T12:02:46.335Z"}
 {"admin_id":1,"admin_role":"superadmin","email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"[get_filtered_transactions_1759233766335_qn4p6zmku] Fetching withdraw transactions","page":1,"timestamp":"2025-09-30T12:02:46.335Z"}
 {"filtered_sum":-1100,"level":"info","message":"[get_filtered_transactions_1759233766335_qn4p6zmku] Successfully fetched 3 transactions","timestamp":"2025-09-30T12:02:46.371Z","total_count":3,"total_sum":-1100}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-09-30T12:13:31.380Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-09-30T12:13:31.389Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-09-30T12:13:31.684Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-09-30T12:13:32.008Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-09-30T12:13:32.366Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-09-30T12:13:32.648Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-09-30T12:13:32.947Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-09-30T12:13:33.355Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-09-30T12:13:33.662Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-09-30T12:13:34.003Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-09-30T12:13:34.388Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-09-30T12:13:34.725Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-09-30T12:13:34.986Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-09-30T12:13:35.412Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-09-30T12:13:35.881Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4499ms","timestamp":"2025-09-30T12:13:35.881Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-09-30T12:13:35.893Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-09-30T12:13:35.918Z"}
+{"level":"info","message":"Deposit request received: live user 4, amount: 1000.5, admin: 1","timestamp":"2025-09-30T12:14:10.534Z"}
+{"level":"info","message":"Deposit processed successfully: live user 4, amount: 1000.5, new balance: 95556.190996","timestamp":"2025-09-30T12:14:10.615Z"}
+{"level":"info","message":"Starting daily swap processing for Tue Sep 30 2025","timestamp":"2025-09-30T12:15:00.039Z"}
+{"level":"info","message":"Processing live orders for swap charges","timestamp":"2025-09-30T12:15:00.039Z"}
+{"level":"info","message":"Found 8 open live orders","timestamp":"2025-09-30T12:15:00.052Z"}
+{"level":"info","message":"Calculating swap for order: 3102482449000, symbol: EURUSD, group: Elite","timestamp":"2025-09-30T12:15:00.056Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-8.108, pointValue=0.9999999999999999, lots=0.01, result=-0.08107999999999999","timestamp":"2025-09-30T12:15:00.058Z"}
+{"calculated_amount":-0.08107999999999999,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"Elite","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.08107999999999999,"order_id":"3102482449000","order_quantity":0.01,"order_type":"BUY","previous_swap":0,"processing_time_ms":2,"swap_rate":-8.108,"swap_type":"points","symbol":"EURUSD","timestamp":"2025-09-30T12:15:00.059Z","user_id":63,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: -0.08107999999999999 for order 3102482449000","timestamp":"2025-09-30T12:15:00.060Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.08107999999999999,"order_id":"3102482449000","previous_swap":0,"success":true,"swap_amount":-0.08107999999999999,"timestamp":"2025-09-30T12:15:00.071Z","transaction_id":null,"user_id":63,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 4166405654000, symbol: AUDCHF, group: Elite","timestamp":"2025-09-30T12:15:00.072Z"}
+{"level":"info","message":"Conversion rate for CHF to USD: 1/0.79716 = 1.2544533092478298","timestamp":"2025-09-30T12:15:00.074Z"}
+{"level":"info","message":"Conversion rate for CHF to USD: 1/0.79716 = 1.2544533092478298","timestamp":"2025-09-30T12:15:00.075Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-3.254, pointValue=1.2544533092478296, lots=0.01, result=-0.04081991068292438","timestamp":"2025-09-30T12:15:00.075Z"}
+{"calculated_amount":-0.04081991068292438,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1.2544533092478298,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"Elite","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.04081991068292438,"order_id":"4166405654000","order_quantity":0.01,"order_type":"BUY","previous_swap":0,"processing_time_ms":3,"swap_rate":-3.254,"swap_type":"points","symbol":"AUDCHF","timestamp":"2025-09-30T12:15:00.075Z","user_id":63,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: -0.04081991068292438 for order 4166405654000","timestamp":"2025-09-30T12:15:00.075Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.04081991068292438,"order_id":"4166405654000","previous_swap":0,"success":true,"swap_amount":-0.04081991068292438,"timestamp":"2025-09-30T12:15:00.078Z","transaction_id":null,"user_id":63,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 1369392897000, symbol: EURUSD, group: VIP","timestamp":"2025-09-30T12:15:00.079Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-8.108, pointValue=0.9999999999999999, lots=0.01, result=-0.08107999999999999","timestamp":"2025-09-30T12:15:00.080Z"}
+{"calculated_amount":-0.08107999999999999,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"VIP","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.08107999999999999,"order_id":"1369392897000","order_quantity":0.01,"order_type":"BUY","previous_swap":0,"processing_time_ms":1,"swap_rate":-8.108,"swap_type":"points","symbol":"EURUSD","timestamp":"2025-09-30T12:15:00.080Z","user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: -0.08107999999999999 for order 1369392897000","timestamp":"2025-09-30T12:15:00.080Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.08107999999999999,"order_id":"1369392897000","previous_swap":0,"success":true,"swap_amount":-0.08107999999999999,"timestamp":"2025-09-30T12:15:00.083Z","transaction_id":null,"user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 2189333479000, symbol: EURUSD, group: VIP","timestamp":"2025-09-30T12:15:00.084Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-8.108, pointValue=0.9999999999999999, lots=0.01, result=-0.08107999999999999","timestamp":"2025-09-30T12:15:00.086Z"}
+{"calculated_amount":-0.08107999999999999,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"VIP","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.08107999999999999,"order_id":"2189333479000","order_quantity":0.01,"order_type":"BUY","previous_swap":0,"processing_time_ms":2,"swap_rate":-8.108,"swap_type":"points","symbol":"EURUSD","timestamp":"2025-09-30T12:15:00.086Z","user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: -0.08107999999999999 for order 2189333479000","timestamp":"2025-09-30T12:15:00.086Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.08107999999999999,"order_id":"2189333479000","previous_swap":0,"success":true,"swap_amount":-0.08107999999999999,"timestamp":"2025-09-30T12:15:00.090Z","transaction_id":null,"user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 3988037254000, symbol: EURUSD, group: VIP","timestamp":"2025-09-30T12:15:00.091Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=2.266, pointValue=0.9999999999999999, lots=0.01, result=0.022659999999999996","timestamp":"2025-09-30T12:15:00.092Z"}
+{"calculated_amount":0.022659999999999996,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"VIP","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":0.022659999999999996,"order_id":"3988037254000","order_quantity":0.01,"order_type":"SELL_LIMIT","previous_swap":0,"processing_time_ms":2,"swap_rate":2.266,"swap_type":"points","symbol":"EURUSD","timestamp":"2025-09-30T12:15:00.092Z","user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: 0.022659999999999996 for order 3988037254000","timestamp":"2025-09-30T12:15:00.092Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":0.022659999999999996,"order_id":"3988037254000","previous_swap":0,"success":true,"swap_amount":0.022659999999999996,"timestamp":"2025-09-30T12:15:00.096Z","transaction_id":null,"user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 2427455735000, symbol: EURUSD, group: VIP","timestamp":"2025-09-30T12:15:00.097Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=2.266, pointValue=0.9999999999999999, lots=0.01, result=0.022659999999999996","timestamp":"2025-09-30T12:15:00.098Z"}
+{"calculated_amount":0.022659999999999996,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"VIP","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":0.022659999999999996,"order_id":"2427455735000","order_quantity":0.01,"order_type":"SELL_LIMIT","previous_swap":0,"processing_time_ms":2,"swap_rate":2.266,"swap_type":"points","symbol":"EURUSD","timestamp":"2025-09-30T12:15:00.099Z","user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: 0.022659999999999996 for order 2427455735000","timestamp":"2025-09-30T12:15:00.099Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":0.022659999999999996,"order_id":"2427455735000","previous_swap":0,"success":true,"swap_amount":0.022659999999999996,"timestamp":"2025-09-30T12:15:00.101Z","transaction_id":null,"user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 2430171135000, symbol: AUDCAD, group: VIP","timestamp":"2025-09-30T12:15:00.102Z"}
+{"level":"info","message":"Conversion rate for CAD to USD: 1/1.3921 = 0.7183391997701315","timestamp":"2025-09-30T12:15:00.105Z"}
+{"level":"info","message":"Conversion rate for CAD to USD: 1/1.3921 = 0.7183391997701315","timestamp":"2025-09-30T12:15:00.106Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-1.104, pointValue=0.7183391997701314, lots=0.01, result=-0.00793046476546225","timestamp":"2025-09-30T12:15:00.106Z"}
+{"calculated_amount":-0.00793046476546225,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":0.7183391997701315,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"VIP","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.00793046476546225,"order_id":"2430171135000","order_quantity":0.01,"order_type":"BUY_LIMIT","previous_swap":0,"processing_time_ms":5,"swap_rate":-1.104,"swap_type":"points","symbol":"AUDCAD","timestamp":"2025-09-30T12:15:00.107Z","user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: -0.00793046476546225 for order 2430171135000","timestamp":"2025-09-30T12:15:00.107Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.00793046476546225,"order_id":"2430171135000","previous_swap":0,"success":true,"swap_amount":-0.00793046476546225,"timestamp":"2025-09-30T12:15:00.109Z","transaction_id":null,"user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculating swap for order: 2431389735000, symbol: AUDCAD, group: VIP","timestamp":"2025-09-30T12:15:00.109Z"}
+{"level":"info","message":"Conversion rate for CAD to USD: 1/1.3921 = 0.7183391997701315","timestamp":"2025-09-30T12:15:00.112Z"}
+{"level":"info","message":"Conversion rate for CAD to USD: 1/1.3921 = 0.7183391997701315","timestamp":"2025-09-30T12:15:00.113Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-1.104, pointValue=0.7183391997701314, lots=0.01, result=-0.00793046476546225","timestamp":"2025-09-30T12:15:00.114Z"}
+{"calculated_amount":-0.00793046476546225,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":0.7183391997701315,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"VIP","is_crypto":false,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.00793046476546225,"order_id":"2431389735000","order_quantity":0.01,"order_type":"SELL_LIMIT","previous_swap":0,"processing_time_ms":5,"swap_rate":-1.104,"swap_type":"points","symbol":"AUDCAD","timestamp":"2025-09-30T12:15:00.114Z","user_id":4,"user_type":"live"}
+{"level":"info","message":"Calculated swap charge: -0.00793046476546225 for order 2431389735000","timestamp":"2025-09-30T12:15:00.114Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.00793046476546225,"order_id":"2431389735000","previous_swap":0,"success":true,"swap_amount":-0.00793046476546225,"timestamp":"2025-09-30T12:15:00.118Z","transaction_id":null,"user_id":4,"user_type":"live"}
+{"level":"info","message":"Updating Redis keys for order 3102482449000:","newSwap":-0.08107999999999999,"orderDataKey":"order_data:3102482449000","orderKey":"user_holdings:{live:63}:3102482449000","timestamp":"2025-09-30T12:15:00.123Z","userId":"63","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 3102482449000 with complete mapping","timestamp":"2025-09-30T12:15:00.128Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 3102482449000: -0.08107999999999999","timestamp":"2025-09-30T12:15:00.128Z"}
+{"level":"info","message":"Updating Redis keys for order 4166405654000:","newSwap":-0.04081991068292438,"orderDataKey":"order_data:4166405654000","orderKey":"user_holdings:{live:63}:4166405654000","timestamp":"2025-09-30T12:15:00.129Z","userId":"63","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 4166405654000 with complete mapping","timestamp":"2025-09-30T12:15:00.132Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 4166405654000: -0.04081991068292438","timestamp":"2025-09-30T12:15:00.132Z"}
+{"level":"info","message":"Updating Redis keys for order 1369392897000:","newSwap":-0.08107999999999999,"orderDataKey":"order_data:1369392897000","orderKey":"user_holdings:{live:4}:1369392897000","timestamp":"2025-09-30T12:15:00.132Z","userId":"4","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 1369392897000 with complete mapping","timestamp":"2025-09-30T12:15:00.135Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 1369392897000: -0.08107999999999999","timestamp":"2025-09-30T12:15:00.135Z"}
+{"level":"info","message":"Updating Redis keys for order 2189333479000:","newSwap":-0.08107999999999999,"orderDataKey":"order_data:2189333479000","orderKey":"user_holdings:{live:4}:2189333479000","timestamp":"2025-09-30T12:15:00.135Z","userId":"4","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 2189333479000 with complete mapping","timestamp":"2025-09-30T12:15:00.139Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 2189333479000: -0.08107999999999999","timestamp":"2025-09-30T12:15:00.139Z"}
+{"level":"info","message":"Updating Redis keys for order 3988037254000:","newSwap":0.022659999999999996,"orderDataKey":"order_data:3988037254000","orderKey":"user_holdings:{live:4}:3988037254000","timestamp":"2025-09-30T12:15:00.139Z","userId":"4","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 3988037254000 with complete mapping","timestamp":"2025-09-30T12:15:00.142Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 3988037254000: 0.022659999999999996","timestamp":"2025-09-30T12:15:00.142Z"}
+{"level":"info","message":"Updating Redis keys for order 2427455735000:","newSwap":0.022659999999999996,"orderDataKey":"order_data:2427455735000","orderKey":"user_holdings:{live:4}:2427455735000","timestamp":"2025-09-30T12:15:00.142Z","userId":"4","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 2427455735000 with complete mapping","timestamp":"2025-09-30T12:15:00.145Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 2427455735000: 0.022659999999999996","timestamp":"2025-09-30T12:15:00.146Z"}
+{"level":"info","message":"Updating Redis keys for order 2430171135000:","newSwap":-0.00793046476546225,"orderDataKey":"order_data:2430171135000","orderKey":"user_holdings:{live:4}:2430171135000","timestamp":"2025-09-30T12:15:00.146Z","userId":"4","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 2430171135000 with complete mapping","timestamp":"2025-09-30T12:15:00.149Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 2430171135000: -0.00793046476546225","timestamp":"2025-09-30T12:15:00.149Z"}
+{"level":"info","message":"Updating Redis keys for order 2431389735000:","newSwap":-0.00793046476546225,"orderDataKey":"order_data:2431389735000","orderKey":"user_holdings:{live:4}:2431389735000","timestamp":"2025-09-30T12:15:00.149Z","userId":"4","userType":"live"}
+{"level":"info","message":"Updated Redis keys for order 2431389735000 with complete mapping","timestamp":"2025-09-30T12:15:00.153Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 2431389735000: -0.00793046476546225","timestamp":"2025-09-30T12:15:00.153Z"}
+{"level":"info","message":"Processing demo orders for swap charges","timestamp":"2025-09-30T12:15:00.153Z"}
+{"level":"info","message":"Found 2 open demo orders","timestamp":"2025-09-30T12:15:00.206Z"}
+{"level":"info","message":"Calculating swap for order: 6362862416000, symbol: BTCUSD, group: Group B","timestamp":"2025-09-30T12:15:00.208Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-2672.658, pointValue=0.01, lots=0.01, result=-0.2672658","timestamp":"2025-09-30T12:15:00.211Z"}
+{"calculated_amount":-0.2672658,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"Group B","is_crypto":true,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.2672658,"order_id":"6362862416000","order_quantity":0.01,"order_type":"BUY","previous_swap":0,"processing_time_ms":3,"swap_rate":-2672.658,"swap_type":"points","symbol":"BTCUSD","timestamp":"2025-09-30T12:15:00.211Z","user_id":1,"user_type":"demo"}
+{"level":"info","message":"Calculated swap charge: -0.2672658 for order 6362862416000","timestamp":"2025-09-30T12:15:00.211Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.2672658,"order_id":"6362862416000","previous_swap":0,"success":true,"swap_amount":-0.2672658,"timestamp":"2025-09-30T12:15:00.219Z","transaction_id":null,"user_id":1,"user_type":"demo"}
+{"level":"info","message":"Calculating swap for order: 6441567718000, symbol: BTCUSD, group: Group B","timestamp":"2025-09-30T12:15:00.220Z"}
+{"level":"info","message":"Points swap calculation: swapPoints=-2679.92, pointValue=0.01, lots=0.01, result=-0.267992","timestamp":"2025-09-30T12:15:00.223Z"}
+{"calculated_amount":-0.267992,"calculation_date":"2025-09-30T12:15:00.039Z","conversion_rate":1,"event_type":"calculation","formula_used":"points: swap_points * point_value * lots","group_name":"Group B","is_crypto":true,"is_triple_swap":false,"level":"info","message":"SWAP_CALCULATION","new_total_swap":-0.267992,"order_id":"6441567718000","order_quantity":0.01,"order_type":"BUY_LIMIT","previous_swap":0,"processing_time_ms":3,"swap_rate":-2679.92,"swap_type":"points","symbol":"BTCUSD","timestamp":"2025-09-30T12:15:00.223Z","user_id":1,"user_type":"demo"}
+{"level":"info","message":"Calculated swap charge: -0.267992 for order 6441567718000","timestamp":"2025-09-30T12:15:00.224Z"}
+{"application_date":"2025-09-30T12:15:00.039Z","event_type":"application","level":"info","message":"SWAP_APPLICATION","new_swap":-0.267992,"order_id":"6441567718000","previous_swap":0,"success":true,"swap_amount":-0.267992,"timestamp":"2025-09-30T12:15:00.226Z","transaction_id":null,"user_id":1,"user_type":"demo"}
+{"level":"info","message":"Updating Redis keys for order 6362862416000:","newSwap":-0.2672658,"orderDataKey":"order_data:6362862416000","orderKey":"user_holdings:{demo:1}:6362862416000","timestamp":"2025-09-30T12:15:00.231Z","userId":"1","userType":"demo"}
+{"level":"info","message":"Updated Redis keys for order 6362862416000 with complete mapping","timestamp":"2025-09-30T12:15:00.233Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 6362862416000: -0.2672658","timestamp":"2025-09-30T12:15:00.234Z"}
+{"level":"info","message":"Updating Redis keys for order 6441567718000:","newSwap":-0.267992,"orderDataKey":"order_data:6441567718000","orderKey":"user_holdings:{demo:1}:6441567718000","timestamp":"2025-09-30T12:15:00.234Z","userId":"1","userType":"demo"}
+{"level":"info","message":"Updated Redis keys for order 6441567718000 with complete mapping","timestamp":"2025-09-30T12:15:00.237Z"}
+{"level":"info","message":"Successfully updated Redis swap for order 6441567718000: -0.267992","timestamp":"2025-09-30T12:15:00.238Z"}
+{"demo_orders":{"errors":0,"processed":2,"skipped":0,"swap_amount":0,"updated":2},"errors":null,"event_type":"daily_summary","failed_updates":0,"level":"info","live_orders":{"errors":0,"processed":8,"skipped":0,"swap_amount":0,"updated":8},"message":"DAILY_PROCESSING_SUMMARY","processing_date":"2025-09-30T12:15:00.039Z","processing_time_ms":199,"skipped_orders":0,"successful_updates":10,"timestamp":"2025-09-30T12:15:00.238Z","total_orders_processed":10,"total_swap_amount":0}
+{"date":"Tue Sep 30 2025","demoOrders":{"errors":0,"processed":2,"skipped":0,"totalSwapAmount":0,"updated":2},"level":"info","liveOrders":{"errors":0,"processed":8,"skipped":0,"totalSwapAmount":0,"updated":8},"message":"Daily swap processing completed:","processingTimeMs":199,"timestamp":"2025-09-30T12:15:00.239Z","totalErrors":0,"totalProcessed":10,"totalSkipped":0,"totalSwapAmount":0,"totalUpdated":10}
+{"level":"info","message":"Transaction statistics request from admin 1","timestamp":"2025-09-30T12:15:43.158Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","message":"[get_transaction_stats_1759234543158_unysd2m5c] Fetching transaction statistics","timestamp":"2025-09-30T12:15:43.158Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:18:11.065Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:19:06.461Z"}
+{"level":"info","message":"Deposit request received: live user 4, amount: 1000.5, admin: 1","timestamp":"2025-09-30T12:20:43.476Z"}
+{"level":"info","message":"Deposit processed successfully: live user 4, amount: 1000.5, new balance: 96556.690996","timestamp":"2025-09-30T12:20:43.543Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:21:20.039Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:22:11.549Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:24:20.752Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:25:23.366Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:27:13.560Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:29:17.951Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:31:18.354Z"}
+{"level":"info","message":"Deposit request received: live user 4, amount: 1000.5, admin: 1","timestamp":"2025-09-30T12:32:05.435Z"}
+{"level":"info","message":"Deposit processed successfully: live user 4, amount: 1000.5, new balance: 97557.190996","timestamp":"2025-09-30T12:32:05.506Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:33:19.315Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:34:15.261Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:35:25.359Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:37:21.431Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:39:06.064Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:41:06.377Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:43:04.423Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T12:45:04.427Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-09-30T13:03:13.988Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-03T07:58:52.699Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-03T07:58:52.729Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-03T07:58:53.119Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-03T07:58:53.554Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-03T07:58:54.076Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-03T07:58:54.545Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-03T07:58:54.924Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-03T07:58:55.353Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-03T07:58:55.701Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-03T07:58:56.041Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-03T07:58:56.346Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-03T07:58:56.649Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-03T07:58:56.977Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-03T07:58:57.277Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-03T07:58:57.540Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4839ms","timestamp":"2025-10-03T07:58:57.540Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-03T07:58:57.547Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-03T07:58:57.620Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:26:08.463Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:26:08.480Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:26:08.804Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:26:09.105Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:26:09.405Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:26:09.698Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:26:10.025Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:26:10.310Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:26:10.713Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:26:11.088Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:26:11.351Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:26:11.657Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:26:11.945Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:26:12.385Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:26:12.946Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4482ms","timestamp":"2025-10-04T09:26:12.947Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:26:12.965Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:26:13.078Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:30:37.111Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:30:37.129Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:30:37.452Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:30:37.850Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:30:38.188Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:30:38.582Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:30:38.914Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:30:39.202Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:30:39.428Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:30:39.746Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:30:39.998Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:30:40.340Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:30:40.700Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:30:40.986Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:30:41.169Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4057ms","timestamp":"2025-10-04T09:30:41.169Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:30:41.176Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:30:41.227Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:30:55.777Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:30:55.784Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:30:56.767Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:30:57.248Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:30:57.595Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:30:58.016Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:30:58.433Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:30:58.836Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:30:59.223Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:30:59.551Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:30:59.833Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:31:00.105Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:31:00.362Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:31:00.620Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:31:00.920Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5142ms","timestamp":"2025-10-04T09:31:00.920Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:31:00.932Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:31:00.976Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:41:25.629Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:41:25.639Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:41:25.963Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:41:26.300Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:41:26.611Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:41:26.958Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:41:27.269Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:41:27.603Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:41:27.944Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:41:28.313Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:41:28.687Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:41:29.072Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:41:29.445Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:41:29.817Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:41:30.178Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4546ms","timestamp":"2025-10-04T09:41:30.178Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:41:30.186Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:41:30.259Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:41:37.994Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:41:38.001Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:41:38.358Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:41:38.708Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:41:39.034Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:41:39.339Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:41:39.665Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:41:40.034Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:41:40.371Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:41:40.674Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:41:40.966Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:41:41.259Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:41:41.633Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:41:41.989Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:41:42.278Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4283ms","timestamp":"2025-10-04T09:41:42.279Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:41:42.285Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:41:42.312Z"}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-10-04T09:45:21.299Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571121300_obcuo5s30] Fetching deposit transactions","page":1,"timestamp":"2025-10-04T09:45:21.300Z"}
+{"filtered_count":76,"filtered_sum":14157.37,"level":"info","message":"[get_filtered_transactions_1759571121300_obcuo5s30] Successfully fetched 20 transactions","page_sum":14200.869999999997,"timestamp":"2025-10-04T09:45:21.343Z","total_count_all":76,"total_sum_all":14157.37}
+{"level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"timestamp":"2025-10-04T09:47:38.010Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571258010_o361zoiw1] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:47:38.010Z"}
+{"filtered_count":12,"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759571258010_o361zoiw1] Successfully fetched 12 transactions","page_sum":-16390,"timestamp":"2025-10-04T09:47:38.016Z","total_count_all":12,"total_sum_all":-16390}
+{"end_date":"2025-09-30","level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:49:26.917Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571366918_qnm8n98oh] Fetching deposit transactions","page":1,"timestamp":"2025-10-04T09:49:26.918Z"}
+{"filtered_count":4,"filtered_sum":10200,"level":"info","message":"[get_filtered_transactions_1759571366918_qnm8n98oh] Successfully fetched 20 transactions","page_sum":14200.869999999997,"timestamp":"2025-10-04T09:49:26.932Z","total_count_all":76,"total_sum_all":14157.37}
+{"end_date":"2025-09-30","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:49:44.353Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571384353_ehcnynbzi] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:49:44.353Z"}
+{"filtered_count":9,"filtered_sum":-15290,"level":"info","message":"[get_filtered_transactions_1759571384353_ehcnynbzi] Successfully fetched 12 transactions","page_sum":-16390,"timestamp":"2025-10-04T09:49:44.361Z","total_count_all":12,"total_sum_all":-16390}
+{"end_date":"2025-09-30","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"start_date":"2025-09-23","timestamp":"2025-10-04T09:49:56.922Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571396922_7vy5mt7kj] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:49:56.922Z"}
+{"filtered_count":8,"filtered_sum":-14790,"level":"info","message":"[get_filtered_transactions_1759571396922_7vy5mt7kj] Successfully fetched 12 transactions","page_sum":-16390,"timestamp":"2025-10-04T09:49:56.926Z","total_count_all":12,"total_sum_all":-16390}
+{"end_date":"2025-09-30","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:50:04.823Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571404823_4f1kqa2mq] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:50:04.823Z"}
+{"filtered_count":9,"filtered_sum":-15290,"level":"info","message":"[get_filtered_transactions_1759571404823_4f1kqa2mq] Successfully fetched 12 transactions","page_sum":-16390,"timestamp":"2025-10-04T09:50:04.826Z","total_count_all":12,"total_sum_all":-16390}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:54:05.342Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:54:05.352Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:54:05.679Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:54:05.988Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:54:06.310Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:54:06.631Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:54:07.219Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:54:07.667Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:54:07.999Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:54:08.318Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:54:08.652Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:54:08.938Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:54:09.273Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:54:09.570Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:54:09.889Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4545ms","timestamp":"2025-10-04T09:54:09.889Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:54:09.896Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:54:09.921Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-04T09:54:29.500Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-04T09:54:29.507Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-04T09:54:30.033Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-04T09:54:30.391Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-04T09:54:30.823Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-04T09:54:31.172Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-04T09:54:31.474Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-04T09:54:31.825Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-04T09:54:32.122Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-04T09:54:32.458Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-04T09:54:32.819Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-04T09:54:33.174Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-04T09:54:33.462Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-04T09:54:33.827Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-04T09:54:34.149Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 4647ms","timestamp":"2025-10-04T09:54:34.149Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-04T09:54:34.158Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-04T09:54:34.189Z"}
+{"end_date":"2025-09-30","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:55:02.230Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571702231_lqjeyp8u4] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:55:02.231Z"}
+{"filtered_count":9,"filtered_sum":-15290,"level":"info","message":"[get_filtered_transactions_1759571702231_lqjeyp8u4] Successfully fetched 9 transactions","page_sum":-15290,"timestamp":"2025-10-04T09:55:02.251Z","total_count_all":12,"total_sum_all":-16390}
+{"end_date":"2025-09-30","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:55:10.174Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571710175_76kf4ie66] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:55:10.175Z"}
+{"filtered_count":9,"filtered_sum":-15290,"level":"info","message":"[get_filtered_transactions_1759571710175_76kf4ie66] Successfully fetched 9 transactions","page_sum":-15290,"timestamp":"2025-10-04T09:55:10.192Z","total_count_all":12,"total_sum_all":-16390}
+{"end_date":"2025-09-31","level":"info","limit":20,"message":"Withdrawal transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:58:43.297Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571923297_7g67inrhg] Fetching withdraw transactions","page":1,"timestamp":"2025-10-04T09:58:43.297Z"}
+{"filtered_count":12,"filtered_sum":-16390,"level":"info","message":"[get_filtered_transactions_1759571923297_7g67inrhg] Successfully fetched 12 transactions","page_sum":-16390,"timestamp":"2025-10-04T09:58:43.307Z","total_count_all":12,"total_sum_all":-16390}
+{"end_date":"2025-09-31","level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"start_date":"2025-09-22","timestamp":"2025-10-04T09:59:07.793Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571947793_sitm3gk1u] Fetching deposit transactions","page":1,"timestamp":"2025-10-04T09:59:07.793Z"}
+{"filtered_count":8,"filtered_sum":14202,"level":"info","message":"[get_filtered_transactions_1759571947793_sitm3gk1u] Successfully fetched 8 transactions","page_sum":14202,"timestamp":"2025-10-04T09:59:07.797Z","total_count_all":76,"total_sum_all":14157.37}
+{"level":"info","limit":20,"message":"Deposit transactions request from admin 1","method_type":"CRYPTO","page":1,"timestamp":"2025-10-04T09:59:49.531Z"}
+{"admin_id":1,"admin_role":"superadmin","level":"info","limit":20,"message":"[get_filtered_transactions_1759571989532_d5hv1toia] Fetching deposit transactions","method_type":"CRYPTO","page":1,"timestamp":"2025-10-04T09:59:49.532Z"}
+{"filtered_count":2,"filtered_sum":2001,"level":"info","message":"[get_filtered_transactions_1759571989532_d5hv1toia] Successfully fetched 2 transactions","page_sum":2001,"timestamp":"2025-10-04T09:59:49.536Z","total_count_all":76,"total_sum_all":14157.37}
+{"email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"Deposit transactions request from admin 1","page":1,"timestamp":"2025-10-04T10:01:11.895Z"}
+{"admin_id":1,"admin_role":"superadmin","email":"dhanush777ss@gmail.com","level":"info","limit":20,"message":"[get_filtered_transactions_1759572071895_2vs2771to] Fetching deposit transactions","page":1,"timestamp":"2025-10-04T10:01:11.895Z"}
+{"filtered_count":4,"filtered_sum":4002,"level":"info","message":"[get_filtered_transactions_1759572071895_2vs2771to] Successfully fetched 4 transactions","page_sum":4002,"timestamp":"2025-10-04T10:01:11.903Z","total_count_all":76,"total_sum_all":14157.37}

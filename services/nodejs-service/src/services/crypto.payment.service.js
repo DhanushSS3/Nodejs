@@ -651,6 +651,8 @@ class CryptoPaymentService {
         balance_after: newBalance,
         status: 'completed',
         reference_id: webhookData.merchantOrderId,
+        user_email: user.email, // Store user email for audit purposes
+        method_type: 'CRYPTO', // Set method type as CRYPTO for crypto deposits
         notes: `Crypto deposit via Tylt - ${webhookData.status}`,
         metadata: {
           paymentGateway: 'tylt',

@@ -88,18 +88,24 @@ router.use(applyScope);
  *             summary:
  *               type: object
  *               properties:
- *                 total_sum:
+ *                 total_sum_all_records:
  *                   type: number
- *                   description: Sum of all matching transactions (not just current page)
- *                 total_records:
+ *                   description: Sum of ALL deposits/withdrawals (no filters, only type)
+ *                 total_count_all_records:
  *                   type: integer
- *                   description: Count of all matching transactions
+ *                   description: Count of ALL deposits/withdrawals (no filters, only type)
  *                 filtered_sum:
  *                   type: number
- *                   description: Sum of transactions on current page
- *                 filtered_records:
+ *                   description: Sum of transactions matching applied filters
+ *                 filtered_count:
  *                   type: integer
- *                   description: Count of transactions on current page
+ *                   description: Count of transactions matching applied filters
+ *                 page_sum:
+ *                   type: number
+ *                   description: Sum of transactions on current page only
+ *                 page_count:
+ *                   type: integer
+ *                   description: Count of transactions on current page only
  *     
  *     TransactionStats:
  *       type: object
@@ -144,8 +150,6 @@ router.use(applyScope);
  *     security:
  *       - bearerAuth: []
  *     description: |
- *       Retrieve deposit transactions with advanced filtering options.
- *       
  *       **Access Control:**
  *       - Superadmin: Can view all transactions
  *       - Country-level admin: Can only view transactions from users in their assigned country
@@ -154,31 +158,47 @@ router.use(applyScope);
  *       1. **All deposits**: No filters - returns all deposit transactions
  *       2. **By method_type**: Filter by payment method (BANK, UPI, CRYPTO, etc.)
  *       3. **By email**: Filter by user email (supports partial matching)
- *       4. **Combined**: Use multiple filters together
+ *       4. **By date range**: Filter by transaction date (start_date and/or end_date)
+ *       5. **Combined**: Use multiple filters together
  *       
  *       **Response includes:**
  *       - Paginated transaction records
- *       - Total sum of ALL matching deposits (not just current page)
+ *       - Total sum of ALL deposits (irrespective of filters and pagination)
+ *       - Filtered sum (matching applied filters)
  *       - Pagination metadata
  *     parameters:
- *       - in: query
- *         name: email
- *         schema:
- *           type: string
- *         description: Filter by user email (supports partial matching)
- *         example: "john@example.com"
- *       - in: query
- *         name: method_type
- *         schema:
- *           type: string
- *           enum: [BANK, UPI, SWIFT, IBAN, PAYPAL, CRYPTO, OTHER]
- *         description: Filter by payment method type
- *         example: "BANK"
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
+       - in: query
+         name: email
+         schema:
+           type: string
+         description: Filter by user email (supports partial matching)
+         example: "john@example.com"
+       - in: query
+         name: method_type
+         schema:
+           type: string
+           enum: [BANK, UPI, SWIFT, IBAN, PAYPAL, CRYPTO, OTHER]
+         description: Filter by payment method type
+         example: "BANK"
+       - in: query
+         name: start_date
+         schema:
+           type: string
+           format: date-time
+         description: Filter transactions from this date (ISO 8601 format)
+         example: "2024-01-01"
+       - in: query
+         name: end_date
+         schema:
+           type: string
+           format: date-time
+         description: Filter transactions until this date (ISO 8601 format)
+         example: "2024-12-31"
+       - in: query
+         name: page
+         schema:
+           type: integer
+           minimum: 1
  *           default: 1
  *         description: Page number for pagination
  *       - in: query
@@ -220,10 +240,12 @@ router.use(applyScope);
  *                   hasNextPage: true
  *                   hasPreviousPage: false
  *                 summary:
- *                   total_sum: 75000.00
- *                   total_records: 150
- *                   filtered_sum: 20000.00
- *                   filtered_records: 20
+ *                   total_sum_all_records: 250000.00
+ *                   total_count_all_records: 500
+ *                   filtered_sum: 75000.00
+ *                   filtered_count: 150
+ *                   page_sum: 20000.00
+ *                   page_count: 20
  *       400:
  *         description: Invalid parameters
  *         content:
@@ -269,11 +291,13 @@ router.get('/deposits',
  *       1. **All withdrawals**: No filters - returns all withdrawal transactions
  *       2. **By method_type**: Filter by payment method (BANK, UPI, CRYPTO, etc.)
  *       3. **By email**: Filter by user email (supports partial matching)
- *       4. **Combined**: Use multiple filters together
+ *       4. **By date range**: Filter by transaction date (start_date and/or end_date)
+ *       5. **Combined**: Use multiple filters together
  *       
  *       **Response includes:**
  *       - Paginated transaction records
- *       - Total sum of ALL matching withdrawals (not just current page)
+ *       - Total sum of ALL withdrawals (irrespective of filters and pagination)
+ *       - Filtered sum (matching applied filters)
  *       - Pagination metadata
  *     parameters:
  *       - in: query
@@ -289,6 +313,20 @@ router.get('/deposits',
  *           enum: [BANK, UPI, SWIFT, IBAN, PAYPAL, CRYPTO, OTHER]
  *         description: Filter by payment method type
  *         example: "UPI"
+ *       - in: query
+ *         name: start_date
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter transactions from this date (ISO 8601 format)
+ *         example: "2024-01-01"
+ *       - in: query
+ *         name: end_date
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter transactions until this date (ISO 8601 format)
+ *         example: "2024-12-31"
  *       - in: query
  *         name: page
  *         schema:
@@ -335,10 +373,12 @@ router.get('/deposits',
  *                   hasNextPage: true
  *                   hasPreviousPage: false
  *                 summary:
- *                   total_sum: 42500.00
- *                   total_records: 85
- *                   filtered_sum: 10000.00
- *                   filtered_records: 20
+ *                   total_sum_all_records: 150000.00
+ *                   total_count_all_records: 300
+ *                   filtered_sum: 42500.00
+ *                   filtered_count: 85
+ *                   page_sum: 10000.00
+ *                   page_count: 20
  *       400:
  *         description: Invalid parameters
  *       401:
