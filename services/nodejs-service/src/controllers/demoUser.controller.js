@@ -5,6 +5,7 @@ const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
 const TransactionService = require('../services/transaction.service');
 const logger = require('../services/logger.service');
+const ErrorResponse = require('../utils/errorResponse.util');
 const { IdempotencyService } = require('../services/idempotency.service');
 const { comparePassword } = require('../services/password.service');
 const jwt = require('jsonwebtoken');
@@ -21,10 +22,7 @@ async function signup(req, res) {
     // Validate request
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        errors: errors.array()
-      });
+      return ErrorResponse.validationError(req, res, errors.array(), 'demo user signup');
     }
 
     const {
@@ -188,41 +186,27 @@ async function signup(req, res) {
     return res.status(201).json(result);
 
   } catch (error) {
-    logger.transactionFailure('demo_user_signup', error, {
-      operationId,
-      email: req.body.email
-    });
-
     // Mark idempotency as failed if we have the key
     try {
       const idempotencyKey = IdempotencyService.generateKey(req, 'demo_signup');
       await IdempotencyService.markFailed(idempotencyKey, error);
     } catch (idempotencyError) {
-      logger.error('Failed to mark idempotency as failed', {
-        error: idempotencyError.message
+      logger.error('Failed to mark idempotency as failed', { 
+        error: idempotencyError.message 
       });
     }
 
-    // Handle specific error types
+    // Handle specific error types with clear messages for user action
     if (error.message === 'Email or phone number already exists') {
-      return res.status(409).json({
-        success: false,
-        message: error.message
-      });
+      return ErrorResponse.duplicateError(req, res, 'Email or phone number already exists', 'demo user signup');
     }
 
     if (error.message.includes('Unable to generate unique')) {
-      return res.status(500).json({
-        success: false,
-        message: 'System temporarily unavailable. Please try again.'
-      });
+      return ErrorResponse.serviceUnavailableError(req, res, 'Account generation service');
     }
 
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      operationId
-    });
+    // Handle all other errors with generic response and detailed logging
+    return ErrorResponse.serverError(req, res, error, 'demo user signup');
   }
 }
 

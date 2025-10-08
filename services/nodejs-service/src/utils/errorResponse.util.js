@@ -43,6 +43,42 @@ class ErrorResponse {
   }
 
   /**
+   * Handle duplicate resource errors (email, phone, etc.)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {string} message - Specific duplicate error message
+   * @param {string} operation - Description of the operation
+   */
+  static duplicateError(req, res, message, operation = 'duplicate check') {
+    // Log duplicate errors for debugging
+    Logger.logErrorToFile(new Error('Duplicate Resource Error'), {
+      endpoint: `${req.method} ${req.originalUrl}`,
+      method: req.method,
+      userId: req.user?.sub || req.user?.user_id || req.user?.id || 'anonymous',
+      userType: req.user?.user_type || req.user?.account_type || 'unknown',
+      requestData: {
+        params: req.params,
+        query: req.query,
+        body: Logger.sanitizeRequestBody(req.body)
+      },
+      additionalContext: {
+        duplicate_message: message,
+        operation: operation,
+        ip_address: req.ip,
+        user_agent: req.get('User-Agent')
+      }
+    });
+
+    return res.status(409).json({
+      success: false,
+      message: message,
+      error_code: 'DUPLICATE_ERROR',
+      correlation_id: Logger.generateCorrelationId(),
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
    * Handle authentication errors
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object

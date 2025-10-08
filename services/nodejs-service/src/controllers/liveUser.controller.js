@@ -259,9 +259,9 @@ async function signup(req, res) {
       });
     }
 
-    // Handle specific error types with generic messages
+    // Handle specific error types with clear messages for user action
     if (error.message === 'Email or phone number already exists') {
-      return ErrorResponse.validationError(req, res, [{ msg: 'User already exists with this email or phone number' }], 'live user signup');
+      return ErrorResponse.duplicateError(req, res, 'Email or phone number already exists', 'live user signup');
     }
 
     if (error.message.includes('Unable to generate unique')) {
