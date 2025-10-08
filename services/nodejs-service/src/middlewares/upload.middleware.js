@@ -11,6 +11,33 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: 12 * 1024 * 1024, // 12MB per individual file
+    files: 2, // Maximum 2 files
+    fieldSize: 1024 * 1024, // 1MB per field value
+    fieldNameSize: 100, // 100 bytes per field name
+    fields: 20 // Maximum 20 non-file fields
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept only image files
+    const allowedMimes = [
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/tiff'
+    ];
+    
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type: ${file.mimetype}. Only image files are allowed.`), false);
+    }
+  }
+});
 
 module.exports = upload; 
