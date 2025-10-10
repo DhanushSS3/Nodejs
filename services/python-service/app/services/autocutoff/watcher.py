@@ -54,12 +54,12 @@ async def _clear_flags(user_type: str, user_id: str):
 
 async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, liq: LiquidationEngine):
     ml = await _get_margin_level(user_type, user_id)
-    if ml >= 100.0:
+    if ml >= 50.0:
         await _clear_flags(user_type, user_id)
         return
 
     # Alert zone
-    if 50.0 <= ml < 100.0:
+    if 10.0 <= ml < 50.0:
         # rate-limit via Redis TTL flag with atomic check-and-set
         alert_key = f"autocutoff:alert_sent:{user_type}:{user_id}"
         try:
@@ -79,7 +79,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
                 pass
         
         email = await _get_user_email(user_type, user_id)
-        ok = await notifier.send_alert(user_type=user_type, user_id=user_id, email=email, margin_level=ml, threshold=100.0)
+        ok = await notifier.send_alert(user_type=user_type, user_id=user_id, email=email, margin_level=ml, threshold=50.0)
         if not ok:
             # If email failed, remove the TTL key so we can retry later
             try:
@@ -89,7 +89,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
         return
 
     # Liquidation zone
-    if ml < 50.0:
+    if ml < 10.0:
         liq_key = f"autocutoff:liquidating:{user_type}:{user_id}"
         try:
             got = await redis_cluster.set(liq_key, "1", nx=True)

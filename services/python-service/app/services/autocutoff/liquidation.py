@@ -219,7 +219,7 @@ class LiquidationEngine:
                 # Double-check we still below threshold before closing
                 ml = await self._get_margin_level(user_type, user_id)
                 logger.info("[AutoCutoff] Pre-close margin check: margin_level=%.2f for %s:%s", ml, user_type, user_id)
-                if ml >= 100.0:
+                if ml >= 10.0:
                     logger.info("[AutoCutoff] margin_level %.2f restored for %s:%s; stop liquidation", ml, user_type, user_id)
                     break
 
@@ -324,7 +324,7 @@ class LiquidationEngine:
                 await asyncio.sleep(0.3)
                 ml2 = await self._get_margin_level(user_type, user_id)
                 logger.info("[AutoCutoff] margin_level after close: %.2f for %s:%s", ml2, user_type, user_id)
-                if ml2 >= 100.0:
+                if ml2 >= 10.0:
                     break
             except Exception as e:
                 logger.exception("[AutoCutoff] liquidation iteration error for %s:%s: %s", user_type, user_id, e)

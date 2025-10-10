@@ -12,7 +12,12 @@ const CryptoPayment = require('./cryptoPayment.model');
 const UserTransaction = require('./userTransaction.model');
 const Group = require('./group.model');
 const MoneyRequest = require('./moneyRequest.model');
+const StrategyProviderAccount = require('./strategyProviderAccount.model');
+const CopyFollowerAccount = require('./copyFollowerAccount.model');
+const StrategyProviderOrder = require('./strategyProviderOrder.model');
+const CopyFollowerOrder = require('./copyFollowerOrder.model');
 const { defineAssociations } = require('./associations');
+require('./copyTrading.associations');
 
 // Initialize associations once
 try {
@@ -36,4 +41,8 @@ module.exports = {
   UserTransaction,
   Group,
   MoneyRequest,
+  StrategyProviderAccount,
+  CopyFollowerAccount,
+  StrategyProviderOrder,
+  CopyFollowerOrder,
 };
