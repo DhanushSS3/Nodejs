@@ -316,7 +316,8 @@ class AdminUserManagementService {
     // Additional fields for live users only
     const liveOnlyFields = [
       'mam_id', 'mam_status', 'pam_id', 'pam_status',
-      'copy_trading_wallet', 'copytrader_id', 'copytrading_status', 'copytrading_alloted_time'
+      'copy_trading_wallet', 'copytrader_id', 'copytrading_status', 'copytrading_alloted_time',
+      'sending_orders'
     ];
     
     // Extract common fields
