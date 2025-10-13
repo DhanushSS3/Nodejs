@@ -121,3 +121,241 @@
 {"level":"warn","message":"Authentication failed - Invalid or expired token for POST /: jwt expired","timestamp":"2025-10-09T10:22:49.165Z"}
 {"level":"info","message":"Authentication successful for user 36 on POST /","timestamp":"2025-10-09T10:23:25.816Z"}
 {"level":"info","message":"Authentication successful for user 36 on GET /","timestamp":"2025-10-09T10:24:08.087Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-13T11:11:49.712Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-13T11:11:49.723Z"}
+{"level":"error","message":"Groups sync failed: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncAllGroupsToRedis (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:173:29)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async StartupCacheService.initialize (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\startup.cache.service.js:22:28)\n    at async C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\index.js:38:7","timestamp":"2025-10-13T11:11:49.732Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-13T11:11:49.768Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-13T11:12:31.047Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-13T11:12:31.054Z"}
+{"level":"error","message":"Groups sync failed: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncAllGroupsToRedis (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:173:29)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async StartupCacheService.initialize (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\startup.cache.service.js:22:28)\n    at async C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\index.js:38:7","timestamp":"2025-10-13T11:12:31.068Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-13T11:12:31.099Z"}
+{"level":"info","message":"Authentication successful for user 36 on POST /close","timestamp":"2025-10-13T11:12:47.552Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-10-13T11:13:02.460Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /close: jwt expired","timestamp":"2025-10-13T11:13:12.276Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /half-spreads","timestamp":"2025-10-13T11:13:25.863Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T11:13:25.864Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T11:13:25.865Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:13:25.865Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T11:13:25.869Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T11:13:25.874Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T11:13:25.882Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T11:13:25.882Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:13:25.887Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:13:25.952Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:13:25.983Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:13:25.984Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:13:25.985Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:13:25.985Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1293,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-10-13T11:04:10.934Z\",\"total_synced\":1292,\"sync_duration_ms\":12725,\"sync_version\":\"1.0\"}","timestamp":"2025-10-13T11:13:26.002Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:13:26.003Z"}
+{"level":"info","message":"Found 115 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:13:26.012Z"}
+{"level":"info","message":"Processing 115 keys: [\"groups:{Standard}:XAUUSD\",\"groups:{Standard}:XETUSD\",\"groups:{Standard}:USDTUSD\"]...","timestamp":"2025-10-13T11:13:26.012Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T11:13:26.252Z"}
+{"level":"info","message":"Successfully retrieved 115 groups for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:13:26.276Z"}
+{"level":"info","message":"[USER] Found 115 groups for Standard","timestamp":"2025-10-13T11:13:26.276Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:13:26.286Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:13:26.287Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:13:26.287Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:13:26.287Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1293,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-10-13T11:04:10.934Z\",\"total_synced\":1292,\"sync_duration_ms\":12725,\"sync_version\":\"1.0\"}","timestamp":"2025-10-13T11:13:26.297Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:13:26.297Z"}
+{"level":"info","message":"Found 115 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:13:26.301Z"}
+{"level":"info","message":"Processing 115 keys: [\"groups:{Standard}:XAUUSD\",\"groups:{Standard}:XETUSD\",\"groups:{Standard}:USDTUSD\"]...","timestamp":"2025-10-13T11:13:26.302Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /","timestamp":"2025-10-13T11:13:26.327Z"}
+{"level":"info","message":"Successfully retrieved 115 groups for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:13:26.597Z"}
+{"level":"info","message":"[USER] Found 115 groups for Standard","timestamp":"2025-10-13T11:13:26.598Z"}
+{"level":"info","message":"Authentication successful for user 36 on POST /close","timestamp":"2025-10-13T11:13:28.573Z"}
+{"level":"info","message":"Authentication successful for user 36 on POST /close","timestamp":"2025-10-13T11:13:35.845Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /half-spreads","timestamp":"2025-10-13T11:14:33.697Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T11:14:33.697Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T11:14:33.698Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:14:33.698Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T11:14:33.699Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T11:14:33.700Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T11:14:33.702Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T11:14:33.702Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T11:14:33.832Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-10-13T11:15:33.470Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-10-13T11:16:26.213Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-10-13T11:17:26.251Z"}
+{"level":"info","message":"Authentication successful for user 1 on GET /dropdown","timestamp":"2025-10-13T11:17:38.238Z"}
+{"level":"info","message":"Superadmin 1 accessed groups dropdown - 10 groups","timestamp":"2025-10-13T11:17:38.263Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /half-spreads: jwt expired","timestamp":"2025-10-13T11:18:24.535Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /me: jwt expired","timestamp":"2025-10-13T11:18:24.546Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /me: jwt expired","timestamp":"2025-10-13T11:18:24.554Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /my-group: jwt malformed","timestamp":"2025-10-13T11:18:24.568Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for GET /my-group: jwt malformed","timestamp":"2025-10-13T11:18:24.574Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /half-spreads","timestamp":"2025-10-13T11:18:27.743Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T11:18:27.744Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T11:18:27.745Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:18:27.745Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T11:18:27.755Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:18:27.759Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T11:18:27.765Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T11:18:27.768Z"}
+{"level":"info","message":"Total keys found across cluster: 0","timestamp":"2025-10-13T11:18:27.768Z"}
+{"level":"warn","message":"No Redis keys found for group Standard, checking database...","timestamp":"2025-10-13T11:18:27.768Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:18:27.780Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:18:27.809Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:18:27.816Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:18:27.816Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:18:27.816Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:18:27.949Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:18:27.949Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:18:27.956Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:18:27.965Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:18:27.965Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:18:27.965Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:18:27.980Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:18:27.980Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:18:27.980Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:18:27.984Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:18:27.984Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:18:28.003Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:18:28.003Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:18:28.003Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:18:28.003Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:18:28.017Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:18:28.017Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:18:28.024Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:18:28.032Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:18:28.032Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:18:28.032Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:18:28.039Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:18:28.039Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:18:28.039Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:18:28.043Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:18:28.043Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /","timestamp":"2025-10-13T11:18:28.148Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /closed?page=1","timestamp":"2025-10-13T11:18:32.849Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /half-spreads","timestamp":"2025-10-13T11:19:10.836Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T11:19:10.837Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T11:19:10.837Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:19:10.837Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T11:19:10.843Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T11:19:10.848Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:19:10.869Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T11:19:10.871Z"}
+{"level":"info","message":"Total keys found across cluster: 0","timestamp":"2025-10-13T11:19:10.871Z"}
+{"level":"warn","message":"No Redis keys found for group Standard, checking database...","timestamp":"2025-10-13T11:19:10.871Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:19:10.908Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:19:10.988Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:19:10.989Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:19:10.989Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:19:10.989Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:19:11.016Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:19:11.016Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:19:11.039Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:19:11.062Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:19:11.062Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:19:11.062Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:19:11.068Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:19:11.069Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:19:11.069Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:11.072Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:11.072Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:19:11.185Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:19:11.186Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:19:11.186Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:19:11.186Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:19:11.204Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:19:11.204Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:19:11.235Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:19:11.285Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:19:11.285Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:19:11.285Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:19:11.294Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:19:11.294Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:19:11.294Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:11.299Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:11.300Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /","timestamp":"2025-10-13T11:19:11.333Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /half-spreads","timestamp":"2025-10-13T11:19:34.808Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T11:19:34.809Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T11:19:34.809Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:19:34.809Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T11:19:34.813Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T11:19:34.816Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T11:19:34.819Z"}
+{"level":"info","message":"Total keys found across cluster: 0","timestamp":"2025-10-13T11:19:34.820Z"}
+{"level":"warn","message":"No Redis keys found for group Standard, checking database...","timestamp":"2025-10-13T11:19:34.820Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:19:34.839Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /me","timestamp":"2025-10-13T11:19:34.862Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:19:35.157Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:19:35.158Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:19:35.158Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:19:35.159Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:19:35.190Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:19:35.191Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:19:35.202Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:19:35.222Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:19:35.222Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:19:35.223Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:19:35.233Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:19:35.233Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:19:35.233Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:35.238Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:35.238Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /my-group","timestamp":"2025-10-13T11:19:35.248Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:19:35.249Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:19:35.249Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:19:35.249Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:19:35.333Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:19:35.334Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:19:35.344Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:19:35.364Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:19:35.365Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:19:35.365Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:19:35.373Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:19:35.374Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:19:35.374Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:35.377Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:19:35.377Z"}
+{"level":"info","message":"Authentication successful for user 36 on GET /","timestamp":"2025-10-13T11:19:35.408Z"}
+{"level":"info","message":"Authentication successful for user 36 on POST /logout","timestamp":"2025-10-13T11:20:28.940Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-10-13T11:20:36.486Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T11:20:36.488Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T11:20:36.488Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:20:36.488Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T11:20:36.497Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-10-13T11:20:36.526Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T11:20:36.532Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T11:20:36.544Z"}
+{"level":"info","message":"Total keys found across cluster: 0","timestamp":"2025-10-13T11:20:36.544Z"}
+{"level":"warn","message":"No Redis keys found for group Standard, checking database...","timestamp":"2025-10-13T11:20:36.545Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-10-13T11:20:36.557Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-10-13T11:20:36.835Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:20:36.836Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:20:36.836Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:20:36.836Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:20:36.870Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:20:36.870Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:20:36.892Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:20:36.909Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:20:36.909Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:20:36.909Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:20:36.915Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:20:36.915Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:20:36.915Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:20:36.918Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:20:36.918Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-10-13T11:20:36.923Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T11:20:36.923Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T11:20:36.923Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T11:20:36.923Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":0,\"cache_pattern\":\"groups:*\",\"last_sync\":\"Never\",\"total_synced\":0,\"sync_duration_ms\":0,\"sync_version\":\"Unknown\"}","timestamp":"2025-10-13T11:20:36.935Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T11:20:36.935Z"}
+{"level":"info","message":"Found 0 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T11:20:36.949Z"}
+{"level":"info","message":"Total group keys in cache: 0","timestamp":"2025-10-13T11:20:36.962Z"}
+{"level":"info","message":"[USER] Found 0 groups for Standard","timestamp":"2025-10-13T11:20:36.963Z"}
+{"level":"warn","message":"[USER] No groups found in cache for Standard, checking database...","timestamp":"2025-10-13T11:20:36.963Z"}
+{"level":"info","message":"[USER] Found 115 groups in database for Standard","timestamp":"2025-10-13T11:20:36.969Z"}
+{"level":"info","message":"Caching 115 groups for Standard...","timestamp":"2025-10-13T11:20:36.969Z"}
+{"level":"info","message":"Syncing group ID 1: Standard:AUDCHF","timestamp":"2025-10-13T11:20:36.969Z"}
+{"level":"error","message":"Failed to sync group 1 from database: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:20:36.971Z"}
+{"level":"error","message":"Failed to get groups for user-group-from-jwt: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncGroupFromDB (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:408:25)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async getGroupsByName (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\controllers\\groups.controller.js:145:13)","timestamp":"2025-10-13T11:20:36.971Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /","timestamp":"2025-10-13T11:20:37.014Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-13T11:21:13.514Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-13T11:21:13.534Z"}
+{"level":"error","message":"Groups sync failed: group.created_at.toISOString is not a function","stack":"TypeError: group.created_at.toISOString is not a function\n    at GroupsCacheService.groupToRedisHash (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:83:36)\n    at GroupsCacheService.syncAllGroupsToRedis (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\groups.cache.service.js:173:29)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async StartupCacheService.initialize (C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\src\\services\\startup.cache.service.js:22:28)\n    at async C:\\Users\\Dhanush\\Livefxhub-Backend\\services\\nodejs-service\\index.js:38:7","timestamp":"2025-10-13T11:21:13.547Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-13T11:21:13.629Z"}

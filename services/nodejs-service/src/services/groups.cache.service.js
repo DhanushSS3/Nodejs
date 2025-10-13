@@ -80,8 +80,8 @@ class GroupsCacheService {
       contract_size: group.contract_size ? group.contract_size.toString() : '',
       profit: group.profit || '',
       swap_type: group.swap_type || '',
-      created_at: group.created_at.toISOString(),
-      updated_at: group.updated_at.toISOString(),
+      created_at: group.created_at ? (group.created_at instanceof Date ? group.created_at.toISOString() : new Date(group.created_at).toISOString()) : '',
+      updated_at: group.updated_at ? (group.updated_at instanceof Date ? group.updated_at.toISOString() : new Date(group.updated_at).toISOString()) : '',
       // Add cache metadata
       cached_at: new Date().toISOString(),
       cache_version: '1.0'

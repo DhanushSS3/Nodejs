@@ -249,3 +249,8 @@
 {"component":"python_repo_lua","event":"order_place_eval","user_type":"live","user_id":"4","order_id":"2189333479000","symbol":"EURUSD","ok":true,"reason":null,"timing_us":{"exists_order":6,"portfolio_updates":9,"total":1499,"exists_user":30,"hget_leverage":17,"json_decode":72,"hset_order":420}}
 {"component":"python_api","endpoint":"orders/instant/execute","status":"success","order_id":"2189333479000","flow":"local","durations_ms":{"executor_ms":34,"provider_send_ms":null}}
 {"component":"python_api","endpoint":"orders/instant/execute","status":"error","reason":"missing_group_data","durations_ms":{"executor_ms":28}}
+{"component":"redis_tagged_empty","user_type":"live","user_id":"36","tagged_key":"user:{live:36}:config"}
+{"component":"redis_tagged_empty","user_type":"live","user_id":"63","tagged_key":"user:{live:63}:config"}
+{"component":"python_repo_lua","event":"order_place_eval","user_type":"live","user_id":"36","order_id":"5480792291000","symbol":"AUDCHF","ok":true,"reason":null,"timing_us":{"exists_order":155,"portfolio_updates":4,"total":1753,"exists_user":680,"hget_leverage":7,"json_decode":53,"hset_order":66}}
+{"component":"python_api","endpoint":"orders/instant/execute","status":"success","order_id":"5480792291000","flow":"provider","durations_ms":{"executor_ms":33,"provider_send_ms":0}}
+{"ts":"2025-10-13T11:26:47.995Z","component":"node_api","endpoint":"placeInstantOrder","operationId":"instant_place_1760354807921_dep6s5","order_id":"5480792291000","status":"success","flow":"provider","durations_ms":{"total_ms":72,"validate_ms":0,"id_generate_ms":0,"db_preinsert_ms":7,"py_roundtrip_ms":41,"db_post_success_ms":7,"user_margin_ms":0}}

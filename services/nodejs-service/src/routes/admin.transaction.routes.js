@@ -160,55 +160,54 @@ router.use(applyScope);
  *       3. **By email**: Filter by user email (supports partial matching)
  *       4. **By date range**: Filter by transaction date (start_date and/or end_date)
  *       5. **Combined**: Use multiple filters together
- *       
  *       **Response includes:**
  *       - Paginated transaction records
  *       - Total sum of ALL deposits (irrespective of filters and pagination)
  *       - Filtered sum (matching applied filters)
  *       - Pagination metadata
- *     parameters:
-       - in: query
-         name: email
-         schema:
-           type: string
-         description: Filter by user email (supports partial matching)
-         example: "john@example.com"
-       - in: query
-         name: method_type
-         schema:
-           type: string
-           enum: [BANK, UPI, SWIFT, IBAN, PAYPAL, CRYPTO, OTHER]
-         description: Filter by payment method type
-         example: "BANK"
-       - in: query
-         name: start_date
-         schema:
-           type: string
-           format: date-time
-         description: Filter transactions from this date (ISO 8601 format)
-         example: "2024-01-01"
-       - in: query
-         name: end_date
-         schema:
-           type: string
-           format: date-time
-         description: Filter transactions until this date (ISO 8601 format)
-         example: "2024-12-31"
-       - in: query
-         name: page
-         schema:
-           type: integer
-           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of records per page (max 100)
+     *     parameters:
+     *       - in: query
+     *         name: email
+     *         schema:
+     *           type: string
+     *         description: Filter by user email (supports partial matching)
+     *         example: "john@example.com"
+     *       - in: query
+     *         name: method_type
+     *         schema:
+     *           type: string
+     *           enum: [BANK, UPI, SWIFT, IBAN, PAYPAL, CRYPTO, OTHER]
+     *         description: Filter by payment method type
+     *         example: "BANK"
+     *       - in: query
+     *         name: start_date
+     *         schema:
+     *           type: string
+     *           format: date-time
+     *         description: Filter transactions from this date (ISO 8601 format)
+     *         example: "2024-01-01"
+     *       - in: query
+     *         name: end_date
+     *         schema:
+     *           type: string
+     *           format: date-time
+     *         description: Filter transactions until this date (ISO 8601 format)
+     *         example: "2024-12-31"
+     *       - in: query
+     *         name: page
+     *         schema:
+     *           type: integer
+     *           minimum: 1
+     *           default: 1
+     *         description: Page number for pagination
+     *       - in: query
+     *         name: limit
+     *         schema:
+     *           type: integer
+     *           minimum: 1
+     *           maximum: 100
+     *           default: 20
+     *         description: Number of records per page (max 100)
  *     responses:
  *       200:
  *         description: Deposit transactions retrieved successfully

@@ -95,11 +95,11 @@ const { handleValidationErrors } = require('../middlewares/error.middleware');
  *           schema:
  *             $ref: '#/components/schemas/TransactionRequest'
  *           example:
-             userType: "live"
-             amount: 1000.50
-             notes: "Initial deposit for new user"
-             referenceId: "BANK_REF_123456"
-             method_type: "BANK"
+ *             userType: "live"
+ *             amount: 1000.50
+ *             notes: "Initial deposit for new user"
+ *             referenceId: "BANK_REF_123456"
+ *             method_type: "BANK"
  *     responses:
  *       200:
  *         description: deposit processed successfully
