@@ -1119,3 +1119,98 @@
 {"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:45:53.632Z"}
 {"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:45:53.632Z"}
 {"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:45:53.845Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-13T12:48:42.694Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-13T12:48:42.712Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-13T12:48:43.012Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-13T12:48:43.324Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-13T12:48:43.598Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-13T12:48:43.907Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-13T12:48:44.167Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-13T12:48:44.780Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-13T12:48:45.582Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-13T12:48:46.238Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-13T12:48:46.844Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-13T12:48:47.524Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-13T12:48:48.138Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-13T12:48:48.887Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-13T12:48:49.641Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 6944ms","timestamp":"2025-10-13T12:48:49.641Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-13T12:48:49.656Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-13T12:48:49.916Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-10-13T12:49:02.720Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T12:49:02.721Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T12:49:02.721Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:49:02.721Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T12:49:02.754Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-10-13T12:49:02.782Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T12:49:02.785Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:49:02.817Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:49:02.817Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /me","timestamp":"2025-10-13T12:49:02.826Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-10-13T12:49:02.876Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T12:49:02.878Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T12:49:02.878Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T12:49:02.878Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-10-13T12:48:49.656Z\",\"total_synced\":1292,\"sync_duration_ms\":6944,\"sync_version\":\"1.0\"}","timestamp":"2025-10-13T12:49:02.903Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T12:49:02.904Z"}
+{"level":"info","message":"Found 115 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:49:02.918Z"}
+{"level":"info","message":"Processing 115 keys: [\"groups:{Standard}:XAUUSD\",\"groups:{Standard}:XETUSD\",\"groups:{Standard}:USDTUSD\"]...","timestamp":"2025-10-13T12:49:02.918Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:49:03.169Z"}
+{"level":"info","message":"Successfully retrieved 115 groups for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:49:03.221Z"}
+{"level":"info","message":"[USER] Found 115 groups for Standard","timestamp":"2025-10-13T12:49:03.221Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /my-group","timestamp":"2025-10-13T12:49:03.236Z"}
+{"level":"info","message":"=== CONTROLLER START: getGroupsByName ===","timestamp":"2025-10-13T12:49:03.242Z"}
+{"level":"info","message":"User access: extracting group from JWT: \"Standard\"","timestamp":"2025-10-13T12:49:03.242Z"}
+{"level":"info","message":"[USER] Searching for groups with name: \"Standard\"","timestamp":"2025-10-13T12:49:03.243Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /","timestamp":"2025-10-13T12:49:03.259Z"}
+{"level":"info","message":"Cache stats: {\"total_cached_groups\":1292,\"cache_pattern\":\"groups:*\",\"last_sync\":\"2025-10-13T12:48:49.656Z\",\"total_synced\":1292,\"sync_duration_ms\":6944,\"sync_version\":\"1.0\"}","timestamp":"2025-10-13T12:49:03.299Z"}
+{"level":"info","message":"Searching Redis with pattern: groups:{Standard}:* for group: Standard","timestamp":"2025-10-13T12:49:03.300Z"}
+{"level":"info","message":"Found 115 total keys matching pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:49:03.313Z"}
+{"level":"info","message":"Processing 115 keys: [\"groups:{Standard}:XAUUSD\",\"groups:{Standard}:XETUSD\",\"groups:{Standard}:USDTUSD\"]...","timestamp":"2025-10-13T12:49:03.313Z"}
+{"level":"info","message":"Successfully retrieved 115 groups for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:49:03.671Z"}
+{"level":"info","message":"[USER] Found 115 groups for Standard","timestamp":"2025-10-13T12:49:03.671Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /instant/place","timestamp":"2025-10-13T12:49:30.929Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-10-13T12:50:03.191Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T12:50:03.192Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T12:50:03.192Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:50:03.192Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T12:50:03.193Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T12:50:03.194Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:50:03.195Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:50:03.195Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:50:03.371Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 50000, admin: 1","timestamp":"2025-10-13T12:50:29.049Z"}
+{"level":"info","message":"Withdrawal processed successfully: live user 4, amount: 50000, new balance: 45529.160996000006","timestamp":"2025-10-13T12:50:29.143Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 30000, admin: 1","timestamp":"2025-10-13T12:50:49.191Z"}
+{"level":"info","message":"Withdrawal processed successfully: live user 4, amount: 30000, new balance: 15529.160995999999","timestamp":"2025-10-13T12:50:49.290Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-10-13T12:51:04.313Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T12:51:04.314Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T12:51:04.314Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:51:04.314Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T12:51:04.320Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T12:51:04.323Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:51:04.334Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:51:04.335Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:51:04.611Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 3000, admin: 1","timestamp":"2025-10-13T12:51:11.673Z"}
+{"level":"info","message":"Withdrawal processed successfully: live user 4, amount: 3000, new balance: 12529.160996","timestamp":"2025-10-13T12:51:11.755Z"}
+{"level":"info","message":"Withdrawal request received: live user 4, amount: 3000, admin: 1","timestamp":"2025-10-13T12:51:22.811Z"}
+{"level":"info","message":"Withdrawal processed successfully: live user 4, amount: 3000, new balance: 9529.160996","timestamp":"2025-10-13T12:51:22.888Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-10-13T12:52:12.922Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T12:52:12.922Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T12:52:12.923Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:52:12.923Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T12:52:12.924Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T12:52:12.925Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:52:12.927Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:52:12.927Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:52:13.116Z"}
+{"level":"info","message":"Authentication successful for user 4 on GET /half-spreads","timestamp":"2025-10-13T12:53:15.186Z"}
+{"level":"info","message":"=== CONTROLLER START: getHalfSpreads ===","timestamp":"2025-10-13T12:53:15.187Z"}
+{"level":"info","message":"User group from JWT: \"Standard\"","timestamp":"2025-10-13T12:53:15.187Z"}
+{"level":"info","message":"Scanning Redis cluster for pattern: groups:{Standard}:*","timestamp":"2025-10-13T12:53:15.187Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7001","timestamp":"2025-10-13T12:53:15.191Z"}
+{"level":"info","message":"Found 0 keys on node 127.0.0.1:7002","timestamp":"2025-10-13T12:53:15.193Z"}
+{"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:53:15.195Z"}
+{"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:53:15.196Z"}
+{"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:53:15.518Z"}
