@@ -5,6 +5,7 @@ const DemoUserOrder = require('../../models/demoUserOrder.model');
 const LiveUser = require('../../models/liveUser.model');
 const DemoUser = require('../../models/demoUser.model');
 const OrderRejection = require('../../models/orderRejection.model');
+const OrderLifecycleId = require('../../models/orderLifecycleId.model');
 const { updateUserUsedMargin } = require('../user.margin.service');
 // Redis cluster (used to fetch canonical order data if SQL row missing)
 const { redisCluster } = require('../../../config/redis');
@@ -106,6 +107,81 @@ async function handleOrderRejectionRecord(msg) {
       error: error.message,
       canonical_order_id: String(canonical_order_id),
       rejection_type
+    });
+    throw error;
+  }
+}
+
+async function handleCloseIdUpdate(msg) {
+  const { order_id, user_id, user_type, close_id } = msg || {};
+  
+  if (!order_id || !user_id || !user_type || !close_id) {
+    throw new Error('Missing required fields in close_id update message');
+  }
+
+  const OrderModel = getOrderModel(String(user_type));
+  
+  logger.info('Processing close_id update', {
+    order_id: String(order_id),
+    user_id: String(user_id),
+    user_type: String(user_type),
+    close_id: String(close_id)
+  });
+
+  try {
+    // Update main order table with close_id
+    const [updatedRows] = await OrderModel.update(
+      { close_id: String(close_id).trim() },
+      { where: { order_id: String(order_id) } }
+    );
+
+    if (updatedRows === 0) {
+      logger.warn('No order found to update with close_id', {
+        order_id: String(order_id),
+        close_id: String(close_id)
+      });
+    } else {
+      logger.info('Order updated with close_id', {
+        order_id: String(order_id),
+        close_id: String(close_id),
+        updated_rows: updatedRows
+      });
+    }
+
+    // Create lifecycle record for complete audit trail
+    const [lifecycleRecord, created] = await OrderLifecycleId.findOrCreate({
+      where: {
+        order_id: String(order_id),
+        id_type: 'close_id',
+        lifecycle_id: String(close_id)
+      },
+      defaults: {
+        status: 'active',
+        notes: 'Autocutoff close ID - saved before provider send'
+      }
+    });
+
+    if (created) {
+      logger.info('OrderLifecycleId record created', {
+        order_id: String(order_id),
+        close_id: String(close_id),
+        lifecycle_record_id: lifecycleRecord.id
+      });
+    } else {
+      logger.info('OrderLifecycleId record already exists', {
+        order_id: String(order_id),
+        close_id: String(close_id),
+        existing_record_id: lifecycleRecord.id
+      });
+    }
+
+  } catch (error) {
+    logger.error('Failed to save close_id to database', {
+      error: error.message,
+      order_id: String(order_id),
+      user_id: String(user_id),
+      user_type: String(user_type),
+      close_id: String(close_id)
     });
     throw error;
   }
@@ -659,6 +735,8 @@ async function startOrdersDbConsumer() {
         // Route different message types
         if (payload.type === 'ORDER_REJECTION_RECORD') {
           await handleOrderRejectionRecord(payload);
+        } else if (payload.type === 'ORDER_CLOSE_ID_UPDATE') {
+          await handleCloseIdUpdate(payload);
         } else {
           await applyDbUpdate(payload);
         }

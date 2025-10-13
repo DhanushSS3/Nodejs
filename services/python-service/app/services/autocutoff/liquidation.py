@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Tuple
 
 import orjson
@@ -16,6 +17,10 @@ from app.services.orders.id_generator import (
 
 logger = logging.getLogger(__name__)
 
+# RabbitMQ configuration for DB updates
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
+DB_UPDATE_QUEUE = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+
 
 def _safe_float(v) -> Optional[float]:
     try:
@@ -24,6 +29,57 @@ def _safe_float(v) -> Optional[float]:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+async def _save_close_id_to_database(order_id: str, close_id: str, user_type: str, user_id: str) -> bool:
+    """
+    Save close_id to database immediately when generated for autocutoff.
+    This ensures close_id is persisted BEFORE sending to provider.
+    
+    Returns:
+        bool: True if successfully saved, False otherwise
+    """
+    try:
+        # Create DB update message
+        db_msg = {
+            "type": "ORDER_CLOSE_ID_UPDATE",
+            "order_id": str(order_id),
+            "user_id": str(user_id),
+            "user_type": str(user_type),
+            "close_id": str(close_id),
+        }
+        
+        # Connect to RabbitMQ and publish message
+        connection = await aio_pika.connect_robust(RABBITMQ_URL)
+        async with connection:
+            channel = await connection.channel()
+            
+            # Declare queue to ensure it exists
+            await channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
+            
+            # Create message
+            message = aio_pika.Message(
+                body=orjson.dumps(db_msg),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+            )
+            
+            # Publish to DB update queue
+            await channel.default_exchange.publish(
+                message, routing_key=DB_UPDATE_QUEUE
+            )
+            
+        logger.info(
+            "[AUTOCUTOFF:CLOSE_ID_SAVED] order_id=%s close_id=%s user=%s:%s",
+            order_id, close_id, user_type, user_id
+        )
+        return True
+        
+    except Exception as e:
+        logger.error(
+            "[AUTOCUTOFF:CLOSE_ID_SAVE_FAILED] order_id=%s close_id=%s user=%s:%s error=%s",
+            order_id, close_id, user_type, user_id, str(e)
+        )
+        return False
 
 
 async def _get_market_bid_ask(symbol: str) -> Tuple[Optional[float], Optional[float]]:
@@ -245,7 +301,20 @@ class LiquidationEngine:
                     sending_orders = ""
                 if user_type == "live" and sending_orders == "barclays":
                     # Generate provider lifecycle IDs via Redis-backed counters (compatible with Node format)
-                    payload["close_id"] = generate_close_id()
+                    close_id = generate_close_id()
+                    payload["close_id"] = close_id
+                    
+                    # 🆕 CRITICAL: Save close_id to database IMMEDIATELY before sending to provider
+                    # This ensures close_id is persisted even if provider confirmation fails
+                    try:
+                        await _save_close_id_to_database(order_id, close_id, user_type, user_id)
+                    except Exception as e:
+                        logger.error(
+                            "[AUTOCUTOFF:CLOSE_ID_DB_SAVE_ERROR] order_id=%s close_id=%s error=%s",
+                            order_id, close_id, str(e)
+                        )
+                        # Continue with liquidation even if DB save fails
+                        # The close_id will still be in Redis and can be recovered
 
                     # Determine if TP/SL are active to send provider cancels first
                     def _is_active(v) -> bool:

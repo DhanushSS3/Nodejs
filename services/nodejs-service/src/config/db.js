@@ -10,6 +10,18 @@ const sequelize = new Sequelize(
     port: process.env.DB_PORT,
     dialect: 'mysql',
     logging: false,
+    timezone: '+00:00', // Force UTC timezone for all operations
+    dialectOptions: {
+      timezone: 'Z',    // MySQL UTC timezone (equivalent to +00:00)
+      dateStrings: true,
+      typeCast: function (field, next) {
+        // Cast DATETIME fields to UTC
+        if (field.type === 'DATETIME') {
+          return field.string();
+        }
+        return next();
+      }
+    },
     pool: {
       max: 100,        // Increased from 50 to handle 1000 users with concurrent orders
       min: 15,         // Increased from 0 to keep warm connections (eliminates handshake latency)

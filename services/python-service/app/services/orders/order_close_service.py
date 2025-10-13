@@ -1,9 +1,11 @@
 import time
 import logging
 import asyncio
+import os
 from typing import Any, Dict, Optional, Tuple, List
 
 import orjson
+import aio_pika
 from app.config.redis_config import redis_cluster
 from app.services.orders.sl_tp_repository import remove_order_triggers
 from app.services.orders.order_repository import (
@@ -22,9 +24,64 @@ from app.services.logging.provider_logger import get_provider_errors_logger
 logger = logging.getLogger(__name__)
 error_logger = get_provider_errors_logger()
 
+# RabbitMQ configuration for DB updates
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
+DB_UPDATE_QUEUE = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
+
 # User-level locks to prevent race conditions during order operations
 _user_locks = {}
 _locks_lock = asyncio.Lock()
+
+
+async def _save_close_id_to_database(order_id: str, close_id: str, user_type: str, user_id: str) -> bool:
+    """
+    Save close_id to database immediately when generated for manual closes.
+    This ensures close_id is persisted BEFORE sending to provider.
+    
+    Returns:
+        bool: True if successfully saved, False otherwise
+    """
+    try:
+        # Create DB update message
+        db_msg = {
+            "type": "ORDER_CLOSE_ID_UPDATE",
+            "order_id": str(order_id),
+            "user_id": str(user_id),
+            "user_type": str(user_type),
+            "close_id": str(close_id),
+        }
+        
+        # Connect to RabbitMQ and publish message
+        connection = await aio_pika.connect_robust(RABBITMQ_URL)
+        async with connection:
+            channel = await connection.channel()
+            
+            # Declare queue to ensure it exists
+            await channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
+            
+            # Create message
+            message = aio_pika.Message(
+                body=orjson.dumps(db_msg),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+            )
+            
+            # Publish to DB update queue
+            await channel.default_exchange.publish(
+                message, routing_key=DB_UPDATE_QUEUE
+            )
+            
+        logger.info(
+            "[CLOSE:CLOSE_ID_SAVED] order_id=%s close_id=%s user=%s:%s",
+            order_id, close_id, user_type, user_id
+        )
+        return True
+        
+    except Exception as e:
+        logger.error(
+            "[CLOSE:CLOSE_ID_SAVE_FAILED] order_id=%s close_id=%s user=%s:%s error=%s",
+            order_id, close_id, user_type, user_id, str(e)
+        )
+        return False
 
 async def _get_user_lock(user_type: str, user_id: str) -> asyncio.Lock:
     """Get or create a lock for a specific user to prevent race conditions."""
@@ -233,16 +290,31 @@ class OrderCloser:
 
         # Link lifecycle IDs if present
         if payload.get("close_id"):
+            close_id = str(payload.get("close_id"))
+            
+            # Existing Redis and lifecycle tracking
             try:
-                cid = str(payload.get("close_id"))
-                await add_lifecycle_id(order_id, cid, "close_id")
+                await add_lifecycle_id(order_id, close_id, "close_id")
             except Exception as e:
                 logger.warning("add_lifecycle_id close_id failed: %s", e)
+            
             # Persist close_id into canonical order_data for downstream consumers (Node DB mapping fallback)
             try:
-                await redis_cluster.hset(f"order_data:{order_id}", mapping={"close_id": str(payload.get("close_id"))})
+                await redis_cluster.hset(f"order_data:{order_id}", mapping={"close_id": close_id})
             except Exception:
                 pass
+            
+            # 🆕 CRITICAL: Save close_id to database IMMEDIATELY before sending to provider
+            # This ensures close_id is persisted even if provider confirmation fails
+            try:
+                await _save_close_id_to_database(order_id, close_id, user_type, user_id)
+            except Exception as e:
+                logger.error(
+                    "[CLOSE:CLOSE_ID_DB_SAVE_ERROR] order_id=%s close_id=%s error=%s",
+                    order_id, close_id, str(e)
+                )
+                # Continue with close even if DB save fails
+                # The close_id will still be in Redis and can be recovered
         if payload.get("stoploss_cancel_id"):
             try:
                 await add_lifecycle_id(order_id, str(payload.get("stoploss_cancel_id")), "stoploss_cancel_id")
