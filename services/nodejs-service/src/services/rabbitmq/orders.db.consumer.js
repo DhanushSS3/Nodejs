@@ -738,6 +738,15 @@ async function startOrdersDbConsumer() {
         } else if (payload.type === 'ORDER_CLOSE_ID_UPDATE') {
           await handleCloseIdUpdate(payload);
         } else {
+          // 🆕 DEBUG: Log ORDER_CLOSE_CONFIRMED messages
+          if (payload.type === 'ORDER_CLOSE_CONFIRMED') {
+            console.log('Processing ORDER_CLOSE_CONFIRMED message', {
+              order_id: payload.order_id,
+              close_price: payload.close_price,
+              net_profit: payload.net_profit,
+              close_message: payload.close_message
+            });
+          }
           await applyDbUpdate(payload);
         }
         

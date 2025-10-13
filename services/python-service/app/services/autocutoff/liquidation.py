@@ -14,6 +14,7 @@ from app.services.orders.id_generator import (
     generate_stoploss_cancel_id,
     generate_takeprofit_cancel_id,
 )
+from app.services.orders.close_context_service import set_autocutoff_context
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +283,22 @@ class LiquidationEngine:
                 symbol = str(order.get("symbol") or "").upper()
                 order_id = str(order.get("order_id"))
                 side = str(order.get("order_type") or "").upper()
+                
+                # 🆕 Set close context BEFORE creating payload for proper close_message attribution
+                try:
+                    await set_autocutoff_context(order_id, user_type, user_id)
+                except Exception as e:
+                    logger.warning(
+                        "[AUTOCUTOFF:CONTEXT_SET_FAILED] order_id=%s error=%s",
+                        order_id, str(e)
+                    )
+                
                 payload = {
+                    "order_id": order_id,
                     "symbol": symbol,
                     "order_type": side,
                     "user_id": str(user_id),
                     "user_type": str(user_type),
-                    "order_id": order_id,
                     "status": "CLOSED",
                     "order_status": "CLOSED",
                     "close_message": "AUTOCUTOFF",  # Mark as autocutoff liquidation

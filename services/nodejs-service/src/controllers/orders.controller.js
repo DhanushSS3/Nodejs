@@ -1222,6 +1222,31 @@ async function closeOrder(req, res) {
       logger.warn('Failed to persist lifecycle ids before close', { order_id, error: e.message });
     }
 
+    // 🆕 Set close context for proper close_message attribution in worker_close.py
+    try {
+      const contextKey = `close_context:${order_id}`;
+      const contextValue = {
+        context: 'USER_CLOSED',
+        initiator: `user:${req_user_type}:${req_user_id}`,
+        timestamp: Math.floor(Date.now() / 1000).toString()
+      };
+      
+      await redisCluster.hset(contextKey, contextValue);
+      await redisCluster.expire(contextKey, 300); // 5 minutes TTL
+      
+      logger.info('Close context set for user close', { 
+        order_id, 
+        user_id: req_user_id,
+        user_type: req_user_type
+      });
+    } catch (e) {
+      logger.warn('Failed to set user close context', { 
+        error: e.message, 
+        order_id,
+        user_id: req_user_id
+      });
+    }
+
     // Build payload to Python
     const pyPayload = {
       symbol,

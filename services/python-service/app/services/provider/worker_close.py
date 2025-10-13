@@ -545,6 +545,16 @@ class CloseWorker:
                         await self._ack(message)
                     return
 
+
+                print(
+                    f"[CLOSE:RESULT_DEBUG] order_id={order_id_dbg} "
+                    f"result_keys={list(result.keys()) if isinstance(result, dict) else 'not_dict'} "
+                    f"close_price={result.get('close_price') if isinstance(result, dict) else None} "
+                    f"net_profit={result.get('net_profit') if isinstance(result, dict) else None} "
+                    f"ok={result.get('ok') if isinstance(result, dict) else None}"
+                )
+
+
                 # Log calculated close data
                 try:
                     calc = {
@@ -588,13 +598,47 @@ class CloseWorker:
                             trigger_lifecycle_id = str(trigger_lifecycle_id)
                     except Exception:
                         trigger_lifecycle_id = None
-                    # Set close message based on provider_order_id identification
+                    print(f"[CLOSE:CONTEXT_START] order_id={order_id_dbg} order_type={order_type} starting context logic")
+                    
+                    # Enhanced close message attribution using context
                     if order_type == "stoploss":
                         close_message = "Stoploss-Triggered"
                     elif order_type == "takeprofit":
                         close_message = "Takeprofit-Triggered"
                     else:  # order_type == "close" or "unknown"
-                        close_message = "Closed"
+                        # Check for close context to determine proper close message
+                        close_context = None
+                        try:
+                            print(f"[CLOSE:CONTEXT_IMPORT] order_id={order_id_dbg} importing CloseContextService")
+                            from app.services.orders.close_context_service import CloseContextService
+                            print(f"[CLOSE:CONTEXT_LOOKUP] order_id={order_id_dbg} calling get_close_context")
+                            close_context = await CloseContextService.get_close_context(order_id_dbg)
+                            print(f"[CLOSE:CONTEXT_RESULT] order_id={order_id_dbg} context={close_context}")
+                        except Exception as e:
+                            print(f"[CLOSE:CONTEXT_EXCEPTION] order_id={order_id_dbg} error={str(e)}")
+                            logger.warning("[CLOSE:CONTEXT_GET_FAILED] order_id=%s error=%s", order_id_dbg, str(e))
+                        
+                        if close_context and close_context.get("context"):
+                            context = close_context.get("context")
+                            if context == "AUTOCUTOFF":
+                                close_message = "Auto-cutoff"
+                            elif context == "ADMIN_CLOSED":
+                                close_message = "Admin-Closed"
+                            elif context == "USER_CLOSED":
+                                close_message = "Closed"
+                            else:
+                                close_message = "Closed"  # Fallback
+                            
+                            # Clear context after use
+                            try:
+                                await CloseContextService.clear_close_context(order_id_dbg)
+                            except Exception as e:
+                                logger.warning("[CLOSE:CONTEXT_CLEAR_FAILED] order_id=%s error=%s", order_id_dbg, str(e))
+                        else:
+                            close_message = "Closed"  # Default fallback
+                    
+                    print(f"[CLOSE:CONTEXT_COMPLETE] order_id={order_id_dbg} close_message={close_message}")
+                    print(f"[CLOSE:CREATING_DB_MSG] order_id={order_id_dbg} about to create database message")
                     
                     db_msg = {
                         "type": "ORDER_CLOSE_CONFIRMED",
@@ -614,6 +658,15 @@ class CloseWorker:
                         "trigger_lifecycle_id": trigger_lifecycle_id,
                         "close_message": close_message,
                     }
+                    
+                    # 🆕 DEBUG: Log the database message to see what we're sending
+                    print(
+                            f"[CLOSE:DB_MSG_DEBUG] order_id={order_id_dbg} "
+                            f"close_price={db_msg.get('close_price')} "
+                            f"net_profit={db_msg.get('net_profit')} "
+                            f"close_message={db_msg.get('close_message')}"
+                        )
+
                     msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
                     await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
                     

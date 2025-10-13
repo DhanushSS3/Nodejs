@@ -673,6 +673,32 @@ class AdminOrderManagementService {
         userPayload.order_type = closeData.order_type;
       }
 
+      // 🆕 Set close context for proper close_message attribution in worker_close.py
+      try {
+        const { redisCluster } = require('../../config/redis');
+        const contextKey = `close_context:${orderId}`;
+        const contextValue = {
+          context: 'ADMIN_CLOSED',
+          initiator: `admin:${adminInfo.id}:${adminInfo.email}`,
+          timestamp: Math.floor(Date.now() / 1000).toString()
+        };
+        
+        await redisCluster.hset(contextKey, contextValue);
+        await redisCluster.expire(contextKey, 300); // 5 minutes TTL
+        
+        logger.info('Close context set for admin close', { 
+          order_id: orderId, 
+          admin_id: adminInfo.id,
+          admin_email: adminInfo.email
+        });
+      } catch (e) {
+        logger.warn('Failed to set admin close context', { 
+          error: e.message, 
+          order_id: orderId,
+          admin_id: adminInfo.id
+        });
+      }
+
       // 3. Validate required fields (EXACT same validation as user orders)
       if (!userPayload.order_id) {
         throw new Error('order_id is required');
