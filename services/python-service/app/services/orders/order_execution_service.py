@@ -293,26 +293,65 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 7) Compute single order margin in USD
+        # 7) Compute single order margin in USD with strict validation
         t_single_margin = time.perf_counter()
-        margin_usd = await compute_single_order_margin(
-            contract_size=contract_size,
-            order_quantity=order_qty,
-            execution_price=float(exec_price),
-            profit_currency=(str(profit_currency).upper() if profit_currency else None),
-            symbol=symbol,
-            leverage=leverage,
-            instrument_type=instrument_type,
-            prices_cache={},
-            crypto_margin_factor=crypto_margin_factor,
-            strict=True,
-        )
+        try:
+            margin_usd = await compute_single_order_margin(
+                contract_size=contract_size,
+                order_quantity=order_qty,
+                execution_price=float(exec_price),
+                profit_currency=(str(profit_currency).upper() if profit_currency else None),
+                symbol=symbol,
+                leverage=leverage,
+                instrument_type=instrument_type,
+                prices_cache={},
+                crypto_margin_factor=crypto_margin_factor,
+                strict=True,
+            )
+        except Exception as margin_err:
+            timings_ms["single_margin_ms"] = int((time.perf_counter() - t_single_margin) * 1000)
+            result = {"ok": False, "reason": "margin_calculation_error", "error": str(margin_err)}
+            if idem_key:
+                await save_idempotency_result(idem_key, result)
+            return result
+            
         timings_ms["single_margin_ms"] = int((time.perf_counter() - t_single_margin) * 1000)
-        if margin_usd is None:
+        if margin_usd is None or margin_usd <= 0:
             result = {"ok": False, "reason": "margin_calculation_failed"}
             if idem_key:
                 await save_idempotency_result(idem_key, result)
             return result
+
+        # 7.5) Early validation for local flow - test detailed margin computation to prevent Redis corruption
+        if flow == "local":
+            try:
+                # Test with a minimal order to validate currency conversion works
+                test_order = {
+                    "order_id": f"test_{order_id}",
+                    "symbol": symbol,
+                    "order_type": order_type,
+                    "order_quantity": order_qty,
+                    "order_status": "OPEN",
+                    "execution_status": "EXECUTED",
+                }
+                test_margin, _, test_meta = await compute_user_total_margin(
+                    user_type=user_type,
+                    user_id=user_id,
+                    orders=[test_order],  # Test with single order
+                    prices_cache=None,
+                    strict=True,
+                    include_queued=False,
+                )
+                if test_margin is None:
+                    result = {"ok": False, "reason": "currency_validation_failed", "meta": test_meta}
+                    if idem_key:
+                        await save_idempotency_result(idem_key, result)
+                    return result
+            except Exception as validation_err:
+                result = {"ok": False, "reason": "currency_validation_error", "error": str(validation_err)}
+                if idem_key:
+                    await save_idempotency_result(idem_key, result)
+                return result
 
         # 8) Free margin / balance check
         t_portfolio = time.perf_counter()
@@ -395,6 +434,36 @@ class OrderExecutor:
                     await save_idempotency_result(idem_key, result)
                 return result
         else:
+            # Provider flow: Validate currency conversion before reserving margin
+            try:
+                # Quick validation test for provider flow to prevent wrong margin reservation
+                test_order = {
+                    "order_id": f"test_{order_id}",
+                    "symbol": symbol,
+                    "order_type": order_type,
+                    "order_quantity": order_qty,
+                    "order_status": "QUEUED",
+                    "execution_status": "QUEUED",
+                }
+                test_margin, _, test_meta = await compute_user_total_margin(
+                    user_type=user_type,
+                    user_id=user_id,
+                    orders=[test_order],  # Test with single order
+                    prices_cache=None,
+                    strict=False,  # Less strict for provider flow performance
+                    include_queued=True,
+                )
+                if test_margin is None:
+                    result = {"ok": False, "reason": "provider_currency_validation_failed", "meta": test_meta}
+                    if idem_key:
+                        await save_idempotency_result(idem_key, result)
+                    return result
+            except Exception as validation_err:
+                result = {"ok": False, "reason": "provider_currency_validation_error", "error": str(validation_err)}
+                if idem_key:
+                    await save_idempotency_result(idem_key, result)
+                return result
+            
             # Provider flow: Skip heavy computation - provider workers will handle final margin updates
             # We already validated sufficient margin with single-order check + portfolio free margin above
             timings_ms["orders_fetch_ms"] = 0  # Skipped for performance
