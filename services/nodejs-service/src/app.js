@@ -27,6 +27,8 @@ const redisHealthRoutes = require('./routes/redis.health.routes');
 const swapRoutes = require('./routes/swap.routes');
 const adminTransactionRoutes = require('./routes/admin.transaction.routes');
 const strategyProviderRoutes = require('./routes/strategyProvider.routes');
+const adminCronRoutes = require('./routes/admin.cron.routes');
+const superadminFreePassRoutes = require('./routes/superadmin.freepass.routes');
 
 const app = express();
 
@@ -117,6 +119,8 @@ app.use('/api/redis-health', redisHealthRoutes);
 app.use('/api/admin/swap', swapRoutes);
 app.use('/api/admin/transactions', adminTransactionRoutes);
 app.use('/api/strategy-providers', strategyProviderRoutes);
+app.use('/api/admin/cron', adminCronRoutes);
+app.use('/api/superadmin/strategy-providers', superadminFreePassRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

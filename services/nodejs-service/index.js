@@ -7,6 +7,7 @@ const { redisCluster, redisReadyPromise } = require('./config/redis');
 const startupCacheService = require('./src/services/startup.cache.service');
 const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
 const swapSchedulerService = require('./src/services/swap.scheduler.service');
+const CatalogEligibilityCronService = require('./src/services/cron/catalogEligibility.cron.service');
 
 const PORT = process.env.PORT || 3000;
 const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
@@ -75,6 +76,14 @@ const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
       console.log('✅ Swap scheduler started');
     } catch (swapErr) {
       console.error('❌ Failed to start swap scheduler', swapErr);
+    }
+
+    // 7. Initialize catalog eligibility cron job
+    try {
+      CatalogEligibilityCronService.initializeCronJobs();
+      console.log('✅ Catalog eligibility cron job initialized');
+    } catch (cronErr) {
+      console.error('❌ Failed to initialize catalog eligibility cron job', cronErr);
     }
 
   } catch (err) {

@@ -165,6 +165,32 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
     type: DataTypes.DATE,
     allowNull: true
   },
+  catalog_eligibility_updated_at: { 
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  
+  // Superadmin Free Pass for Catalog Display
+  catalog_free_pass: { 
+    type: DataTypes.BOOLEAN, 
+    defaultValue: false 
+  },
+  catalog_free_pass_granted_by: { 
+    type: DataTypes.INTEGER, 
+    allowNull: true,
+    references: {
+      model: 'admins',
+      key: 'id'
+    }
+  },
+  catalog_free_pass_granted_at: { 
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  catalog_free_pass_reason: { 
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
   
   // Cached Statistics (Performance optimization)
   total_followers: { 

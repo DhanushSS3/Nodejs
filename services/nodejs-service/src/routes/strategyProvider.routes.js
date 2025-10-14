@@ -587,31 +587,13 @@ const upload = multer({
  *                           total_followers:
  *                             type: integer
  *                             example: 150
- *                           performance_fee:
- *                             type: number
- *                             example: 20.0
- *                           min_investment:
- *                             type: number
- *                             example: 500.0
- *                           max_total_investment:
- *                             type: number
- *                             example: 50000.0
- *                           win_rate:
- *                             type: number
- *                             example: 78.5
- *                           closed_trades:
- *                             type: integer
- *                             example: 45
- *                           max_drawdown:
- *                             type: number
- *                             example: 12.3
- *                           created_at:
- *                             type: string
- *                             format: date-time
  *                           profile_image_url:
  *                             type: string
  *                             nullable: true
  *                             example: "/uploads/strategy-profiles/SP_123_1704567890123.jpg"
+ *                           performance_fee:
+ *                             type: number
+ *                             example: 20.0
  *                     pagination:
  *                       type: object
  *                       properties:

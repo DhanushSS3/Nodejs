@@ -561,31 +561,51 @@ class StrategyProviderService {
    * - Return >= 0%
    * - Not archived (auto-cutoff not triggered)
    * @param {number} strategyProviderId - Strategy provider ID
-   * @returns {Object} Eligibility result with detailed requirements
+   * @returns {Object} Eligibility result
    */
   async checkCatalogEligibility(strategyProviderId) {
     try {
+      // Get strategy provider account
       const strategyProvider = await StrategyProviderAccount.findByPk(strategyProviderId);
       
       if (!strategyProvider) {
-        return { eligible: false, reason: 'Strategy provider not found' };
+        throw new Error('Strategy provider not found');
       }
 
-      // Check if strategy is active and not archived
+      // Check for superadmin free pass first
+      if (strategyProvider.catalog_free_pass) {
+        return {
+          eligible: true,
+          reason: 'Free pass granted by superadmin',
+          free_pass: true,
+          granted_by: strategyProvider.catalog_free_pass_granted_by,
+          granted_at: strategyProvider.catalog_free_pass_granted_at,
+          granted_reason: strategyProvider.catalog_free_pass_reason,
+          requirements: this.getCatalogRequirements(),
+          current: {
+            free_pass_active: true,
+            status: strategyProvider.status,
+            is_active: strategyProvider.is_active
+          }
+        };
+      }
+
+      // Check if strategy is active
       if (strategyProvider.status !== 1 || strategyProvider.is_active !== 1) {
-        return { eligible: false, reason: 'Strategy provider is inactive or archived' };
+        return {
+          eligible: false,
+          reason: 'Strategy provider is not active or has been archived',
+          requirements: this.getCatalogRequirements(),
+          current: {
+            status: strategyProvider.status,
+            is_active: strategyProvider.is_active
+          }
+        };
       }
 
-      // Get actual order statistics from database
+      // Get order statistics
       const orderStats = await this.getStrategyOrderStatistics(strategyProviderId);
-      
-      const requirements = {
-        min_closed_trades: 10,
-        min_days_since_first_trade: 30,
-        max_days_since_last_trade: 7,
-        min_return_percentage: 0
-      };
-
+      const requirements = this.getCatalogRequirements();
       const now = new Date();
       const failures = [];
 
@@ -744,12 +764,15 @@ class StrategyProviderService {
       const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
       const offset = (pageNum - 1) * limitNum;
 
-      // Build where conditions
+      // Build where conditions - include both eligible and free pass accounts
       const whereConditions = {
         status: 1,
         is_active: 1,
         visibility: 'public',
-        is_catalog_eligible: true // Only pre-approved catalog eligible strategies
+        [Op.or]: [
+          { is_catalog_eligible: true },     // Normal eligible accounts
+          { catalog_free_pass: true }        // Superadmin free pass accounts
+        ]
       };
 
       // Apply filters
@@ -822,14 +845,8 @@ class StrategyProviderService {
           'strategy_name',
           'total_return_percentage',
           'total_followers',
-          'performance_fee',
-          'min_investment',
-          'max_total_investment',
-          'win_rate',
-          'closed_trades',
-          'max_drawdown',
-          'created_at',
-          'profile_image_url'
+          'profile_image_url',
+          'performance_fee'
         ],
         order: orderBy,
         limit: limitNum,
@@ -837,20 +854,14 @@ class StrategyProviderService {
         distinct: true
       });
 
-      // Format response data
+      // Format response data - minimal fields for catalog display
       const strategies = rows.map(strategy => ({
         id: strategy.id,
         strategy_name: strategy.strategy_name,
         total_return_percentage: parseFloat(strategy.total_return_percentage || 0),
         total_followers: strategy.total_followers || 0,
-        performance_fee: parseFloat(strategy.performance_fee || 0),
-        min_investment: parseFloat(strategy.min_investment || 0),
-        max_total_investment: parseFloat(strategy.max_total_investment || 0),
-        win_rate: parseFloat(strategy.win_rate || 0),
-        closed_trades: strategy.closed_trades || 0,
-        max_drawdown: parseFloat(strategy.max_drawdown || 0),
-        created_at: strategy.created_at,
-        profile_image_url: strategy.profile_image_url
+        profile_image_url: strategy.profile_image_url,
+        performance_fee: parseFloat(strategy.performance_fee || 0)
       }));
 
       return {
