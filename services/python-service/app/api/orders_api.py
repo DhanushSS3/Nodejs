@@ -81,7 +81,8 @@ async def instant_execute_order(request: Request, payload: InstantOrderRequest, 
             # For margin/user issues and unsupported flow, return 400
             if reason in ("user_not_verified", "invalid_leverage", "missing_group_data", "insufficient_margin", "unsupported_flow", 
                          "margin_calculation_failed", "margin_calculation_error", "currency_validation_failed", 
-                         "currency_validation_error", "provider_currency_validation_failed", "provider_currency_validation_error"):
+                         "currency_validation_error", "provider_currency_validation_failed", "provider_currency_validation_error",
+                         "currency_conversion_unavailable", "currency_conversion_test_failed"):
                 try:
                     timing_log.info(__import__("orjson").dumps({
                         "component": "python_api",

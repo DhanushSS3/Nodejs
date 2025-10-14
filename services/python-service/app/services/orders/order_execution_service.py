@@ -283,6 +283,27 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
+        # 5.5) Early currency validation - test if profit currency can be converted to USD
+        if profit_currency and profit_currency.upper() != 'USD':
+            try:
+                # Import here to avoid circular imports
+                from app.services.portfolio.margin_calculator import get_currency_conversion_rate
+                
+                # Test currency conversion capability
+                test_rate = await get_currency_conversion_rate(profit_currency.upper(), 'USD', {})
+                if test_rate is None or test_rate <= 0:
+                    logger.warning(f"Currency conversion unavailable - Symbol: {symbol}, Currency: {profit_currency.upper()}, "
+                                 f"User: {user_type}:{user_id}, Rate: {test_rate}")
+                    result = {"ok": False, "reason": "currency_conversion_unavailable", "currency": profit_currency.upper()}
+                    if idem_key:
+                        await save_idempotency_result(idem_key, result)
+                    return result
+            except Exception as currency_err:
+                result = {"ok": False, "reason": "currency_conversion_test_failed", "currency": profit_currency.upper(), "error": str(currency_err)}
+                if idem_key:
+                    await save_idempotency_result(idem_key, result)
+                return result
+
         # 6) Determine execution price based on strategy
         t_pricing = time.perf_counter()
         ok_px, exec_price, pricing_meta = await strategy.determine_exec_price(group)
@@ -343,6 +364,8 @@ class OrderExecutor:
                     include_queued=False,
                 )
                 if test_margin is None:
+                    logger.warning(f"Local flow currency validation failed - Order: {order_id}, Symbol: {symbol}, "
+                                 f"User: {user_type}:{user_id}, Meta: {test_meta}")
                     result = {"ok": False, "reason": "currency_validation_failed", "meta": test_meta}
                     if idem_key:
                         await save_idempotency_result(idem_key, result)
@@ -454,6 +477,8 @@ class OrderExecutor:
                     include_queued=True,
                 )
                 if test_margin is None:
+                    logger.warning(f"Provider flow currency validation failed - Order: {order_id}, Symbol: {symbol}, "
+                                 f"User: {user_type}:{user_id}, Meta: {test_meta}")
                     result = {"ok": False, "reason": "provider_currency_validation_failed", "meta": test_meta}
                     if idem_key:
                         await save_idempotency_result(idem_key, result)
@@ -527,6 +552,10 @@ class OrderExecutor:
             })
 
         # 12) Place order in Redis (atomic Lua or fallback) UNDER LOCK
+        # Log margin details before placement for debugging
+        logger.info(f"Placing order in Redis - Order: {order_id}, Flow: {flow}, Margin USD: {margin_usd}, "
+                   f"Executed Margin: {executed_margin}, Total Margin: {total_margin_with_queued}")
+        
         t_place = time.perf_counter()
         ok_place, reason = await place_order_atomic_or_fallback(
             user_type=user_type,
