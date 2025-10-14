@@ -29,10 +29,13 @@ async function signup(req, res) {
     const {
       name, phone_number, email, password, city, state, country, pincode, group,
       bank_ifsc_code, bank_account_number, bank_holder_name, bank_branch_name,
-      security_question, security_answer, address_proof, is_self_trading, is_active, 
+      security_question, security_answer, address_proof, is_self_trading, 
       id_proof, address_proof_image, id_proof_image, book,
       ...optionalFields
     } = req.body;
+
+    // Handle field name variations (frontend may send camelCase)
+    const is_active = req.body.is_active || req.body.isActive;
 
     // Generate idempotency key
     const idempotencyKey = IdempotencyService.generateKey(req, 'live_signup');
