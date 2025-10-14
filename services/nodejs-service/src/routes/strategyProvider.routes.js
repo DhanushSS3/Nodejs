@@ -1,7 +1,45 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
 const strategyProviderController = require('../controllers/strategyProvider.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+
+// Configure multer for profile picture uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, '../../uploads/strategy-profiles/'));
+  },
+  filename: function (req, file, cb) {
+    // Generate unique filename: SP_userId_timestamp.ext
+    const userId = req.user?.sub || req.user?.user_id || req.user?.id;
+    const timestamp = Date.now();
+    const ext = path.extname(file.originalname);
+    cb(null, `SP_${userId}_${timestamp}${ext}`);
+  }
+});
+
+// File filter for images only
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif|webp/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+  
+  if (mimetype && extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Only image files (JPEG, JPG, PNG, GIF, WebP) are allowed'));
+  }
+};
+
+// Configure multer upload
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: fileFilter
+});
 
 /**
  * @swagger
@@ -152,6 +190,11 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
  *         win_rate:
  *           type: number
  *           description: Win rate percentage
+ *         profile_image_url:
+ *           type: string
+ *           nullable: true
+ *           description: Profile image URL
+ *           example: "/uploads/strategy-profiles/SP_123_1704567890123.jpg"
  *         created_at:
  *           type: string
  *           format: date-time
@@ -174,31 +217,70 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
- *             $ref: '#/components/schemas/CreateStrategyProviderRequest'
- *           examples:
- *             public_strategy:
- *               summary: Public Strategy Example
- *               value:
- *                 strategy_name: "EURUSD Scalping Pro Strategy"
- *                 description: "Professional EURUSD scalping strategy with consistent profits"
- *                 visibility: "public"
- *                 performance_fee: 25.00
- *                 leverage: 100
- *                 min_investment: 500.00
- *                 max_total_investment: 100000.00
- *                 auto_cutoff_level: 40.00
- *             private_strategy:
- *               summary: Private Strategy Example
- *               value:
- *                 strategy_name: "Elite Gold Trading Strategy"
- *                 description: "Exclusive gold trading strategy for VIP clients"
- *                 visibility: "private"
- *                 strategy_password: "SecurePass123"
- *                 performance_fee: 35.00
- *                 leverage: 200
- *                 min_investment: 1000.00
+ *             type: object
+ *             required:
+ *               - strategy_name
+ *             properties:
+ *               strategy_name:
+ *                 type: string
+ *                 minLength: 10
+ *                 maxLength: 100
+ *                 description: Strategy name (10-100 characters)
+ *                 example: "EURUSD Scalping Pro Strategy"
+ *               description:
+ *                 type: string
+ *                 maxLength: 1000
+ *                 description: Strategy description
+ *                 example: "Professional EURUSD scalping strategy with consistent profits"
+ *               visibility:
+ *                 type: string
+ *                 enum: [public, private]
+ *                 default: public
+ *                 description: Strategy visibility
+ *               strategy_password:
+ *                 type: string
+ *                 description: Password for private strategies (required if visibility is private)
+ *                 example: "SecurePass123"
+ *               performance_fee:
+ *                 type: number
+ *                 minimum: 5.00
+ *                 maximum: 50.00
+ *                 default: 20.00
+ *                 description: Performance fee percentage (5-50%)
+ *               leverage:
+ *                 type: integer
+ *                 enum: [50, 100, 200]
+ *                 default: 100
+ *                 description: Leverage (50, 100, or 200)
+ *               min_investment:
+ *                 type: number
+ *                 minimum: 100.00
+ *                 default: 100.00
+ *                 description: Minimum investment amount
+ *               max_total_investment:
+ *                 type: number
+ *                 minimum: 1000.00
+ *                 maximum: 500000.00
+ *                 default: 500000.00
+ *                 description: Maximum total investment
+ *               max_followers:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 1000
+ *                 default: 1000
+ *                 description: Maximum followers
+ *               auto_cutoff_level:
+ *                 type: number
+ *                 minimum: 10.00
+ *                 maximum: 90.00
+ *                 default: 50.00
+ *                 description: Auto cutoff level percentage (10-90%)
+ *               profile_image:
+ *                 type: string
+ *                 format: binary
+ *                 description: Profile image file (optional, max 5MB, JPEG/PNG/GIF/WebP)
  *     responses:
  *       201:
  *         description: Strategy provider account created successfully
@@ -398,7 +480,29 @@ router.use(authenticateJWT);
 router.get('/private/:accessLink', strategyProviderController.getPrivateStrategyByLink);
 
 // Strategy Provider Account Routes (requires authentication)
-router.post('/', strategyProviderController.createStrategyProviderAccount);
+router.post('/', (req, res, next) => {
+  upload.single('profile_image')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'Profile image file size too large. Maximum size is 5MB.'
+        });
+      }
+      if (err.message.includes('Only image files')) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid file type. Only JPEG, JPG, PNG, GIF, and WebP files are allowed.'
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'File upload error: ' + err.message
+      });
+    }
+    next();
+  });
+}, strategyProviderController.createStrategyProviderAccount);
 router.get('/', strategyProviderController.getUserStrategyProviderAccounts);
 router.get('/:id', strategyProviderController.getStrategyProviderAccount);
 

@@ -69,7 +69,10 @@ class StrategyProviderService {
         is_active: 1,
         is_catalog_eligible: false, // Will be evaluated later based on performance
         is_trustworthy: false,
-        is_kyc_verified: user.status === 1 // Inherit KYC status from main account
+        is_kyc_verified: user.status === 1, // Inherit KYC status from main account
+        
+        // Profile image
+        profile_image_url: strategyData.profile_image_url || null
       };
       
       // Generate account number explicitly (backup in case hook doesn't work)

@@ -205,7 +205,18 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
     type: DataTypes.STRING,
     allowNull: true,
     validate: {
-      isUrl: true
+      isUrlOrPath(value) {
+        if (value === null || value === undefined) return; // Allow null values
+        
+        // Allow full URLs (http/https)
+        const urlPattern = /^https?:\/\/.+/;
+        // Allow relative paths starting with /
+        const pathPattern = /^\/[^\/].*/;
+        
+        if (!urlPattern.test(value) && !pathPattern.test(value)) {
+          throw new Error('Profile image URL must be a valid URL or relative path starting with /');
+        }
+      }
     }
   },
   

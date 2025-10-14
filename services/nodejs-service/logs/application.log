@@ -1214,3 +1214,85 @@
 {"level":"info","message":"Found 115 keys on node 127.0.0.1:7003","timestamp":"2025-10-13T12:53:15.195Z"}
 {"level":"info","message":"Total keys found across cluster: 115","timestamp":"2025-10-13T12:53:15.196Z"}
 {"level":"info","message":"Successfully processed 115/115 instruments for group Standard","timestamp":"2025-10-13T12:53:15.518Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-13T12:53:49.685Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-13T12:53:49.694Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-13T12:53:50.052Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-13T12:53:50.888Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-13T12:53:51.255Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-13T12:53:51.699Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-13T12:53:52.110Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-13T12:53:52.820Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-13T12:53:53.346Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-13T12:53:53.674Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-13T12:53:53.972Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-13T12:53:54.273Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-13T12:53:54.627Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-13T12:53:54.929Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-13T12:53:55.271Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5585ms","timestamp":"2025-10-13T12:53:55.271Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-13T12:53:55.278Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-13T12:53:55.306Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-14T04:32:24.016Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-14T04:32:24.048Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-14T04:32:24.468Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-14T04:32:24.984Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-14T04:32:25.405Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-14T04:32:25.983Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-14T04:32:26.454Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-14T04:32:26.910Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-14T04:32:27.402Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-14T04:32:28.113Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-14T04:32:28.721Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-14T04:32:29.158Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-14T04:32:29.855Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-14T04:32:30.320Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-14T04:32:30.655Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 6639ms","timestamp":"2025-10-14T04:32:30.656Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-14T04:32:30.664Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-14T04:32:30.745Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-14T04:43:04.184Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-14T04:43:04.200Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-14T04:43:04.909Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-14T04:43:05.429Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-14T04:43:05.870Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-14T04:43:06.479Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-14T04:43:06.935Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-14T04:43:07.559Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-14T04:43:08.003Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-14T04:43:08.636Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-14T04:43:09.149Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-14T04:43:10.010Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-14T04:43:10.681Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-14T04:43:11.351Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-14T04:43:12.397Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 8212ms","timestamp":"2025-10-14T04:43:12.397Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-14T04:43:12.408Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-14T04:43:12.510Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-10-14T04:47:06.448Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /: jwt expired","timestamp":"2025-10-14T04:48:39.167Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /: jwt expired","timestamp":"2025-10-14T04:49:04.386Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /: jwt expired","timestamp":"2025-10-14T04:54:02.603Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-10-14T04:54:20.079Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-10-14T04:54:31.987Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-10-14T04:55:27.590Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-10-14T04:55:38.870Z"}
+{"level":"info","message":"Starting groups sync from MySQL to Redis...","timestamp":"2025-10-14T04:58:21.580Z"}
+{"level":"info","message":"Found 1292 groups to sync","timestamp":"2025-10-14T04:58:21.591Z"}
+{"level":"info","message":"Synced 100/1292 groups (8%)","timestamp":"2025-10-14T04:58:21.958Z"}
+{"level":"info","message":"Synced 200/1292 groups (15%)","timestamp":"2025-10-14T04:58:22.605Z"}
+{"level":"info","message":"Synced 300/1292 groups (23%)","timestamp":"2025-10-14T04:58:23.015Z"}
+{"level":"info","message":"Synced 400/1292 groups (31%)","timestamp":"2025-10-14T04:58:23.457Z"}
+{"level":"info","message":"Synced 500/1292 groups (39%)","timestamp":"2025-10-14T04:58:23.867Z"}
+{"level":"info","message":"Synced 600/1292 groups (46%)","timestamp":"2025-10-14T04:58:24.109Z"}
+{"level":"info","message":"Synced 700/1292 groups (54%)","timestamp":"2025-10-14T04:58:24.510Z"}
+{"level":"info","message":"Synced 800/1292 groups (62%)","timestamp":"2025-10-14T04:58:24.839Z"}
+{"level":"info","message":"Synced 900/1292 groups (70%)","timestamp":"2025-10-14T04:58:25.119Z"}
+{"level":"info","message":"Synced 1000/1292 groups (77%)","timestamp":"2025-10-14T04:58:25.518Z"}
+{"level":"info","message":"Synced 1100/1292 groups (85%)","timestamp":"2025-10-14T04:58:25.909Z"}
+{"level":"info","message":"Synced 1200/1292 groups (93%)","timestamp":"2025-10-14T04:58:26.292Z"}
+{"level":"info","message":"Synced 1292/1292 groups (100%)","timestamp":"2025-10-14T04:58:26.939Z"}
+{"level":"info","message":"Groups sync completed: 1292 groups in 5357ms","timestamp":"2025-10-14T04:58:26.939Z"}
+{"level":"info","message":"SYNC VERIFICATION: Synced 1292 groups, Redis cluster has 1292 total keys","timestamp":"2025-10-14T04:58:26.969Z"}
+{"level":"info","message":"Swap scheduler started - will run daily at 00:01 UTC","timestamp":"2025-10-14T04:58:27.011Z"}
+{"level":"warn","message":"Authentication failed - Invalid or expired token for POST /: jwt expired","timestamp":"2025-10-14T04:58:46.730Z"}
+{"level":"info","message":"Authentication successful for user 4 on POST /","timestamp":"2025-10-14T04:59:16.960Z"}

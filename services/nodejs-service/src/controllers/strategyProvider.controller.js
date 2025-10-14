@@ -51,10 +51,30 @@ async function createStrategyProviderAccount(req, res) {
       });
     }
     
+    // Handle profile image upload
+    let profileImageUrl = null;
+    if (req.file) {
+      // Generate the URL for the uploaded file
+      profileImageUrl = `/uploads/strategy-profiles/${req.file.filename}`;
+      
+      logger.info('Profile image uploaded', {
+        userId,
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        size: req.file.size
+      });
+    }
+    
+    // Prepare strategy data with profile image
+    const strategyData = {
+      ...req.body,
+      profile_image_url: profileImageUrl
+    };
+    
     // Create strategy provider account
     const strategyProvider = await strategyProviderService.createStrategyProviderAccount(
       userId, 
-      req.body
+      strategyData
     );
     
     logger.info('Strategy provider account created successfully', {
@@ -73,10 +93,30 @@ async function createStrategyProviderAccount(req, res) {
     });
     
   } catch (error) {
+    // Clean up uploaded file if strategy creation fails
+    if (req.file) {
+      const fs = require('fs');
+      const filePath = req.file.path;
+      try {
+        fs.unlinkSync(filePath);
+        logger.info('Cleaned up uploaded file after error', {
+          userId: getUserId(req.user),
+          filename: req.file.filename
+        });
+      } catch (cleanupError) {
+        logger.error('Failed to cleanup uploaded file', {
+          userId: getUserId(req.user),
+          filename: req.file.filename,
+          error: cleanupError.message
+        });
+      }
+    }
+    
     logger.error('Failed to create strategy provider account', {
       userId: getUserId(req.user),
       error: error.message,
       body: req.body,
+      hasFile: !!req.file,
       ip: req.ip
     });
     
@@ -88,7 +128,15 @@ async function createStrategyProviderAccount(req, res) {
       });
     }
     
-    if (error.message.includes('Validation failed')) {
+    if (error.message.includes('Validation failed') || error.message.includes('Validation error')) {
+      // Handle profile image validation errors specifically
+      if (error.message.includes('profile_image_url')) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid profile image URL format'
+        });
+      }
+      
       return res.status(400).json({
         success: false,
         message: error.message
