@@ -3,8 +3,8 @@
  * Run with: node test_error_logging.js
  */
 
-const Logger = require('./services/nodejs-service/src/services/logger.service');
-const ErrorResponse = require('./services/nodejs-service/src/utils/errorResponse.util');
+const Logger = require('../../nodejs-service/src/services/logger.service');
+const ErrorResponse = require('../../nodejs-service/src/utils/errorResponse.util');
 
 // Mock request and response objects for testing
 function createMockReq(data = {}) {
