@@ -339,9 +339,203 @@ async function getPrivateStrategyByLink(req, res) {
   }
 }
 
+/**
+ * Get catalog eligible strategy providers for authenticated live users
+ * GET /api/strategy-providers/catalog
+ */
+async function getCatalogStrategies(req, res) {
+  try {
+    const userId = getUserId(req.user);
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+    
+    // Validate user type (only live users can access catalog)
+    if (req.user.user_type !== 'live') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only live users can access strategy catalog'
+      });
+    }
+    
+    // Extract and validate query parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    
+    // Validate pagination limits
+    if (page < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Page number must be greater than 0'
+      });
+    }
+    
+    if (limit < 1 || limit > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Limit must be between 1 and 100'
+      });
+    }
+    
+    // Build filters from query parameters
+    const filters = {};
+    
+    // Return percentage filters
+    if (req.query.min_return !== undefined) {
+      const minReturn = parseFloat(req.query.min_return);
+      if (!isNaN(minReturn)) {
+        filters.min_return = minReturn;
+      }
+    }
+    
+    if (req.query.max_return !== undefined) {
+      const maxReturn = parseFloat(req.query.max_return);
+      if (!isNaN(maxReturn)) {
+        filters.max_return = maxReturn;
+      }
+    }
+    
+    // Followers filter
+    if (req.query.min_followers !== undefined) {
+      const minFollowers = parseInt(req.query.min_followers);
+      if (!isNaN(minFollowers) && minFollowers >= 0) {
+        filters.min_followers = minFollowers;
+      }
+    }
+    
+    // Performance fee filter
+    if (req.query.performance_fee !== undefined) {
+      const performanceFee = parseFloat(req.query.performance_fee);
+      if (!isNaN(performanceFee) && performanceFee >= 0 && performanceFee <= 50) {
+        filters.performance_fee = performanceFee;
+      }
+    }
+    
+    // Search filter
+    if (req.query.search && req.query.search.trim()) {
+      filters.search = req.query.search.trim();
+    }
+    
+    // Sort filter
+    const validSortOptions = ['performance', 'followers', 'newest', 'performance_fee'];
+    if (req.query.sort_by && validSortOptions.includes(req.query.sort_by)) {
+      filters.sort_by = req.query.sort_by;
+    }
+    
+    // Get catalog strategies
+    const result = await strategyProviderService.getCatalogStrategies(filters, page, limit);
+    
+    logger.info('Catalog strategies retrieved successfully', {
+      userId,
+      filters,
+      page,
+      limit,
+      totalStrategies: result.pagination.total_items,
+      ip: req.ip
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Strategy catalog retrieved successfully',
+      data: result
+    });
+    
+  } catch (error) {
+    logger.error('Failed to get catalog strategies', {
+      userId: getUserId(req.user),
+      query: req.query,
+      error: error.message,
+      ip: req.ip
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while retrieving strategy catalog'
+    });
+  }
+}
+
+/**
+ * Check catalog eligibility for a specific strategy provider
+ * GET /api/strategy-providers/:id/catalog-eligibility
+ */
+async function checkCatalogEligibility(req, res) {
+  try {
+    const userId = getUserId(req.user);
+    const strategyProviderId = parseInt(req.params.id);
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+    
+    // Validate user type (only live users)
+    if (req.user.user_type !== 'live') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only live users can check catalog eligibility'
+      });
+    }
+    
+    if (!strategyProviderId || isNaN(strategyProviderId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid strategy provider ID'
+      });
+    }
+    
+    // Check catalog eligibility
+    const eligibilityResult = await strategyProviderService.checkCatalogEligibility(strategyProviderId);
+    
+    logger.info('Catalog eligibility checked', {
+      userId,
+      strategyProviderId,
+      eligible: eligibilityResult.eligible,
+      ip: req.ip
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Catalog eligibility checked successfully',
+      data: {
+        strategy_provider_id: strategyProviderId,
+        eligibility: eligibilityResult
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Failed to check catalog eligibility', {
+      userId: getUserId(req.user),
+      strategyProviderId: req.params.id,
+      error: error.message,
+      ip: req.ip
+    });
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({
+        success: false,
+        message: 'Strategy provider not found'
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while checking catalog eligibility'
+    });
+  }
+}
+
 module.exports = {
   createStrategyProviderAccount,
   getStrategyProviderAccount,
   getUserStrategyProviderAccounts,
-  getPrivateStrategyByLink
+  getPrivateStrategyByLink,
+  getCatalogStrategies,
+  checkCatalogEligibility
 };

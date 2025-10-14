@@ -472,9 +472,278 @@ const upload = multer({
  *         description: Internal server error
  */
 
+/**
+ * @swagger
+ * /api/strategy-providers/catalog:
+ *   get:
+ *     summary: Get catalog eligible strategy providers
+ *     description: Get paginated list of strategy providers that meet catalog eligibility requirements for authenticated live users
+ *     tags: [Strategy Providers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *         example: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page (max 100)
+ *         example: 20
+ *       - in: query
+ *         name: min_return
+ *         schema:
+ *           type: number
+ *         description: Minimum return percentage filter
+ *         example: 10.5
+ *       - in: query
+ *         name: max_return
+ *         schema:
+ *           type: number
+ *         description: Maximum return percentage filter
+ *         example: 50.0
+ *       - in: query
+ *         name: min_followers
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Minimum followers filter
+ *         example: 10
+ *       - in: query
+ *         name: performance_fee
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 50
+ *         description: Maximum performance fee filter
+ *         example: 25.0
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search by strategy name
+ *         example: "EURUSD"
+ *       - in: query
+ *         name: sort_by
+ *         schema:
+ *           type: string
+ *           enum: [performance, followers, newest, performance_fee]
+ *           default: performance
+ *         description: Sort criteria
+ *         example: "performance"
+ *     responses:
+ *       200:
+ *         description: Strategy catalog retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Strategy catalog retrieved successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     strategies:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                             example: 1
+ *                           strategy_name:
+ *                             type: string
+ *                             example: "EURUSD Scalping Pro Strategy"
+ *                           total_return_percentage:
+ *                             type: number
+ *                             example: 25.75
+ *                           total_followers:
+ *                             type: integer
+ *                             example: 150
+ *                           performance_fee:
+ *                             type: number
+ *                             example: 20.0
+ *                           min_investment:
+ *                             type: number
+ *                             example: 500.0
+ *                           max_total_investment:
+ *                             type: number
+ *                             example: 50000.0
+ *                           win_rate:
+ *                             type: number
+ *                             example: 78.5
+ *                           closed_trades:
+ *                             type: integer
+ *                             example: 45
+ *                           max_drawdown:
+ *                             type: number
+ *                             example: 12.3
+ *                           created_at:
+ *                             type: string
+ *                             format: date-time
+ *                           profile_image_url:
+ *                             type: string
+ *                             nullable: true
+ *                             example: "/uploads/strategy-profiles/SP_123_1704567890123.jpg"
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         current_page:
+ *                           type: integer
+ *                           example: 1
+ *                         per_page:
+ *                           type: integer
+ *                           example: 20
+ *                         total_items:
+ *                           type: integer
+ *                           example: 45
+ *                         total_pages:
+ *                           type: integer
+ *                           example: 3
+ *                         has_next_page:
+ *                           type: boolean
+ *                           example: true
+ *                         has_prev_page:
+ *                           type: boolean
+ *                           example: false
+ *                     filters_applied:
+ *                       type: object
+ *                       description: Applied filters
+ *       400:
+ *         description: Invalid query parameters
+ *       401:
+ *         description: Authentication required
+ *       403:
+ *         description: Only live users can access strategy catalog
+ *       500:
+ *         description: Internal server error
+ */
+
+/**
+ * @swagger
+ * /api/strategy-providers/{id}/catalog-eligibility:
+ *   get:
+ *     summary: Check catalog eligibility for strategy provider
+ *     description: Check if a strategy provider meets catalog eligibility requirements
+ *     tags: [Strategy Providers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Strategy provider ID
+ *         example: 1
+ *     responses:
+ *       200:
+ *         description: Catalog eligibility checked successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Catalog eligibility checked successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     strategy_provider_id:
+ *                       type: integer
+ *                       example: 1
+ *                     eligibility:
+ *                       type: object
+ *                       properties:
+ *                         eligible:
+ *                           type: boolean
+ *                           example: true
+ *                         reason:
+ *                           type: string
+ *                           example: "All catalog requirements met"
+ *                         requirements:
+ *                           type: object
+ *                           properties:
+ *                             min_closed_trades:
+ *                               type: integer
+ *                               example: 10
+ *                             min_days_since_first_trade:
+ *                               type: integer
+ *                               example: 30
+ *                             max_days_since_last_trade:
+ *                               type: integer
+ *                               example: 7
+ *                             min_return_percentage:
+ *                               type: number
+ *                               example: 0
+ *                         current:
+ *                           type: object
+ *                           properties:
+ *                             closed_trades:
+ *                               type: integer
+ *                               example: 25
+ *                             total_trades:
+ *                               type: integer
+ *                               example: 30
+ *                             first_trade_date:
+ *                               type: string
+ *                               format: date-time
+ *                               nullable: true
+ *                             last_trade_date:
+ *                               type: string
+ *                               format: date-time
+ *                               nullable: true
+ *                             days_since_first_trade:
+ *                               type: integer
+ *                               example: 45
+ *                             days_since_last_trade:
+ *                               type: integer
+ *                               example: 2
+ *                             total_return_percentage:
+ *                               type: number
+ *                               example: 15.75
+ *                             status:
+ *                               type: integer
+ *                               example: 1
+ *                             is_active:
+ *                               type: integer
+ *                               example: 1
+ *       400:
+ *         description: Invalid strategy provider ID
+ *       401:
+ *         description: Authentication required
+ *       403:
+ *         description: Only live users can check catalog eligibility
+ *       404:
+ *         description: Strategy provider not found
+ *       500:
+ *         description: Internal server error
+ */
+
 
 // Apply JWT authentication to all routes
 router.use(authenticateJWT);
+
+// Catalog routes (requires authentication) - Must come before parameterized routes
+router.get('/catalog', strategyProviderController.getCatalogStrategies);
 
 // Private strategy routes (requires authentication)
 router.get('/private/:accessLink', strategyProviderController.getPrivateStrategyByLink);
@@ -505,5 +774,6 @@ router.post('/', (req, res, next) => {
 }, strategyProviderController.createStrategyProviderAccount);
 router.get('/', strategyProviderController.getUserStrategyProviderAccounts);
 router.get('/:id', strategyProviderController.getStrategyProviderAccount);
+router.get('/:id/catalog-eligibility', strategyProviderController.checkCatalogEligibility);
 
 module.exports = router;
