@@ -18,6 +18,15 @@ async function grantCatalogFreePass(req, res) {
   try {
     const adminId = getAdminId(req.admin);
     const strategyProviderId = parseInt(req.params.id);
+    
+    // Validate request body
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'Request body is required'
+      });
+    }
+    
     const { reason } = req.body;
 
     if (!adminId) {

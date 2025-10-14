@@ -129,8 +129,7 @@ class CatalogEligibilityCronService {
       // Update the database if eligibility status changed
       if (wasEligible !== isNowEligible) {
         await strategy.update({
-          is_catalog_eligible: isNowEligible,
-          catalog_eligibility_updated_at: new Date()
+          is_catalog_eligible: isNowEligible
         });
 
         logger.info('Strategy catalog eligibility status changed', {

@@ -101,21 +101,24 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
   // Investment Requirements
   min_investment: { 
     type: DataTypes.DECIMAL(18, 6), 
-    defaultValue: 100.00,
+    allowNull: true,
+    defaultValue: 10.00, // Default $10 as requested
     validate: {
-      min: 100.00 // Minimum $100 as per Exness
+      min: 10.00 // Minimum $10
     }
   },
   max_total_investment: { 
     type: DataTypes.DECIMAL(18, 6), 
-    defaultValue: 500000.00,
+    allowNull: true,
+    defaultValue: 500000.00, // Default $500k as requested
     validate: {
-      max: 500000.00 // Maximum $500k as per Exness
+      max: 500000.00 // Maximum $500k
     }
   },
   max_followers: { 
     type: DataTypes.INTEGER, 
-    defaultValue: 1000,
+    allowNull: true, // Made optional
+    defaultValue: null, // No default limit
     validate: {
       min: 1
     }
@@ -137,7 +140,8 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
   },
   auto_cutoff_level: { 
     type: DataTypes.DECIMAL(5, 2), 
-    defaultValue: 50.00,
+    allowNull: true, // Made optional
+    defaultValue: 30.00, // Default 30% as requested
     validate: {
       min: 10.00,
       max: 90.00
@@ -162,10 +166,6 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
     allowNull: true
   },
   last_trade_date: { 
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  catalog_eligibility_updated_at: { 
     type: DataTypes.DATE,
     allowNull: true
   },
@@ -229,7 +229,8 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
   // Media & Presentation
   profile_image_url: { 
     type: DataTypes.STRING,
-    allowNull: true,
+    allowNull: true, // Already optional - no change needed
+    defaultValue: null, // Explicitly set default to null
     validate: {
       isUrlOrPath(value) {
         if (value === null || value === undefined) return; // Allow null values
