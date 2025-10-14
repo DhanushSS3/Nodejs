@@ -2362,8 +2362,8 @@ async function getClosedOrders(req, res) {
       commission: r.commission?.toString?.() ?? null,
       swap: r.swap?.toString?.() ?? null,
       close_message: r.close_message ?? null,
-      created_at: r.created_at?.toISOString?.() ?? undefined,
-      updated_at: r.updated_at?.toISOString?.() ?? undefined,
+      created_at: r.created_at ? (r.created_at instanceof Date ? r.created_at.toISOString() : new Date(r.created_at).toISOString()) : null,
+      updated_at: r.updated_at ? (r.updated_at instanceof Date ? r.updated_at.toISOString() : new Date(r.updated_at).toISOString()) : null,
     }));
 
     return res.status(200).json(data);

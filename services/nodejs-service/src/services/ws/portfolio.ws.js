@@ -32,15 +32,23 @@ function decConn(userKey) {
 // Safely convert various timestamp representations to ISO string
 function toIsoTimeSafe(v) {
   if (v === undefined || v === null || v === '') return undefined;
+  
+  // If it's already a Date object
+  if (v instanceof Date) {
+    return !Number.isNaN(v.getTime()) ? v.toISOString() : undefined;
+  }
+  
   // numeric (ms) or numeric string
   const n = Number(v);
   if (Number.isFinite(n)) {
     const d = new Date(n);
     if (!Number.isNaN(d.getTime())) return d.toISOString();
   }
+  
   // try parse ISO or other string formats
   const d2 = new Date(String(v));
   if (!Number.isNaN(d2.getTime())) return d2.toISOString();
+  
   return undefined;
 }
 
@@ -76,7 +84,7 @@ async function fetchOrdersFromDB(userType, userId) {
       commission: r.commission?.toString?.() ?? null,
       swap: r.swap?.toString?.() ?? null,
       close_message: r.close_message,
-      created_at: r.created_at?.toISOString?.() ?? undefined,
+      created_at: toIsoTimeSafe(r.created_at),
     };
     const status = String(r.order_status).toUpperCase();
     if (status === 'OPEN') open.push(base);
