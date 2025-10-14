@@ -9,11 +9,11 @@ nodes.conf
 appendonlydir/
 
 # Environment files
-# .env
-# .env.local
-# .env.production
-# .env.staging
-# *.env
+.env
+.env.local
+.env.production
+.env.staging
+*.env
 
 # Node modules
 **/node_modules
@@ -21,14 +21,20 @@ appendonlydir/
 # Python cache
 **/__pycache__/
 **/*.pyc
-**/*.pyo
-**/*.pyd
-.Python
-*.so
 
 # Logs
 logs/
 *.log
+**/*.log
+log/
+log/*
+
+# Uploads and user-generated content
+uploads/
+uploads/*
+**/uploads/
+temp/
+tmp/
 
 # IDE files
 .vscode/
