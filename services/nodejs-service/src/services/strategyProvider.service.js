@@ -778,6 +778,20 @@ class StrategyProviderService {
         };
       }
 
+      // Max drawdown filter (for moderate drawdown strategies)
+      if (filters.max_drawdown !== undefined) {
+        whereConditions.max_drawdown = {
+          [Op.lte]: parseFloat(filters.max_drawdown)
+        };
+      }
+
+      // Three month return filter
+      if (filters.min_three_month_return !== undefined) {
+        whereConditions.three_month_return = {
+          [Op.gte]: parseFloat(filters.min_three_month_return) || 0
+        };
+      }
+
       // Search by strategy name
       if (filters.search) {
         whereConditions.strategy_name = {
@@ -794,6 +808,10 @@ class StrategyProviderService {
         orderBy = [['created_at', 'DESC']];
       } else if (filters.sort_by === 'performance_fee') {
         orderBy = [['performance_fee', 'ASC']]; // Lowest fee first
+      } else if (filters.sort_by === 'three_month_return') {
+        orderBy = [['three_month_return', 'DESC']]; // Best 3-month performance first
+      } else if (filters.sort_by === 'drawdown') {
+        orderBy = [['max_drawdown', 'ASC']]; // Lowest drawdown first
       }
 
       // Execute query

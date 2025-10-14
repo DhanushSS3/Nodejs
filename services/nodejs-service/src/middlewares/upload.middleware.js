@@ -18,7 +18,7 @@ const upload = multer({
     files: 2, // Maximum 2 files
     fieldSize: 1024 * 1024, // 1MB per field value
     fieldNameSize: 100, // 100 bytes per field name
-    fields: 20 // Maximum 20 non-file fields
+    fields: 30 // Maximum 30 non-file fields (increased from 20 to accommodate all signup fields)
   },
   fileFilter: (req, file, cb) => {
     // Accept only image files

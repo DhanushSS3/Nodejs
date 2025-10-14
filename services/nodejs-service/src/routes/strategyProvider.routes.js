@@ -533,10 +533,23 @@ const upload = multer({
  *         description: Search by strategy name
  *         example: "EURUSD"
  *       - in: query
+ *         name: max_drawdown
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *         description: Maximum drawdown filter (for moderate risk strategies)
+ *         example: 15.0
+ *       - in: query
+ *         name: min_three_month_return
+ *         schema:
+ *           type: number
+ *         description: Minimum 3-month return percentage filter
+ *         example: 5.0
+ *       - in: query
  *         name: sort_by
  *         schema:
  *           type: string
- *           enum: [performance, followers, newest, performance_fee]
+ *           enum: [performance, followers, newest, performance_fee, three_month_return, drawdown]
  *           default: performance
  *         description: Sort criteria
  *         example: "performance"

@@ -420,8 +420,24 @@ async function getCatalogStrategies(req, res) {
       filters.search = req.query.search.trim();
     }
     
+    // Max drawdown filter
+    if (req.query.max_drawdown !== undefined) {
+      const maxDrawdown = parseFloat(req.query.max_drawdown);
+      if (!isNaN(maxDrawdown) && maxDrawdown >= 0) {
+        filters.max_drawdown = maxDrawdown;
+      }
+    }
+
+    // Three month return filter
+    if (req.query.min_three_month_return !== undefined) {
+      const minThreeMonthReturn = parseFloat(req.query.min_three_month_return);
+      if (!isNaN(minThreeMonthReturn)) {
+        filters.min_three_month_return = minThreeMonthReturn;
+      }
+    }
+
     // Sort filter
-    const validSortOptions = ['performance', 'followers', 'newest', 'performance_fee'];
+    const validSortOptions = ['performance', 'followers', 'newest', 'performance_fee', 'three_month_return', 'drawdown'];
     if (req.query.sort_by && validSortOptions.includes(req.query.sort_by)) {
       filters.sort_by = req.query.sort_by;
     }
