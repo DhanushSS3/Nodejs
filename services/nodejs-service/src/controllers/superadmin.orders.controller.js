@@ -1,6 +1,7 @@
 const axios = require('axios');
 const OrdersIndexRebuildService = require('../services/orders.index.rebuild.service');
 const OrdersBackfillService = require('../services/orders.backfill.service');
+const PortfolioRebuildService = require('../services/portfolio.rebuild.service');
 const { redisCluster } = require('../../config/redis');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
@@ -348,6 +349,70 @@ async function getUserPortfolio(req, res) {
   }
 }
 
+// POST /api/superadmin/orders/rebuild/portfolio
+// body: { user_type: 'live'|'demo', user_id: string|number, recalculate_margin?: boolean, update_redis_portfolio?: boolean, update_sql_margin?: boolean, force_refresh?: boolean }
+async function rebuildUserPortfolio(req, res) {
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id = String(req.body.user_id || '').trim();
+    const recalculateMargin = req.body.recalculate_margin !== false; // Default true
+    const updateRedisPortfolio = req.body.update_redis_portfolio !== false; // Default true
+    const updateSqlMargin = req.body.update_sql_margin !== false; // Default true
+    const forceRefresh = Boolean(req.body.force_refresh);
+
+    if (!['live', 'demo'].includes(user_type) || !user_id) {
+      return bad(res, 'user_type must be live|demo and user_id is required');
+    }
+
+    const options = {
+      recalculateMargin,
+      updateRedisPortfolio,
+      updateSqlMargin,
+      forceRefresh
+    };
+
+    // Pass authorization token for Python service calls
+    const authToken = req.headers.authorization;
+    const result = await PortfolioRebuildService.rebuildUserPortfolio(user_type, user_id, options, authToken);
+    
+    return ok(res, result, 'User portfolio rebuilt successfully from database orders');
+  } catch (err) {
+    return bad(res, `Failed to rebuild user portfolio: ${err.message}`, 500);
+  }
+}
+
+// POST /api/superadmin/orders/rebuild/portfolio/batch
+// body: { requests: [{ user_type: 'live'|'demo', user_id: string|number, options?: {...} }], global_options?: {...} }
+async function rebuildMultiplePortfolios(req, res) {
+  try {
+    const requests = req.body.requests || [];
+    const globalOptions = req.body.global_options || {};
+
+    if (!Array.isArray(requests) || requests.length === 0) {
+      return bad(res, 'requests array is required and must not be empty');
+    }
+
+    // Validate each request
+    for (const request of requests) {
+      if (!['live', 'demo'].includes(String(request.user_type || '').toLowerCase())) {
+        return bad(res, 'Each request must have valid user_type (live|demo)');
+      }
+      if (!String(request.user_id || '').trim()) {
+        return bad(res, 'Each request must have valid user_id');
+      }
+    }
+
+    // Pass authorization token for Python service calls
+    const authToken = req.headers.authorization;
+    const result = await PortfolioRebuildService.rebuildMultipleUsers(requests, globalOptions, authToken);
+    
+    const message = `Batch portfolio rebuild completed: ${result.success_count} successful, ${result.error_count} failed`;
+    return ok(res, result, message);
+  } catch (err) {
+    return bad(res, `Failed to rebuild multiple portfolios: ${err.message}`, 500);
+  }
+}
+
 module.exports = {
   rebuildUser,
   rebuildSymbol,
@@ -358,4 +423,6 @@ module.exports = {
   getQueuedOrders,
   getMarginStatus,
   pruneUser,
+  rebuildUserPortfolio,
+  rebuildMultiplePortfolios,
 };

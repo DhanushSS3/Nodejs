@@ -355,4 +355,203 @@ router.get('/queued', ctrl.getQueuedOrders);
  */
 router.get('/margin-status', ctrl.getMarginStatus);
 
+/**
+ * @swagger
+ * /api/superadmin/orders/rebuild/portfolio:
+ *   post:
+ *     summary: Rebuild user portfolio (balance, margin, equity) from database orders
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [user_type, user_id]
+ *             properties:
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo]
+ *                 description: User account type
+ *               user_id:
+ *                 type: string
+ *                 description: User ID to rebuild portfolio for
+ *               recalculate_margin:
+ *                 type: boolean
+ *                 default: true
+ *                 description: If true, uses Python service for precise margin calculation
+ *               update_redis_portfolio:
+ *                 type: boolean
+ *                 default: true
+ *                 description: If true, updates Redis portfolio cache
+ *               update_sql_margin:
+ *                 type: boolean
+ *                 default: true
+ *                 description: If true, updates SQL margin field if changed
+ *               force_refresh:
+ *                 type: boolean
+ *                 default: false
+ *                 description: If true, forces fresh calculation from Python service
+ *     responses:
+ *       200:
+ *         description: Portfolio rebuilt successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user_type:
+ *                       type: string
+ *                     user_id:
+ *                       type: string
+ *                     before:
+ *                       type: object
+ *                       properties:
+ *                         balance:
+ *                           type: number
+ *                         margin:
+ *                           type: number
+ *                         orders_count:
+ *                           type: number
+ *                     after:
+ *                       type: object
+ *                       properties:
+ *                         balance:
+ *                           type: number
+ *                         used_margin:
+ *                           type: number
+ *                         free_margin:
+ *                           type: number
+ *                         equity:
+ *                           type: number
+ *                         margin_level:
+ *                           type: number
+ *                         open_pnl:
+ *                           type: number
+ *                         total_pnl:
+ *                           type: number
+ *                         open_orders_count:
+ *                           type: number
+ *                         pending_orders_count:
+ *                           type: number
+ *                         closed_orders_count:
+ *                           type: number
+ *                         calculation_source:
+ *                           type: string
+ *                     updated:
+ *                       type: object
+ *                       properties:
+ *                         redis_portfolio:
+ *                           type: boolean
+ *                         sql_margin:
+ *                           type: boolean
+ *                         python_triggered:
+ *                           type: boolean
+ *       400:
+ *         description: Invalid request parameters
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/rebuild/portfolio', ctrl.rebuildUserPortfolio);
+
+/**
+ * @swagger
+ * /api/superadmin/orders/rebuild/portfolio/batch:
+ *   post:
+ *     summary: Rebuild multiple user portfolios in batch
+ *     tags: [Superadmin Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [requests]
+ *             properties:
+ *               requests:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [user_type, user_id]
+ *                   properties:
+ *                     user_type:
+ *                       type: string
+ *                       enum: [live, demo]
+ *                     user_id:
+ *                       type: string
+ *                     options:
+ *                       type: object
+ *                       properties:
+ *                         recalculate_margin:
+ *                           type: boolean
+ *                         update_redis_portfolio:
+ *                           type: boolean
+ *                         update_sql_margin:
+ *                           type: boolean
+ *                         force_refresh:
+ *                           type: boolean
+ *               global_options:
+ *                 type: object
+ *                 description: Default options applied to all requests
+ *                 properties:
+ *                   recalculate_margin:
+ *                     type: boolean
+ *                     default: true
+ *                   update_redis_portfolio:
+ *                     type: boolean
+ *                     default: true
+ *                   update_sql_margin:
+ *                     type: boolean
+ *                     default: true
+ *                   force_refresh:
+ *                     type: boolean
+ *                     default: false
+ *     responses:
+ *       200:
+ *         description: Batch rebuild completed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     success_count:
+ *                       type: number
+ *                     error_count:
+ *                       type: number
+ *                     results:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     errors:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           user_type:
+ *                             type: string
+ *                           user_id:
+ *                             type: string
+ *                           error:
+ *                             type: string
+ */
+router.post('/rebuild/portfolio/batch', ctrl.rebuildMultiplePortfolios);
+
 module.exports = router;
