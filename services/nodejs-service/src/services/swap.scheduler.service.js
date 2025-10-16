@@ -32,15 +32,15 @@ class SwapSchedulerService {
       return;
     }
 
-    // Schedule to run daily at 00:01 UTC
-    this.cronJob = cron.schedule('15 12 * * *', async () => {
+    // Schedule to run daily at 00:15 UTC (12:15 AM)
+    this.cronJob = cron.schedule('15 0 * * *', async () => {
       await this.processDaily();
     }, {
       scheduled: true,
       timezone: 'UTC'
     });
 
-    logger.info('Swap scheduler started - will run daily at 00:01 UTC');
+    logger.info('Swap scheduler started - will run daily at 00:15 UTC');
   }
 
   /**
@@ -156,7 +156,17 @@ class SwapSchedulerService {
         return results;
       }
 
-      logger.info(`Found ${openOrders.length} open ${orderType} orders`);
+      logger.info(`Found ${openOrders.length} open ${orderType} orders for date ${targetDate.toDateString()} (day ${targetDate.getDay()})`);
+      
+      if (openOrders.length > 0) {
+        logger.info(`Sample order details:`, {
+          order_id: openOrders[0].order_id,
+          symbol: openOrders[0].symbol,
+          user_group: openOrders[0].user?.group,
+          order_type: openOrders[0].order_type,
+          order_status: openOrders[0].order_status
+        });
+      }
 
       // Process orders in batches to avoid memory issues
       const batchSize = 100;
@@ -237,10 +247,12 @@ class SwapSchedulerService {
           const swapCharge = await swapCalculationService.calculateSwapCharge(order, targetDate);
 
           if (swapCharge === 0) {
-            logger.debug(`No swap charge for order ${order.order_id}`);
+            logger.info(`SWAP_SKIPPED: Order ${order.order_id} (${order.symbol}, ${userGroup}) - swap charge = 0. Target date: ${targetDate.toDateString()} (${targetDate.getDay()})`);
             results.skipped++;
             continue;
           }
+          
+          logger.info(`SWAP_CALCULATED: Order ${order.order_id} (${order.symbol}, ${userGroup}) - swap charge = ${swapCharge}`);
 
           // Update order with new swap charge
           const currentSwap = parseFloat(order.swap || 0);

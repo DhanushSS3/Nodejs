@@ -116,16 +116,21 @@ class SwapCalculationService {
 
     // Check swap_type first
     if (groupConfig.swap_type?.toLowerCase() === 'noswap') {
+      logger.info(`Swap skipped - swap_type is 'noswap' for instrument type ${instrumentType}`);
       return false;
     }
 
     // Crypto (type = 4) - apply swap daily
     if (instrumentType === 4) {
+      logger.info(`Swap applicable - crypto instrument (type=4) processes daily`);
       return true;
     }
 
     // Other instruments - apply only on weekdays (Monday=1 to Friday=5)
-    return dayOfWeek >= 1 && dayOfWeek <= 5;
+    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+    logger.info(`Swap check - instrument type: ${instrumentType}, day: ${dayOfWeek} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]}), isWeekday: ${isWeekday}`);
+    
+    return isWeekday;
   }
 
   /**
