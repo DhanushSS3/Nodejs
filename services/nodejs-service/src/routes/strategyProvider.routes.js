@@ -734,11 +734,11 @@ const upload = multer({
  */
 
 
-// Apply JWT authentication to all routes
-router.use(authenticateJWT);
-
-// Catalog routes (requires authentication) - Must come before parameterized routes
+// Public catalog route (no authentication required)
 router.get('/catalog', strategyProviderController.getCatalogStrategies);
+
+// Apply JWT authentication to all routes below this point
+router.use(authenticateJWT);
 
 // Private strategy routes (requires authentication)
 router.get('/private/:accessLink', strategyProviderController.getPrivateStrategyByLink);
@@ -770,5 +770,9 @@ router.post('/', (req, res, next) => {
 router.get('/', strategyProviderController.getUserStrategyProviderAccounts);
 router.get('/:id', strategyProviderController.getStrategyProviderAccount);
 router.get('/:id/catalog-eligibility', strategyProviderController.checkCatalogEligibility);
+
+// Account switching routes (requires authentication)
+router.post('/:id/switch', authenticateJWT, strategyProviderController.switchToStrategyProvider);
+router.post('/switch-back', authenticateJWT, strategyProviderController.switchBackToLiveUser);
 
 module.exports = router;

@@ -1,5 +1,11 @@
 const strategyProviderService = require('../services/strategyProvider.service');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const LiveUser = require('../models/liveUser.model');
+const jwt = require('jsonwebtoken');
 const logger = require('../services/logger.service');
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * Get user ID from JWT token
@@ -340,27 +346,13 @@ async function getPrivateStrategyByLink(req, res) {
 }
 
 /**
- * Get catalog eligible strategy providers for authenticated live users
+ * Get catalog eligible strategy providers (public endpoint)
  * GET /api/strategy-providers/catalog
  */
 async function getCatalogStrategies(req, res) {
   try {
-    const userId = getUserId(req.user);
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-    
-    // Validate user type (only live users can access catalog)
-    if (req.user.user_type !== 'live') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only live users can access strategy catalog'
-      });
-    }
+    // This is now a public endpoint - no authentication required
+    const userId = req.user ? getUserId(req.user) : null;
     
     // Extract and validate query parameters
     const page = parseInt(req.query.page) || 1;
@@ -547,11 +539,212 @@ async function checkCatalogEligibility(req, res) {
   }
 }
 
+/**
+ * Switch to strategy provider account
+ * POST /api/strategy-providers/:id/switch
+ */
+async function switchToStrategyProvider(req, res) {
+  try {
+    const userId = getUserId(req.user);
+    const { id: strategyProviderId } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid authentication token'
+      });
+    }
+
+    // Get strategy provider account
+    const strategyProvider = await StrategyProviderAccount.findOne({
+      where: {
+        id: strategyProviderId,
+        user_id: userId,
+        status: 1,
+        is_active: 1
+      },
+      include: [
+        {
+          model: CopyFollowerAccount,
+          as: 'followers',
+          where: { copy_status: 'active', is_active: 1 },
+          required: false,
+          attributes: ['id', 'user_id', 'investment_amount', 'copy_status']
+        }
+      ]
+    });
+
+    if (!strategyProvider) {
+      return res.status(404).json({
+        success: false,
+        message: 'Strategy provider account not found or you do not have access'
+      });
+    }
+
+    // Generate new session ID for strategy provider context
+    const sessionId = `sp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create JWT payload for strategy provider account
+    const jwtPayload = {
+      sub: userId,
+      user_type: 'live',
+      account_type: 'strategy_provider',
+      strategy_provider_id: strategyProvider.id,
+      strategy_provider_account_number: strategyProvider.account_number,
+      group: strategyProvider.group,
+      leverage: strategyProvider.leverage,
+      sending_orders: strategyProvider.sending_orders,
+      status: strategyProvider.status,
+      is_active: strategyProvider.is_active,
+      session_id: sessionId,
+      user_id: userId,
+      role: 'strategy_provider',
+      followers: strategyProvider.followers ? strategyProvider.followers.map(f => ({
+        id: f.id,
+        user_id: f.user_id,
+        investment_amount: f.investment_amount,
+        copy_status: f.copy_status
+      })) : []
+    };
+
+    // Generate new JWT token (15 minutes expiry)
+    const token = jwt.sign(jwtPayload, JWT_SECRET, { 
+      expiresIn: '15m', 
+      jwtid: sessionId 
+    });
+
+    logger.info('User switched to strategy provider account', {
+      userId,
+      strategyProviderId: strategyProvider.id,
+      sessionId
+    });
+
+    res.json({
+      success: true,
+      message: 'Successfully switched to strategy provider account',
+      token,
+      account: {
+        id: strategyProvider.id,
+        account_number: strategyProvider.account_number,
+        strategy_name: strategyProvider.strategy_name,
+        group: strategyProvider.group,
+        leverage: strategyProvider.leverage,
+        status: strategyProvider.status,
+        is_active: strategyProvider.is_active,
+        total_followers: strategyProvider.total_followers,
+        followers_count: strategyProvider.followers ? strategyProvider.followers.length : 0
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to switch to strategy provider account', {
+      userId: req.user?.id,
+      strategyProviderId: req.params?.id,
+      error: error.message
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to switch to strategy provider account',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Switch back to live user account
+ * POST /api/strategy-providers/switch-back
+ */
+async function switchBackToLiveUser(req, res) {
+  try {
+    const userId = getUserId(req.user);
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid authentication token'
+      });
+    }
+
+    // Get live user account
+    const liveUser = await LiveUser.findByPk(userId);
+    
+    if (!liveUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'Live user account not found'
+      });
+    }
+
+    // Generate new session ID for live user context
+    const sessionId = `live_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create JWT payload for live user account (similar to login)
+    const jwtPayload = {
+      sub: liveUser.id,
+      user_type: liveUser.user_type,
+      mam_status: liveUser.mam_status,
+      pam_status: liveUser.pam_status,
+      sending_orders: liveUser.sending_orders,
+      group: liveUser.group,
+      account_number: liveUser.account_number,
+      session_id: sessionId,
+      user_id: liveUser.id,
+      status: liveUser.status,
+      role: 'trader',
+      is_self_trading: liveUser.is_self_trading,
+      is_active: liveUser.is_active,
+      account_type: 'live'
+    };
+
+    // Generate new JWT token (15 minutes expiry)
+    const token = jwt.sign(jwtPayload, JWT_SECRET, { 
+      expiresIn: '15m', 
+      jwtid: sessionId 
+    });
+
+    logger.info('User switched back to live user account', {
+      userId,
+      sessionId
+    });
+
+    res.json({
+      success: true,
+      message: 'Successfully switched back to live user account',
+      token,
+      account: {
+        id: liveUser.id,
+        account_number: liveUser.account_number,
+        group: liveUser.group,
+        user_type: liveUser.user_type,
+        status: liveUser.status,
+        is_active: liveUser.is_active,
+        wallet_balance: liveUser.wallet_balance,
+        equity: liveUser.equity
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to switch back to live user account', {
+      userId: req.user?.id,
+      error: error.message
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to switch back to live user account',
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   createStrategyProviderAccount,
   getStrategyProviderAccount,
   getUserStrategyProviderAccounts,
   getPrivateStrategyByLink,
   getCatalogStrategies,
-  checkCatalogEligibility
+  checkCatalogEligibility,
+  switchToStrategyProvider,
+  switchBackToLiveUser
 };
