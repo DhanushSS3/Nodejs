@@ -6,6 +6,37 @@ const {
   logSwapError 
 } = require('../utils/swap.logger');
 
+// Import winston logger for swap-specific debug logs
+const winston = require('winston');
+const path = require('path');
+const fs = require('fs');
+
+// Create dedicated debug logger that writes to swap.log
+const logsDir = path.join(__dirname, '../../logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
+const swapDebugLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: 'YYYY-MM-DD HH:mm:ss'
+    }),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'swap-service' },
+  transports: [
+    new winston.transports.File({
+      filename: path.join(logsDir, 'swap.log'),
+      maxsize: 100 * 1024 * 1024, // 100MB
+      maxFiles: 10,
+      tailable: true
+    })
+  ]
+});
+
 class SwapCalculationService {
   constructor() {
     this.CACHE_PREFIX = 'swap_calc';
@@ -21,24 +52,31 @@ class SwapCalculationService {
     const startTime = Date.now();
     
     try {
-      logger.info(`Calculating swap for order: ${order.order_id}, symbol: ${order.symbol}, group: ${order.group_name}`);
-
       // Get group configuration for the symbol
       const groupConfig = await groupsCacheService.getGroup(order.group_name, order.symbol);
+      
       if (!groupConfig) {
-        logger.warn(`Group config not found for ${order.group_name}:${order.symbol}`);
+        swapDebugLogger.warn(`[DEBUG] Group config not found for ${order.group_name}:${order.symbol}`);
         return 0;
       }
 
       // Check if swap should be applied
-      if (!this.shouldApplySwap(groupConfig, calculationDate)) {
-        logger.info(`Swap not applicable for ${order.symbol} on ${calculationDate.toDateString()}`);
+      const shouldApply = this.shouldApplySwap(groupConfig, calculationDate);
+      
+      if (!shouldApply) {
+        swapDebugLogger.info(`[DEBUG] Swap not applicable for ${order.symbol} (${calculationDate.getDay() === 0 || calculationDate.getDay() === 6 ? 'weekend' : 'non-trading day'})`);
         return 0;
       }
 
       // Calculate base swap charge
       let swapCharge = 0;
-      const swapType = groupConfig.swap_type?.toLowerCase();
+      // Default to 'percentage' if swap_type is null or undefined
+      let swapType = groupConfig.swap_type?.toLowerCase();
+      if (!swapType || swapType === 'null' || swapType === 'undefined') {
+        swapType = 'percentage'; // Default swap type
+        swapDebugLogger.info(`[DEBUG] No swap_type defined for ${order.symbol}, defaulting to 'percentage'`);
+      }
+      
       const swapRate = order.order_type.toLowerCase() === 'buy' 
         ? parseFloat(groupConfig.swap_buy) 
         : parseFloat(groupConfig.swap_sell);
@@ -47,6 +85,11 @@ class SwapCalculationService {
       const isTripleSwap = tripleSwapMultiplier === 3;
       const isCrypto = parseInt(groupConfig.type) === 4;
       let formulaUsed = '';
+      
+      // Log key calculation parameters only if swap rate is non-zero
+      if (swapRate !== 0) {
+        swapDebugLogger.info(`[DEBUG] Calculating ${swapType} swap for ${order.symbol}: rate=${swapRate}, qty=${order.order_quantity}`);
+      }
 
       switch (swapType) {
         case 'points':
@@ -58,16 +101,20 @@ class SwapCalculationService {
           formulaUsed = 'percentage: 100,000 × Lots × (SwapRate/100) × ConversionRate';
           break;
         case 'noswap':
-          logger.info(`No swap configured for ${order.symbol}`);
           return 0;
         default:
-          logger.warn(`Unknown swap_type: ${swapType} for ${order.symbol}`);
+          swapDebugLogger.warn(`[DEBUG] Unknown swap_type: ${swapType} for ${order.symbol}`);
           return 0;
       }
 
       // Apply triple swap on Wednesday for non-crypto
-      swapCharge *= tripleSwapMultiplier;
+      const finalSwapCharge = swapCharge * tripleSwapMultiplier;
       const processingTime = Date.now() - startTime;
+      
+      // Log only if swap charge is calculated
+      if (finalSwapCharge !== 0) {
+        swapDebugLogger.info(`[DEBUG] Calculated swap: ${finalSwapCharge} for order ${order.order_id} (${swapType}${isTripleSwap ? ', triple swap' : ''})`);
+      }
 
       // Log detailed calculation
       logSwapCalculation({
@@ -81,9 +128,9 @@ class SwapCalculationService {
         calculation_date: calculationDate.toISOString(),
         swap_type: swapType,
         swap_rate: swapRate,
-        calculated_amount: swapCharge,
+        calculated_amount: finalSwapCharge,
         previous_swap: parseFloat(order.swap || 0),
-        new_total_swap: parseFloat(order.swap || 0) + swapCharge,
+        new_total_swap: parseFloat(order.swap || 0) + finalSwapCharge,
         formula_used: formulaUsed,
         conversion_rate: conversionRate,
         is_triple_swap: isTripleSwap,
@@ -91,8 +138,7 @@ class SwapCalculationService {
         processing_time_ms: processingTime
       });
 
-      logger.info(`Calculated swap charge: ${swapCharge} for order ${order.order_id}`);
-      return swapCharge;
+      return finalSwapCharge;
 
     } catch (error) {
       logSwapError(error, {
@@ -113,6 +159,7 @@ class SwapCalculationService {
   shouldApplySwap(groupConfig, calculationDate) {
     const instrumentType = parseInt(groupConfig.type);
     const dayOfWeek = calculationDate.getDay(); // 0 = Sunday, 6 = Saturday
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
     // Check swap_type first
     if (groupConfig.swap_type?.toLowerCase() === 'noswap') {
@@ -161,7 +208,8 @@ class SwapCalculationService {
 
       const lots = parseFloat(order.order_quantity);
       const contractSize = parseFloat(groupConfig.contract_size || 100000);
-      const showPoints = this.convertShowPointsToDecimal(parseInt(groupConfig.show_points || 5));
+      const showPointsRaw = parseInt(groupConfig.show_points || 5);
+      const showPoints = this.convertShowPointsToDecimal(showPointsRaw);
 
       // Get conversion rate
       const conversionRate = await this.getConversionRate(groupConfig);
@@ -172,11 +220,10 @@ class SwapCalculationService {
       // Calculate swap charge
       const swapCharge = swapPoints * pointValue * lots;
 
-      logger.info(`Points swap calculation: swapPoints=${swapPoints}, pointValue=${pointValue}, lots=${lots}, result=${swapCharge}`);
       return swapCharge;
 
     } catch (error) {
-      logger.error('Error in calculatePointsSwap:', error);
+      swapDebugLogger.error('[DEBUG] Error in calculatePointsSwap:', error);
       return 0;
     }
   }
@@ -203,11 +250,10 @@ class SwapCalculationService {
       // Using same formula for all types as requested
       const swapCharge = 100000 * lots * (swapRate / 100) * conversionRate;
 
-      logger.info(`Percentage swap calculation: swapRate=${swapRate}%, lots=${lots}, conversionRate=${conversionRate}, result=${swapCharge}`);
       return swapCharge;
 
     } catch (error) {
-      logger.error('Error in calculatePercentageSwap:', error);
+      swapDebugLogger.error('[DEBUG] Error in calculatePercentageSwap:', error);
       return 0;
     }
   }
@@ -229,7 +275,6 @@ class SwapCalculationService {
   async getConversionRate(groupConfig) {
     try {
       const profitCurrency = groupConfig.profit?.toUpperCase();
-      
       // If already in USD or USDT, no conversion needed
       if (!profitCurrency || profitCurrency === 'USD' || profitCurrency === 'USDT') {
         return 1.0;
@@ -240,7 +285,7 @@ class SwapCalculationService {
       return rate || 1.0; // Default to 1.0 if conversion fails
 
     } catch (error) {
-      logger.error('Error getting conversion rate:', error);
+      swapDebugLogger.error('[DEBUG] Error getting conversion rate:', error);
       return 1.0;
     }
   }

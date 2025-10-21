@@ -16,6 +16,37 @@ const {
   logManualSwapProcessing
 } = require('../utils/swap.logger');
 
+// Import winston logger for swap-specific debug logs
+const winston = require('winston');
+const path = require('path');
+const fs = require('fs');
+
+// Create dedicated debug logger that writes to swap.log
+const logsDir = path.join(__dirname, '../../logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
+const swapDebugLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: 'YYYY-MM-DD HH:mm:ss'
+    }),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'swap-service' },
+  transports: [
+    new winston.transports.File({
+      filename: path.join(logsDir, 'swap.log'),
+      maxsize: 100 * 1024 * 1024, // 100MB
+      maxFiles: 10,
+      tailable: true
+    })
+  ]
+});
+
 class SwapSchedulerService {
   constructor() {
     this.isRunning = false;
@@ -33,7 +64,7 @@ class SwapSchedulerService {
     }
 
     // Schedule to run daily at 00:01 UTC
-    this.cronJob = cron.schedule('15 12 * * *', async () => {
+    this.cronJob = cron.schedule('7 8 * * *', async () => {
       await this.processDaily();
     }, {
       scheduled: true,
@@ -170,21 +201,38 @@ class SwapSchedulerService {
       }
 
     } catch (error) {
-      logger.error(`Error processing ${orderType} orders:`, error);
+      swapDebugLogger.error(`[DEBUG] Error processing ${orderType} orders:`, error);
       results.errors++;
     }
 
+    if (results.updated > 0 || results.errors > 0) {
+      swapDebugLogger.info(`[DEBUG] ${orderType} results: ${results.updated} updated, ${results.skipped} skipped, ${results.errors} errors`);
+    }
     return results;
   }
 
   /**
    * Get all open orders with user group information
+   * NOTE: Orders are ALWAYS fetched from DATABASE (MySQL/PostgreSQL) using Sequelize ORM
+   * This ensures we get the most up-to-date order information, not cached Redis data
    */
   async getOpenOrders(OrderModel) {
     const isLiveOrder = OrderModel.name === 'LiveUserOrder';
     const UserModel = isLiveOrder ? LiveUser : DemoUser;
+    const orderType = isLiveOrder ? 'live' : 'demo';
     
-    return await OrderModel.findAll({
+    // Get order status distribution for monitoring
+    const statusCounts = await OrderModel.findAll({
+      attributes: [
+        'order_status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['order_status'],
+      raw: true
+    });
+    
+    // IMPORTANT: This query fetches orders directly from DATABASE, not Redis cache
+    const orders = await OrderModel.findAll({
       where: {
         order_status: {
           [Op.in]: ['OPEN', 'PENDING', 'PARTIAL_FILLED'] // Add other open statuses as needed
@@ -202,6 +250,14 @@ class SwapSchedulerService {
         required: true // Inner join to ensure we only get orders with valid users
       }]
     });
+    
+    if (orders.length > 0) {
+      swapDebugLogger.info(`[DEBUG] Processing ${orders.length} open ${orderType} orders`);
+    } else {
+      swapDebugLogger.info(`[DEBUG] No open ${orderType} orders found`);
+    }
+    
+    return orders;
   }
 
   /**
@@ -224,7 +280,7 @@ class SwapSchedulerService {
           // Get group from user association
           const userGroup = order.user?.group;
           if (!userGroup) {
-            logger.warn(`Skipping order ${order.order_id} - missing user group information`);
+            swapDebugLogger.warn(`[DEBUG] Skipping order ${order.order_id} - missing user group`);
             results.skipped++;
             continue;
           }
@@ -237,7 +293,6 @@ class SwapSchedulerService {
           const swapCharge = await swapCalculationService.calculateSwapCharge(order, targetDate);
 
           if (swapCharge === 0) {
-            logger.debug(`No swap charge for order ${order.order_id}`);
             results.skipped++;
             continue;
           }
@@ -321,14 +376,6 @@ class SwapSchedulerService {
           const orderKey = `user_holdings:{${hashTag}}:${update.order_id}`;
           const orderDataKey = `order_data:${update.order_id}`;
           
-          logger.info(`Updating Redis keys for order ${update.order_id}:`, {
-            orderKey,
-            orderDataKey,
-            newSwap: update.newSwap,
-            userType: userTypeStr,
-            userId: userIdStr
-          });
-          
           // Create complete Redis hash mapping like the rebuild process does
           const holdingMapping = {
             order_id: update.order_id,
@@ -355,21 +402,6 @@ class SwapSchedulerService {
           // Update order_data key with swap value
           await redisCluster.hset(orderDataKey, 'swap', String(update.newSwap));
           
-          logger.info(`Updated Redis keys for order ${update.order_id} with complete mapping`);
-          const pipeResults = []; // For compatibility with existing error checking
-          
-          // Check pipeline results for errors
-          pipeResults.forEach((result, index) => {
-            const [err, res] = result;
-            if (err) {
-              logger.error(`Redis pipeline error at index ${index}:`, err);
-            } else {
-              logger.info(`Redis update successful at index ${index}:`, res);
-            }
-          });
-          
-          logger.info(`Successfully updated Redis swap for order ${update.order_id}: ${update.newSwap}`);
-          
           // Notify WebSocket clients about the swap update
           try {
             portfolioEvents.emitUserUpdate(update.orderType, update.order_user_id, {
@@ -385,14 +417,7 @@ class SwapSchedulerService {
           }
           
         } catch (redisError) {
-          logger.error(`Failed to update Redis swap for order ${update.order_id}:`, {
-            error: redisError.message,
-            stack: redisError.stack,
-            orderType: update.orderType,
-            userId: update.order_user_id,
-            orderId: update.order_id,
-            newSwap: update.newSwap
-          });
+          swapDebugLogger.error(`[DEBUG] Redis update failed for order ${update.order_id}: ${redisError.message}`);
           // Continue processing other Redis updates even if one fails
         }
       }
