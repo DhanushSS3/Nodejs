@@ -8,6 +8,8 @@ const Group = require('../models/group.model');
 const logger = require('./logger.service');
 const idGenerator = require('./idGenerator.service');
 const groupsCache = require('./groups.cache.service');
+const { updateUserUsedMargin } = require('./user.margin.service');
+const portfolioEvents = require('./events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const axios = require('axios');
 
@@ -309,8 +311,8 @@ class CopyTradingService {
         order_status: 'QUEUED',
         order_price: masterOrder.order_price,
         order_quantity: lotCalculation.finalLotSize,
-        stop_loss: modifiedOrder.stopLoss,
-        take_profit: modifiedOrder.takeProfit,
+        stop_loss: null, // Set after successful execution
+        take_profit: null, // Set after successful execution
         
         // Copy trading specific fields
         master_order_id: masterOrder.order_id,
@@ -341,10 +343,54 @@ class CopyTradingService {
       });
 
       // Execute order through Python service
+      logger.info('About to execute follower order', {
+        followerOrderId: followerOrder.order_id,
+        followerId: follower.id,
+        masterOrderId: masterOrder.order_id
+      });
+      
       const executionResult = await this.executeFollowerOrder(followerOrder, follower);
+      
+      logger.info('Follower order execution result', {
+        followerOrderId: followerOrder.order_id,
+        success: executionResult.success,
+        error: executionResult.error,
+        executionResult: executionResult
+      });
 
       // Update follower order with execution results
       await this.updateFollowerOrderAfterExecution(followerOrder, executionResult);
+
+      // Update copy follower margin for local execution (like regular users)
+      if (executionResult.success && executionResult.data?.flow === 'local' && typeof executionResult.data.used_margin_executed === 'number') {
+        try {
+          await updateUserUsedMargin({
+            userType: 'copy_follower',
+            userId: parseInt(follower.id),
+            usedMargin: executionResult.data.used_margin_executed,
+          });
+          
+          // Emit portfolio event for copy follower margin update
+          try {
+            portfolioEvents.emitUserUpdate('copy_follower', follower.id.toString(), {
+              type: 'user_margin_update',
+              used_margin_usd: executionResult.data.used_margin_executed,
+            });
+          } catch (e) {
+            logger.warn('Failed to emit portfolio event after copy follower margin update', { 
+              error: e.message, 
+              copyFollowerId: follower.id 
+            });
+          }
+        } catch (mErr) {
+          logger.error('Failed to update copy follower used margin', {
+            error: mErr.message,
+            copyFollowerId: follower.id,
+            userType: 'copy_follower',
+          });
+          // Do not fail the request; SQL margin is an eventual-consistency mirror of Redis
+        }
+      }
 
       // Update follower account statistics
       await this.updateFollowerAccountStats(follower, executionResult.success);
@@ -359,7 +405,8 @@ class CopyTradingService {
       logger.error('Failed to replicate order to follower', {
         masterOrderId: masterOrder.order_id,
         followerId: follower.id,
-        error: error.message
+        error: error.message,
+        stack: error.stack
       });
 
       // Update follower account failed copies count
@@ -652,22 +699,30 @@ class CopyTradingService {
    * @returns {Object} Execution result
    */
   async executeFollowerOrder(followerOrder, follower) {
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    // Execute follower order through Python service (without SL/TP initially)
+    const payload = {
+      symbol: followerOrder.symbol,
+      order_type: followerOrder.order_type,
+      order_price: followerOrder.order_price,
+      order_quantity: followerOrder.order_quantity,
+      user_id: follower.id.toString(), // Convert to string as required by Python service
+      user_type: 'copy_follower', // Use copy_follower user type
+      order_id: followerOrder.order_id,
+      status: 'OPEN',
+      order_status: 'OPEN',
+      copy_trading: true,
+      master_order_id: followerOrder.master_order_id
+    };
+    
     try {
-      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      // Execute follower order through Python service (without SL/TP initially)
-      const payload = {
-        symbol: followerOrder.symbol,
-        order_type: followerOrder.order_type,
-        order_price: followerOrder.order_price,
-        order_quantity: followerOrder.order_quantity,
-        user_id: follower.id, // Use copy follower account ID (1) - safer approach
-        user_type: 'copy_follower', // Use copy_follower user type
-        order_id: followerOrder.order_id,
-        status: 'OPEN',
-        order_status: 'OPEN',
-        copy_trading: true,
-        master_order_id: followerOrder.master_order_id
-      };
+
+      logger.info('Executing follower order payload', {
+        followerOrderId: followerOrder.order_id,
+        payload: payload,
+        pythonServiceUrl: `${baseUrl}/api/orders/instant/execute`
+      });
 
       const response = await axios.post(
         `${baseUrl}/api/orders/instant/execute`,
@@ -691,9 +746,32 @@ class CopyTradingService {
       };
 
       // Set stop loss and take profit after successful order execution
-      if (followerOrder.stop_loss || followerOrder.take_profit) {
+      // Get the original SL/TP values from the master order
+      const masterOrderData = await StrategyProviderOrder.findOne({ where: { order_id: followerOrder.master_order_id } });
+      if (masterOrderData && (masterOrderData.stop_loss || masterOrderData.take_profit)) {
         try {
-          await this.setFollowerOrderSlTp(followerOrder, follower);
+          // Apply follower's SL/TP modifications
+          const modifiedOrder = await this.applyFollowerSlTpSettings(masterOrderData, follower);
+          
+          // Update the database record with SL/TP values
+          await CopyFollowerOrder.update({
+            stop_loss: modifiedOrder.stopLoss,
+            take_profit: modifiedOrder.takeProfit,
+            original_stop_loss: masterOrderData.stop_loss,
+            original_take_profit: masterOrderData.take_profit,
+            modified_by_follower: modifiedOrder.modified,
+            sl_modification_type: modifiedOrder.slModType,
+            tp_modification_type: modifiedOrder.tpModType
+          }, {
+            where: { order_id: followerOrder.order_id }
+          });
+          
+          // Set SL/TP via Python service
+          await this.setFollowerOrderSlTp({
+            ...followerOrder.dataValues,
+            stop_loss: modifiedOrder.stopLoss,
+            take_profit: modifiedOrder.takeProfit
+          }, follower);
         } catch (slTpError) {
           logger.warn('Failed to set SL/TP for follower order after execution', {
             followerOrderId: followerOrder.order_id,
@@ -710,7 +788,13 @@ class CopyTradingService {
       logger.error('Failed to execute follower order', {
         followerOrderId: followerOrder.order_id,
         followerId: follower.id,
-        error: error.message
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        headers: error.response?.headers,
+        payload: payload,
+        pythonServiceUrl: `${baseUrl}/api/orders/instant/execute`
       });
 
       return {

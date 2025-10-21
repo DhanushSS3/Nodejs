@@ -315,7 +315,7 @@ async def pending_cancel_endpoint(payload: Dict[str, Any]):
         user_type = str(payload.get("user_type") or "").lower().strip()
         status = str(payload.get("status") or "").upper().strip()
 
-        if not order_id or not cancel_id or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or user_type not in ("live","demo"):
+        if not order_id or not cancel_id or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or user_type not in ("live","demo","strategy_provider","copy_follower"):
             raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_fields"})
 
         # Optional: include symbol if present in canonical for provider context
@@ -394,7 +394,7 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
         user_type = str(payload.get("user_type") or "").lower().strip()
         order_price_user = float(payload.get("order_price"))
         order_qty = float(payload.get("order_quantity"))
-        if not order_id or not symbol or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or not user_id or user_type not in ("live","demo"):
+        if not order_id or not symbol or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or not user_id or user_type not in ("live","demo","strategy_provider","copy_follower"):
             raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_fields"})
 
         # Resolve group & group config (prefer canonical, fallback to DB/Redis group hash)
