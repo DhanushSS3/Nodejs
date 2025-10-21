@@ -2,16 +2,33 @@ const { Transaction } = require('sequelize');
 const sequelize = require('../config/db');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const logger = require('./logger.service');
+
+function getUserModel(userType) {
+  switch (userType) {
+    case 'live':
+      return LiveUser;
+    case 'demo':
+      return DemoUser;
+    case 'strategy_provider':
+      return StrategyProviderAccount;
+    case 'copy_follower':
+      return CopyFollowerAccount;
+    default:
+      return LiveUser; // Default fallback
+  }
+}
 
 /**
  * Update a user's overall used margin in SQL with row-level locking.
  * - Locks only the target user row (SELECT ... FOR UPDATE)
  * - Keeps the transaction scope minimal to reduce lock time and avoid deadlocks
- * - Supports both live and demo users based on userType
+ * - Supports live, demo, strategy_provider, and copy_follower users based on userType
  *
  * @param {Object} params
- * @param {'live'|'demo'} params.userType
+ * @param {'live'|'demo'|'strategy_provider'|'copy_follower'} params.userType
  * @param {number} params.userId
  * @param {number|string} params.usedMargin - total used margin to persist
  * @returns {Promise<string>} persisted margin as string
@@ -31,7 +48,7 @@ function isRetryableLockError(err) {
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function updateUserUsedMargin({ userType, userId, usedMargin }) {
-  const Model = userType === 'live' ? LiveUser : DemoUser;
+  const Model = getUserModel(userType);
   // Normalize and round to 2 decimals to preserve reporting consistency in SQL
   const num = Number(usedMargin);
   if (!Number.isFinite(num)) {

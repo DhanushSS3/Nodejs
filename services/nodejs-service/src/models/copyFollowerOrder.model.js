@@ -22,8 +22,7 @@ const CopyFollowerOrder = sequelize.define('CopyFollowerOrder', {
   },
   symbol: {
     type: DataTypes.STRING(255),
-    allowNull: false,
-    field: 'order_company_name'
+    allowNull: false
   },
   order_type: { 
     type: DataTypes.STRING(20), 

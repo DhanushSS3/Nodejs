@@ -55,10 +55,6 @@ const CopyFollowerAccount = sequelize.define('CopyFollowerAccount', {
     type: DataTypes.DECIMAL(18, 6), 
     defaultValue: 0 
   },
-  equity: { 
-    type: DataTypes.DECIMAL(18, 6), 
-    defaultValue: 0 
-  },
   group: { 
     type: DataTypes.STRING,
     allowNull: false // Will be set to match strategy provider's group
@@ -78,7 +74,7 @@ const CopyFollowerAccount = sequelize.define('CopyFollowerAccount', {
   },
   current_equity_ratio: { 
     type: DataTypes.DECIMAL(18, 8), 
-    defaultValue: 1.0000 // For lot calculation: current_equity / initial_investment
+    defaultValue: 1.0000 // For lot calculation: (wallet_balance + net_profit) / initial_investment
   },
   
   // Copy Settings - SL/TP modifications allowed as per Exness rules
@@ -302,14 +298,10 @@ const CopyFollowerAccount = sequelize.define('CopyFollowerAccount', {
       }
     },
     beforeUpdate: (followerAccount) => {
-      // Update equity calculation
-      if (followerAccount.changed('wallet_balance') || followerAccount.changed('net_profit')) {
-        followerAccount.equity = parseFloat(followerAccount.wallet_balance) + parseFloat(followerAccount.net_profit || 0);
-      }
-      
-      // Update equity ratio for lot calculations
-      if (followerAccount.changed('equity') && followerAccount.initial_investment > 0) {
-        followerAccount.current_equity_ratio = followerAccount.equity / followerAccount.initial_investment;
+      // Update equity ratio for lot calculations (equity = wallet_balance + net_profit)
+      if ((followerAccount.changed('wallet_balance') || followerAccount.changed('net_profit')) && followerAccount.initial_investment > 0) {
+        const currentEquity = parseFloat(followerAccount.wallet_balance) + parseFloat(followerAccount.net_profit || 0);
+        followerAccount.current_equity_ratio = currentEquity / followerAccount.initial_investment;
       }
     },
     afterUpdate: async (followerAccount) => {

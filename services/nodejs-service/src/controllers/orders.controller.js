@@ -159,7 +159,20 @@ async function placeInstantOrder(req, res) {
     }
 
     // Persist initial order (QUEUED) unless request is idempotent
-    const OrderModel = parsed.user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    let OrderModel;
+    if (parsed.user_type === 'live') {
+      OrderModel = LiveUserOrder;
+    } else if (parsed.user_type === 'demo') {
+      OrderModel = DemoUserOrder;
+    } else if (parsed.user_type === 'strategy_provider') {
+      const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
+      OrderModel = StrategyProviderOrder;
+    } else if (parsed.user_type === 'copy_follower') {
+      const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      OrderModel = CopyFollowerOrder;
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid user_type', operationId });
+    }
     let initialOrder;
     if (!hasIdempotency) {
       try {

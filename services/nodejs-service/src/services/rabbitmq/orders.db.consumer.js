@@ -2,8 +2,12 @@ const amqp = require('amqplib');
 const logger = require('../logger.service');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
+const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
+const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
 const LiveUser = require('../../models/liveUser.model');
 const DemoUser = require('../../models/demoUser.model');
+const StrategyProviderAccount = require('../../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../../models/copyFollowerAccount.model');
 const OrderRejection = require('../../models/orderRejection.model');
 const OrderLifecycleId = require('../../models/orderLifecycleId.model');
 const { updateUserUsedMargin } = require('../user.margin.service');
@@ -18,7 +22,33 @@ const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/'
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
 
 function getOrderModel(userType) {
-  return userType === 'live' ? LiveUserOrder : DemoUserOrder;
+  switch (userType) {
+    case 'live':
+      return LiveUserOrder;
+    case 'demo':
+      return DemoUserOrder;
+    case 'strategy_provider':
+      return StrategyProviderOrder;
+    case 'copy_follower':
+      return CopyFollowerOrder;
+    default:
+      return LiveUserOrder; // Default fallback
+  }
+}
+
+function getUserModel(userType) {
+  switch (userType) {
+    case 'live':
+      return LiveUser;
+    case 'demo':
+      return DemoUser;
+    case 'strategy_provider':
+      return StrategyProviderAccount;
+    case 'copy_follower':
+      return CopyFollowerAccount;
+    default:
+      return LiveUser; // Default fallback
+  }
 }
 
 function normalizeOrderType(t) {
@@ -345,7 +375,7 @@ async function applyDbUpdate(msg) {
       const setRes = await redisCluster.set(key, '1', 'EX', 7 * 24 * 3600, 'NX');
       if (setRes) {
         const np = Number(net_profit);
-        const UserModel = String(user_type) === 'live' ? LiveUser : DemoUser;
+        const UserModel = getUserModel(String(user_type));
         await UserModel.increment({ net_profit: np }, { where: { id: parseInt(String(user_id), 10) } });
         logger.info('Applied user net_profit increment from close', { user_id: String(user_id), user_type: String(user_type), order_id: String(order_id), net_profit: np });
       } else {

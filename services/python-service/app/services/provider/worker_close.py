@@ -210,7 +210,8 @@ class CloseWorker:
             sending_orders = (cfg.get("sending_orders") or "").strip().lower()
             
             # Only send to provider for provider flow
-            if user_type == "live" and sending_orders == "barclays":
+            if (user_type in ["live", "strategy_provider", "copy_follower"] and sending_orders == "barclays") or \
+               (user_type in ["strategy_provider", "copy_follower"] and not sending_orders):
                 # Generate proper cancel ID like manual cancel endpoints
                 if cancel_type == "takeprofit":
                     cancel_id = generate_takeprofit_cancel_id()

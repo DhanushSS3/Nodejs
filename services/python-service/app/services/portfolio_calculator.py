@@ -40,7 +40,9 @@ class PortfolioCalculatorListener:
         self._dirty_users_lock = Lock()
         self._dirty_users: Dict[str, Set[str]] = {
             'live': set(),
-            'demo': set()
+            'demo': set(),
+            'strategy_provider': set(),
+            'copy_follower': set()
         }
         
         # Statistics for monitoring
@@ -114,12 +116,12 @@ class PortfolioCalculatorListener:
         self.logger.info("Starting throttled portfolio calculation loop (200ms interval)")
         while self._running:
             await asyncio.sleep(0.2)
-            batch = {'live': set(), 'demo': set()}
+            batch = {'live': set(), 'demo': set(), 'strategy_provider': set(), 'copy_follower': set()}
             with self._dirty_users_lock:
-                for user_type in ('live', 'demo'):
+                for user_type in ('live', 'demo', 'strategy_provider', 'copy_follower'):
                     batch[user_type] = set(self._dirty_users[user_type])
                     self._dirty_users[user_type].clear()
-            for user_type in ('live', 'demo'):
+            for user_type in ('live', 'demo', 'strategy_provider', 'copy_follower'):
                 if not batch[user_type]:
                     continue
                 await self._process_dirty_users_batch(batch[user_type], user_type)
@@ -788,9 +790,11 @@ class PortfolioCalculatorListener:
         try:
             self.logger.debug(f"Processing symbol update: {symbol}")
             
-            # Fetch affected users for both user types
+            # Fetch affected users for all user types
             live_users = await self._fetch_symbol_holders(symbol, 'live')
             demo_users = await self._fetch_symbol_holders(symbol, 'demo')
+            strategy_provider_users = await self._fetch_symbol_holders(symbol, 'strategy_provider')
+            copy_follower_users = await self._fetch_symbol_holders(symbol, 'copy_follower')
             
             # Add to dirty user sets
             users_added = 0
@@ -798,6 +802,10 @@ class PortfolioCalculatorListener:
                 users_added += self._add_to_dirty_users(live_users, 'live')
             if demo_users:
                 users_added += self._add_to_dirty_users(demo_users, 'demo')
+            if strategy_provider_users:
+                users_added += self._add_to_dirty_users(strategy_provider_users, 'strategy_provider')
+            if copy_follower_users:
+                users_added += self._add_to_dirty_users(copy_follower_users, 'copy_follower')
             
             # Update statistics
             self._update_stats(symbol, users_added)
@@ -805,7 +813,8 @@ class PortfolioCalculatorListener:
             if users_added > 0:
                 self.logger.debug(
                     f"Symbol {symbol}: Added {users_added} users to dirty sets "
-                    f"(live: {len(live_users)}, demo: {len(demo_users)})"
+                    f"(live: {len(live_users)}, demo: {len(demo_users)}, "
+                    f"strategy_provider: {len(strategy_provider_users)}, copy_follower: {len(copy_follower_users)})"
                 )
             
         except Exception as e:
@@ -894,12 +903,15 @@ class PortfolioCalculatorListener:
         with self._dirty_users_lock:
             live_dirty = len(self._dirty_users['live'])
             demo_dirty = len(self._dirty_users['demo'])
+            strategy_provider_dirty = len(self._dirty_users['strategy_provider'])
+            copy_follower_dirty = len(self._dirty_users['copy_follower'])
         
         self.logger.debug(
             f"Portfolio Calculator Stats - "
             f"Symbols processed: {self._stats['symbols_processed']}, "
             f"Total users affected: {self._stats['users_affected_total']}, "
-            f"Current dirty users (live: {live_dirty}, demo: {demo_dirty}), "
+            f"Current dirty users (live: {live_dirty}, demo: {demo_dirty}, "
+            f"strategy_provider: {strategy_provider_dirty}, copy_follower: {copy_follower_dirty}), "
             f"Uptime: {uptime:.1f}s"
         )
     
@@ -909,7 +921,7 @@ class PortfolioCalculatorListener:
         Thread-safe operation
         
         Args:
-            user_type: 'live' or 'demo'
+            user_type: 'live', 'demo', 'strategy_provider', or 'copy_follower'
             
         Returns:
             Copy of current dirty users set
@@ -923,7 +935,7 @@ class PortfolioCalculatorListener:
         Thread-safe operation for throttled processing
         
         Args:
-            user_type: 'live' or 'demo'
+            user_type: 'live', 'demo', 'strategy_provider', or 'copy_follower'
             
         Returns:
             Set of dirty users that were cleared
@@ -952,6 +964,8 @@ class PortfolioCalculatorListener:
                 'uptime_seconds': uptime,
                 'dirty_users_live': len(self._dirty_users['live']),
                 'dirty_users_demo': len(self._dirty_users['demo']),
+                'dirty_users_strategy_provider': len(self._dirty_users['strategy_provider']),
+                'dirty_users_copy_follower': len(self._dirty_users['copy_follower']),
                 'is_running': self._running
             }
         

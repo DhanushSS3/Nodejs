@@ -177,9 +177,18 @@ class OrderExecutor:
         if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
             strategy: BaseExecutionStrategy = LocalExecutionStrategy(payload)
             flow = "local"
-        elif user_type == "live" and sending_orders == "barclays":
-            strategy = ProviderExecutionStrategy(payload)
-            flow = "provider"
+        elif user_type in ["strategy_provider", "copy_follower"]:
+            # Copy trading accounts respect sending_orders field like live accounts
+            if sending_orders == "rock":
+                strategy = LocalExecutionStrategy(payload)
+                flow = "local"
+            elif sending_orders == "barclays":
+                strategy = ProviderExecutionStrategy(payload)
+                flow = "provider"
+            else:
+                # Default to provider flow for copy trading if sending_orders not set
+                strategy = ProviderExecutionStrategy(payload)
+                flow = "provider"
         else:
             return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
 

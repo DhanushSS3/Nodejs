@@ -1,3 +1,4 @@
+const { Op } = require('sequelize');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
@@ -11,6 +12,103 @@ const { redisCluster } = require('../../config/redis');
 const axios = require('axios');
 
 class CopyTradingService {
+
+  /**
+   * Create strategy provider order with proper Redis entries
+   * @param {Object} orderData - Strategy provider order data
+   */
+  async createStrategyProviderOrder(orderData) {
+    try {
+      // Create strategy provider order in database
+      const masterOrder = await StrategyProviderOrder.create({
+        ...orderData,
+        is_master_order: true,
+        copy_distribution_status: 'pending'
+      });
+
+      // Create Redis entries for strategy provider
+      await this.createRedisOrderEntries(masterOrder, 'strategy_provider');
+
+      logger.info('Created strategy provider order', {
+        orderId: masterOrder.order_id,
+        strategyProviderId: masterOrder.order_user_id,
+        symbol: masterOrder.symbol
+      });
+
+      // Trigger replication to followers
+      await this.processStrategyProviderOrder(masterOrder);
+
+      return masterOrder;
+
+    } catch (error) {
+      logger.error('Failed to create strategy provider order', {
+        error: error.message,
+        orderData
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Create Redis entries for orders (strategy_provider or copy_follower)
+   */
+  async createRedisOrderEntries(order, userType) {
+    try {
+      const hash_tag = `${userType}:${order.order_user_id}`;
+      const order_key = `user_holdings:{${hash_tag}}:${order.order_id}`;
+      const index_key = `user_orders_index:{${hash_tag}}`;
+      const symbol_holders_key = `symbol_holders:${order.symbol}:${userType}`;
+      const order_data_key = `order_data:${order.order_id}`;
+
+      // Create order data entry (canonical)
+      await redisCluster.hset(order_data_key, {
+        order_id: order.order_id,
+        symbol: order.symbol,
+        order_type: order.order_type,
+        order_status: order.order_status,
+        order_price: order.order_price.toString(),
+        order_quantity: order.order_quantity.toString(),
+        user_type: userType,
+        user_id: order.order_user_id.toString(),
+        stop_loss: order.stop_loss ? order.stop_loss.toString() : '',
+        take_profit: order.take_profit ? order.take_profit.toString() : '',
+        status: order.order_status,
+        execution_status: 'PENDING',
+        placed_by: order.placed_by || userType
+      });
+
+      // Create user holdings entry
+      await redisCluster.hset(order_key, {
+        order_id: order.order_id,
+        symbol: order.symbol,
+        order_type: order.order_type,
+        order_status: order.order_status,
+        order_price: order.order_price.toString(),
+        order_quantity: order.order_quantity.toString(),
+        user_type: userType,
+        user_id: order.order_user_id.toString(),
+        stop_loss: order.stop_loss ? order.stop_loss.toString() : '',
+        take_profit: order.take_profit ? order.take_profit.toString() : '',
+        status: order.order_status,
+        execution_status: 'PENDING',
+        placed_by: order.placed_by || userType
+      });
+
+      // Add to user orders index
+      await redisCluster.sadd(index_key, order.order_id);
+
+      // Add to symbol holders
+      await redisCluster.sadd(symbol_holders_key, hash_tag);
+
+      logger.info(`Created Redis entries for ${userType} order ${order.order_id}`);
+
+    } catch (error) {
+      logger.error(`Failed to create Redis entries for ${userType} order ${order.order_id}`, {
+        error: error.message
+      });
+      throw error;
+    }
+  }
 
   /**
    * Process strategy provider order and replicate to all active followers
@@ -94,7 +192,17 @@ class CopyTradingService {
    */
   async getActiveFollowers(strategyProviderId) {
     try {
-      return await CopyFollowerAccount.findAll({
+      logger.info('Searching for active followers', {
+        strategyProviderId,
+        searchCriteria: {
+          strategy_provider_id: strategyProviderId,
+          status: 1,
+          is_active: 1,
+          copy_status: 'active'
+        }
+      });
+
+      const followers = await CopyFollowerAccount.findAll({
         where: {
           strategy_provider_id: strategyProviderId,
           status: 1,
@@ -103,10 +211,58 @@ class CopyTradingService {
         },
         include: [{
           model: LiveUser,
-          as: 'user',
-          attributes: ['id', 'status', 'is_active', 'is_self_trading']
+          as: 'owner',
+          attributes: ['id', 'status', 'is_active', 'is_self_trading'],
+          required: false // LEFT JOIN instead of INNER JOIN
         }]
       });
+
+      // Manual user lookup for followers without associated user
+      for (const follower of followers) {
+        if (!follower.owner && follower.user_id) {
+          try {
+            const user = await LiveUser.findByPk(follower.user_id, {
+              attributes: ['id', 'status', 'is_active', 'is_self_trading']
+            });
+            follower.user = user; // Manually attach user
+            logger.info('Manually loaded user for follower', {
+              followerId: follower.id,
+              userId: follower.user_id,
+              userFound: !!user
+            });
+          } catch (userErr) {
+            logger.error('Failed to manually load user for follower', {
+              followerId: follower.id,
+              userId: follower.user_id,
+              error: userErr.message
+            });
+          }
+        } else {
+          follower.user = follower.owner; // Use the association result
+        }
+      }
+
+      logger.info('Found followers', {
+        strategyProviderId,
+        followerCount: followers.length,
+        followers: followers.map(f => ({
+          id: f.id,
+          user_id: f.user_id,
+          strategy_provider_id: f.strategy_provider_id,
+          copy_status: f.copy_status,
+          status: f.status,
+          is_active: f.is_active,
+          hasUser: !!f.user,
+          userDetails: f.user ? {
+            id: f.user.id,
+            status: f.user.status,
+            is_active: f.user.is_active,
+            is_self_trading: f.user.is_self_trading
+          } : null
+        }))
+      });
+
+      return followers;
     } catch (error) {
       logger.error('Failed to get active followers', {
         strategyProviderId,
@@ -222,18 +378,45 @@ class CopyTradingService {
    */
   async validateFollowerForCopy(follower) {
     try {
-      // Check follower user status
-      if (!follower.user || follower.user.status !== 1 || follower.user.is_active !== 1) {
-        return { valid: false, reason: 'Follower user is inactive' };
+      logger.info('Validating follower for copy', {
+        followerId: follower.id,
+        user: follower.user ? {
+          id: follower.user.id,
+          status: follower.user.status,
+          is_active: follower.user.is_active,
+          is_self_trading: follower.user.is_self_trading
+        } : null,
+        followerAccount: {
+          status: follower.status,
+          is_active: follower.is_active,
+          copy_status: follower.copy_status
+        }
+      });
+
+      // Check follower user status (more flexible validation)
+      if (!follower.user) {
+        return { valid: false, reason: 'Follower user not found' };
       }
 
-      if (follower.user.is_self_trading !== 1) {
-        return { valid: false, reason: 'Follower self trading is disabled' };
+      if (parseInt(follower.user.status) !== 1) {
+        return { valid: false, reason: `Follower user status is ${follower.user.status}, expected 1` };
+      }
+
+      if (parseInt(follower.user.is_active) !== 1) {
+        return { valid: false, reason: `Follower user is_active is ${follower.user.is_active}, expected 1` };
+      }
+
+      if (parseInt(follower.user.is_self_trading) !== 1) {
+        return { valid: false, reason: `Follower self trading is ${follower.user.is_self_trading}, expected 1` };
       }
 
       // Check follower account status
-      if (follower.status !== 1 || follower.is_active !== 1) {
-        return { valid: false, reason: 'Follower account is inactive' };
+      if (parseInt(follower.status) !== 1) {
+        return { valid: false, reason: `Follower account status is ${follower.status}, expected 1` };
+      }
+
+      if (parseInt(follower.is_active) !== 1) {
+        return { valid: false, reason: `Follower account is_active is ${follower.is_active}, expected 1` };
       }
 
       if (follower.copy_status !== 'active') {
@@ -275,15 +458,33 @@ class CopyTradingService {
    */
   async calculateFollowerLotSize(masterOrder, follower) {
     try {
-      // Get strategy provider equity
+      // Get strategy provider equity (calculated from wallet_balance + net_profit)
       const strategyProvider = await StrategyProviderAccount.findByPk(masterOrder.order_user_id);
-      const masterEquity = parseFloat(strategyProvider.equity || strategyProvider.wallet_balance || 0);
+      const masterEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
       
       // Get follower investment amount (their equity in copy trading)
       const followerInvestment = parseFloat(follower.investment_amount || 0);
       
+      logger.info('Lot size calculation data', {
+        strategyProviderId: masterOrder.order_user_id,
+        strategyProvider: {
+          id: strategyProvider.id,
+          wallet_balance: strategyProvider.wallet_balance,
+          net_profit: strategyProvider.net_profit,
+          calculatedEquity: masterEquity
+        },
+        follower: {
+          id: follower.id,
+          investment_amount: follower.investment_amount,
+          followerInvestment: followerInvestment
+        },
+        masterOrder: {
+          order_quantity: masterOrder.order_quantity
+        }
+      });
+      
       if (masterEquity <= 0) {
-        throw new Error('Master equity is zero or negative');
+        throw new Error(`Master equity is zero or negative: wallet_balance=${strategyProvider.wallet_balance}, net_profit=${strategyProvider.net_profit}, calculated=${masterEquity}`);
       }
 
       // Calculate basic ratio
@@ -453,17 +654,15 @@ class CopyTradingService {
   async executeFollowerOrder(followerOrder, follower) {
     try {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-      
+      // Execute follower order through Python service (without SL/TP initially)
       const payload = {
         symbol: followerOrder.symbol,
         order_type: followerOrder.order_type,
         order_price: followerOrder.order_price,
         order_quantity: followerOrder.order_quantity,
-        user_id: follower.user_id,
-        user_type: 'live',
+        user_id: follower.id, // Use copy follower account ID (1) - safer approach
+        user_type: 'copy_follower', // Use copy_follower user type
         order_id: followerOrder.order_id,
-        stop_loss: followerOrder.stop_loss,
-        take_profit: followerOrder.take_profit,
         status: 'OPEN',
         order_status: 'OPEN',
         copy_trading: true,
@@ -482,7 +681,7 @@ class CopyTradingService {
         }
       );
 
-      return {
+      const result = {
         success: true,
         data: response.data?.data || response.data || {},
         executionPrice: response.data?.data?.exec_price || followerOrder.order_price,
@@ -490,6 +689,22 @@ class CopyTradingService {
         contractValue: response.data?.data?.contract_value || 0,
         commission: response.data?.data?.commission_entry || 0
       };
+
+      // Set stop loss and take profit after successful order execution
+      if (followerOrder.stop_loss || followerOrder.take_profit) {
+        try {
+          await this.setFollowerOrderSlTp(followerOrder, follower);
+        } catch (slTpError) {
+          logger.warn('Failed to set SL/TP for follower order after execution', {
+            followerOrderId: followerOrder.order_id,
+            followerId: follower.id,
+            error: slTpError.message
+          });
+          // Don't fail the main order execution for SL/TP issues
+        }
+      }
+
+      return result;
 
     } catch (error) {
       logger.error('Failed to execute follower order', {
@@ -730,7 +945,7 @@ class CopyTradingService {
       const payload = {
         order_id: copiedOrder.order_id,
         user_id: copiedOrder.order_user_id,
-        user_type: 'live',
+        user_type: 'copy_follower', // Use copy_follower user type
         close_price: masterOrder.close_price,
         copy_trading: true
       };
@@ -768,7 +983,7 @@ class CopyTradingService {
       const payload = {
         order_id: copiedOrder.order_id,
         user_id: copiedOrder.order_user_id,
-        user_type: 'live',
+        user_type: 'copy_follower', // Use copy_follower user type
         copy_trading: true
       };
 
@@ -790,6 +1005,89 @@ class CopyTradingService {
         masterOrderId: masterOrder.order_id,
         error: error.message
       });
+    }
+  }
+
+  /**
+   * Set stop loss and take profit for follower order after execution
+   * @param {Object} followerOrder - Follower order
+   * @param {Object} follower - Follower account
+   */
+  async setFollowerOrderSlTp(followerOrder, follower) {
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    try {
+      // Set stop loss if provided
+      if (followerOrder.stop_loss) {
+        const slPayload = {
+          order_id: followerOrder.order_id,
+          user_id: follower.id.toString(),
+          user_type: 'copy_follower',
+          symbol: followerOrder.symbol,
+          order_type: followerOrder.order_type,
+          stop_loss: parseFloat(followerOrder.stop_loss),
+          order_quantity: followerOrder.order_quantity,
+          order_status: 'OPEN',
+          status: 'OPEN'
+        };
+
+        await axios.post(
+          `${baseUrl}/api/orders/stoploss/set`,
+          slPayload,
+          {
+            timeout: 10000,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || 'livefxhub'
+            }
+          }
+        );
+
+        logger.info('Set stop loss for follower order', {
+          followerOrderId: followerOrder.order_id,
+          stopLoss: followerOrder.stop_loss
+        });
+      }
+
+      // Set take profit if provided
+      if (followerOrder.take_profit) {
+        const tpPayload = {
+          order_id: followerOrder.order_id,
+          user_id: follower.id.toString(),
+          user_type: 'copy_follower',
+          symbol: followerOrder.symbol,
+          order_type: followerOrder.order_type,
+          take_profit: parseFloat(followerOrder.take_profit),
+          order_quantity: followerOrder.order_quantity,
+          order_status: 'OPEN',
+          status: 'OPEN'
+        };
+
+        await axios.post(
+          `${baseUrl}/api/orders/takeprofit/set`,
+          tpPayload,
+          {
+            timeout: 10000,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || 'livefxhub'
+            }
+          }
+        );
+
+        logger.info('Set take profit for follower order', {
+          followerOrderId: followerOrder.order_id,
+          takeProfit: followerOrder.take_profit
+        });
+      }
+
+    } catch (error) {
+      logger.error('Failed to set SL/TP for follower order', {
+        followerOrderId: followerOrder.order_id,
+        followerId: follower.id,
+        error: error.message
+      });
+      throw error;
     }
   }
 }

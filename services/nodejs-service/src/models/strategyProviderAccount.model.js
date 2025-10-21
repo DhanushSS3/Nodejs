@@ -58,10 +58,6 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
     type: DataTypes.DECIMAL(18, 6), 
     defaultValue: 0 
   },
-  equity: { 
-    type: DataTypes.DECIMAL(18, 6), 
-    defaultValue: 0 
-  },
   group: { 
     type: DataTypes.STRING,
     allowNull: false,

@@ -542,10 +542,22 @@ async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, 
     pool = await _get_mysql_pool()
     if not pool:
         return {}
-    table = "live_users" if str(user_type).lower() == "live" else "demo_users"
-    # Demo users may not have sending_orders column; handle dynamically
+    # Determine table based on user type
+    user_type_lower = str(user_type).lower()
+    if user_type_lower == "live":
+        table = "live_users"
+    elif user_type_lower == "demo":
+        table = "demo_users"
+    elif user_type_lower == "strategy_provider":
+        table = "strategy_provider_accounts"
+    elif user_type_lower == "copy_follower":
+        table = "copy_follower_accounts"
+    else:
+        return {}  # Unsupported user type
+    
+    # Handle column differences between tables
     select_cols = "`group`, leverage, status, is_active, wallet_balance"
-    if table == "live_users":
+    if table in ["live_users", "strategy_provider_accounts", "copy_follower_accounts"]:
         select_cols += ", sending_orders"
     try:
         async with pool.acquire() as conn:
@@ -558,7 +570,7 @@ async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, 
                 if not row:
                     return {}
                 # Unpack with optional sending_orders
-                if table == "live_users":
+                if table in ["live_users", "strategy_provider_accounts", "copy_follower_accounts"]:
                     grp, lev, status, is_active, wallet_balance, sending_orders = row
                 else:
                     grp, lev, status, is_active, wallet_balance = row

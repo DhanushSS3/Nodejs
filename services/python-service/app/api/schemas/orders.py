@@ -11,6 +11,8 @@ class OrderType(str, Enum):
 class UserType(str, Enum):
     LIVE = "live"
     DEMO = "demo"
+    STRATEGY_PROVIDER = "strategy_provider"
+    COPY_FOLLOWER = "copy_follower"
 
 
 class InstantOrderRequest(BaseModel):
@@ -19,7 +21,7 @@ class InstantOrderRequest(BaseModel):
     order_price: float = Field(..., gt=0, description="Requested price; provider flow uses this; local flow ignores")
     order_quantity: float = Field(..., gt=0, description="Order quantity (lots or units based on symbol config)")
     user_id: str = Field(..., description="User identifier")
-    user_type: UserType = Field(..., description="User type: live or demo")
+    user_type: UserType = Field(..., description="User type: live, demo, strategy_provider, or copy_follower")
     idempotency_key: Optional[str] = Field(None, description="Client-provided idempotency key to avoid duplicates")
     order_id: Optional[str] = Field(None, description="Optional client-generated order id")
     status: Optional[str] = Field(None, description="Optional frontend status passthrough")
@@ -48,7 +50,7 @@ class CloseOrderRequest(BaseModel):
     symbol: str = Field(..., description="Trading symbol, e.g., EURUSD")
     order_type: OrderType = Field(..., description="BUY or SELL")
     user_id: str = Field(..., description="User identifier")
-    user_type: UserType = Field(..., description="User type: live or demo")
+    user_type: UserType = Field(..., description="User type: live, demo, strategy_provider, or copy_follower")
     order_id: str = Field(..., description="Canonical order id to close")
     status: str = Field("CLOSED", description="Frontend/UI status, must be CLOSED")
     order_status: str = Field("CLOSED", description="Engine order_status, must be CLOSED")
@@ -73,7 +75,7 @@ class CloseOrderResponse(BaseModel):
 
 class FinalizeCloseRequest(BaseModel):
     user_id: str = Field(..., description="User identifier")
-    user_type: UserType = Field(..., description="User type: live or demo")
+    user_type: UserType = Field(..., description="User type: live, demo, strategy_provider, or copy_follower")
     order_id: str = Field(..., description="Canonical order id to finalize close for")
     close_price: float | None = Field(None, description="Executed close price (avgpx) from execution report; if omitted, service will fetch from market")
 
@@ -81,7 +83,7 @@ class FinalizeCloseRequest(BaseModel):
 class StopLossSetRequest(BaseModel):
     order_id: str = Field(..., description="Canonical order id")
     user_id: str = Field(..., description="User identifier")
-    user_type: UserType = Field(..., description="User type: live or demo")
+    user_type: UserType = Field(..., description="User type: live, demo, strategy_provider, or copy_follower")
     symbol: str = Field(..., description="Trading symbol, e.g., EURUSD")
     order_type: OrderType = Field(..., description="BUY or SELL")
     stop_loss: float = Field(..., gt=0, description="Stop loss price from frontend (spread-included)")
@@ -107,7 +109,7 @@ class StopLossSetResponse(BaseModel):
 class TakeProfitSetRequest(BaseModel):
     order_id: str = Field(..., description="Canonical order id")
     user_id: str = Field(..., description="User identifier")
-    user_type: UserType = Field(..., description="User type: live or demo")
+    user_type: UserType = Field(..., description="User type: live, demo, strategy_provider, or copy_follower")
     symbol: str = Field(..., description="Trading symbol, e.g., EURUSD")
     order_type: OrderType = Field(..., description="BUY or SELL")
     take_profit: float = Field(..., gt=0, description="Take profit price from frontend (spread-included)")

@@ -28,6 +28,7 @@ const swapRoutes = require('./routes/swap.routes');
 const adminTransactionRoutes = require('./routes/admin.transaction.routes');
 const strategyProviderRoutes = require('./routes/strategyProvider.routes');
 const copyTradingRoutes = require('./routes/copyTrading.routes');
+const copyTradingOrderRoutes = require('./routes/copyTrading.orders.routes');
 const adminCronRoutes = require('./routes/admin.cron.routes');
 const superadminFreePassRoutes = require('./routes/superadmin.freepass.routes');
 
@@ -121,6 +122,7 @@ app.use('/api/admin/swap', swapRoutes);
 app.use('/api/admin/transactions', adminTransactionRoutes);
 app.use('/api/strategy-providers', strategyProviderRoutes);
 app.use('/api/copy-trading', copyTradingRoutes);
+app.use('/api/copy-trading/orders', copyTradingOrderRoutes);
 app.use('/api/admin/cron', adminCronRoutes);
 app.use('/api/superadmin/strategy-providers', superadminFreePassRoutes);
 

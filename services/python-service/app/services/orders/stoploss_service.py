@@ -57,6 +57,15 @@ class StopLossService:
             flow = "local"
         elif user_type == "live" and sending_orders == "barclays":
             flow = "provider"
+        elif user_type in ["strategy_provider", "copy_follower"]:
+            # Copy trading accounts respect sending_orders field like live accounts
+            if sending_orders == "rock":
+                flow = "local"
+            elif sending_orders == "barclays":
+                flow = "provider"
+            else:
+                # Default to provider flow for copy trading if sending_orders not set
+                flow = "provider"
         else:
             return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
 
@@ -249,6 +258,15 @@ class StopLossService:
             flow = "local"
         elif user_type == "live" and sending_orders == "barclays":
             flow = "provider"
+        elif user_type in ["strategy_provider", "copy_follower"]:
+            # Copy trading accounts respect sending_orders field like live accounts
+            if sending_orders == "rock":
+                flow = "local"
+            elif sending_orders == "barclays":
+                flow = "provider"
+            else:
+                # Default to provider flow for copy trading if sending_orders not set
+                flow = "provider"
         else:
             return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
 
