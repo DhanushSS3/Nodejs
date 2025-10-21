@@ -64,7 +64,7 @@ class SwapSchedulerService {
     }
 
     // Schedule to run daily at 00:01 UTC
-    this.cronJob = cron.schedule('7 8 * * *', async () => {
+    this.cronJob = cron.schedule('0 22 * * *', async () => {
       await this.processDaily();
     }, {
       scheduled: true,
