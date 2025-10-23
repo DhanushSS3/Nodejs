@@ -315,4 +315,57 @@ router.put('/:id', requireRole(['superadmin']), adminManagementController.update
  */
 router.delete('/:id', requireRole(['superadmin']), adminManagementController.deleteAdmin);
 
+// Memory leak monitoring endpoint
+router.get('/system/event-listeners', requireRole(['superadmin']), (req, res) => {
+  try {
+    const portfolioEvents = require('../services/events/portfolio.events');
+    const stats = portfolioEvents.getListenerStats();
+    
+    // Add process memory info
+    const memUsage = process.memoryUsage();
+    const uptime = process.uptime();
+    
+    res.json({
+      success: true,
+      data: {
+        eventListeners: stats,
+        processMemory: {
+          rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
+          heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
+          heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+          external: `${Math.round(memUsage.external / 1024 / 1024)}MB`
+        },
+        processUptime: `${Math.round(uptime / 60)} minutes`,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get listener stats',
+      error: error.message
+    });
+  }
+});
+
+// Emergency cleanup endpoint
+router.post('/system/cleanup-listeners', requireRole(['superadmin']), (req, res) => {
+  try {
+    const portfolioEvents = require('../services/events/portfolio.events');
+    const stats = portfolioEvents.emergencyCleanup();
+    
+    res.json({
+      success: true,
+      message: 'Emergency cleanup performed',
+      data: stats
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to perform cleanup',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
