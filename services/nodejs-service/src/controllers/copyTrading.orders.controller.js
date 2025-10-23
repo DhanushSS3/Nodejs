@@ -280,7 +280,7 @@ async function placeStrategyProviderOrder(req, res) {
       try {
         await updateUserUsedMargin({
           userType: 'strategy_provider',
-          userId: parseInt(tokenStrategyProviderId),
+          userId: parseInt(tokenStrategyProviderId), // Use tokenStrategyProviderId (account ID) to avoid ambiguity
           usedMargin: pyData.used_margin_executed,
         });
         
@@ -469,20 +469,69 @@ async function getStrategyProviderOrders(req, res) {
  * Close strategy provider order
  */
 async function closeStrategyProviderOrder(req, res) {
+  const operationId = `close_sp_order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (same as live users)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'closeStrategyProviderOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
-    const { order_id } = req.params;
-    const { close_price } = req.body;
+    const role = user.role;
+    
+    // Strategy provider role validation
+    if (role && role !== 'strategy_provider') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
+    }
 
-    // Find the order
+    const body = req.body || {};
+    const order_id = body.order_id; // Get from request body (same as live users)
+    const provided_close_price = parseFloat(body.close_price);
+    const incomingStatus = body.status || 'CLOSED';
+    const incomingOrderStatus = body.order_status || 'CLOSED';
+
+    // Determine execution flow early (same as live users)
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{strategy_provider:${tokenUserId}}:config`;
+      const ucfg = await redisCluster.hgetall(userCfgKey);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) { 
+      isProviderFlow = false; 
+    }
+
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: 'order_id is required' });
+    }
+    if (!Number.isNaN(provided_close_price) && !(provided_close_price > 0)) {
+      return res.status(400).json({ success: false, message: 'close_price must be greater than 0 when provided' });
+    }
+
+    // Get the strategy provider account ID from JWT token (same as place operation)
+    const tokenStrategyProviderId = user.strategy_provider_id || user.strategyProviderId;
+    
+    if (!tokenStrategyProviderId) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account ID not found in token' 
+      });
+    }
+
+    // Find the order using the strategy provider account ID (consistent with place operation)
     const order = await StrategyProviderOrder.findOne({
-      where: { order_id },
-      include: [{
-        model: StrategyProviderAccount,
-        as: 'strategyProvider',
-        where: { user_id: tokenUserId }
-      }]
+      where: { 
+        order_id,
+        order_user_id: parseInt(tokenStrategyProviderId)  // Use same logic as place operation
+      }
     });
 
     if (!order) {
@@ -499,48 +548,255 @@ async function closeStrategyProviderOrder(req, res) {
       });
     }
 
-    // Close order through Python service
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
-    const pyPayload = {
+    // Generate lifecycle IDs (same as live users)
+    const close_id = await idGenerator.generateOrderId();
+    let stoploss_cancel_id = null;
+    let takeprofit_cancel_id = null;
+
+    // Generate cancel IDs if SL/TP exist
+    if (order.stop_loss) {
+      stoploss_cancel_id = await idGenerator.generateOrderId();
+    }
+    if (order.take_profit) {
+      takeprofit_cancel_id = await idGenerator.generateOrderId();
+    }
+
+    // Persist lifecycle IDs (same as live users)
+    try {
+      if (close_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'close_id', close_id);
+      }
+      if (stoploss_cancel_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'stoploss_cancel_id', stoploss_cancel_id);
+      }
+      if (takeprofit_cancel_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'takeprofit_cancel_id', takeprofit_cancel_id);
+      }
+    } catch (e) {
+      logger.warn('Failed to persist lifecycle ids before close', { order_id, error: e.message });
+    }
+
+    // Store order data in Redis for Python service (same as live users)
+    try {
+      const odKey = `order_data:${order_id}`;
+      await redisCluster.hset(odKey, {
+        order_id: String(order_id),
+        user_type: 'strategy_provider',
+        user_id: String(tokenUserId),
+        symbol: order.symbol,
+        order_type: order.order_type,
+        order_status: order.order_status,
+        status: order.status || 'OPEN',
+        order_price: String(order.order_price),
+        order_quantity: String(order.order_quantity),
+        close_id: String(close_id),
+        sending_orders: isProviderFlow ? 'barclays' : 'rock' // Explicit flow information for Python service
+      });
+      
+      logger.info('Order data stored in Redis for Python service', {
+        order_id,
+        user_id: tokenUserId,
+        isProviderFlow,
+        operationId
+      });
+    } catch (e) {
+      logger.warn('Failed to store order data in Redis', { 
+        error: e.message, 
+        order_id,
+        operationId
+      });
+    }
+
+    // Ensure user config is available in Redis for Python service
+    try {
+      const userCfgKey = `user:{strategy_provider:${tokenUserId}}:config`;
+      const existingConfig = await redisCluster.hgetall(userCfgKey);
+      
+      // Only update if sending_orders is not already set correctly
+      if (!existingConfig.sending_orders || existingConfig.sending_orders !== (isProviderFlow ? 'barclays' : 'rock')) {
+        await redisCluster.hset(userCfgKey, {
+          sending_orders: isProviderFlow ? 'barclays' : 'rock',
+          user_type: 'strategy_provider',
+          user_id: String(tokenUserId),
+          group: 'Standard', // Default group
+          last_updated: new Date().toISOString()
+        });
+        
+        logger.info('Updated strategy provider config in Redis', {
+          user_id: tokenUserId,
+          sending_orders: isProviderFlow ? 'barclays' : 'rock',
+          operationId
+        });
+      }
+    } catch (e) {
+      logger.warn('Failed to update user config in Redis', { 
+        error: e.message, 
+        user_id: tokenUserId,
+        operationId
+      });
+    }
+
+    // Set close context (same as live users)
+    try {
+      const contextKey = `close_context:${order_id}`;
+      const contextValue = {
+        context: 'USER_CLOSED',
+        initiator: `user:strategy_provider:${tokenStrategyProviderId}`, // Use account ID for consistency
+        timestamp: new Date().toISOString()
+      };
+      await redisCluster.set(contextKey, JSON.stringify(contextValue), 'EX', 300);
+      
+      logger.info('Close context set for strategy provider close', {
+        order_id,
+        user_id: tokenStrategyProviderId, // Log account ID for consistency
+        user_type: 'strategy_provider'
+      });
+    } catch (e) {
+      logger.warn('Failed to set strategy provider close context', { 
+        error: e.message, 
+        order_id,
+        user_id: tokenStrategyProviderId // Use account ID for consistency
+      });
+    }
+
+    // Flow already determined earlier
+
+    logger.info('Strategy provider execution flow determined', {
       order_id,
-      user_id: order.order_user_id.toString(),
-      user_type: 'strategy_provider',
-      close_price: close_price || null
-    };
-
-    const pyResp = await pythonServiceAxios.post(
-      `${baseUrl}/api/orders/close`,
-      pyPayload
-    );
-
-    // Update order status
-    await order.update({
-      order_status: 'CLOSED',
-      close_price: close_price || pyResp.data?.close_price,
-      copy_distribution_status: 'completed',
-      copy_distribution_completed_at: new Date()
+      user_id: tokenStrategyProviderId, // Use account ID for consistency
+      isProviderFlow,
+      operationId
     });
 
-    // Handle follower order closures
-    await copyTradingService.processStrategyProviderOrderUpdate(order);
+    // Build payload to Python (same pattern as live users)
+    const pyPayload = {
+      symbol: order.symbol,
+      order_type: order.order_type,
+      user_id: tokenStrategyProviderId.toString(), // Use strategy provider account ID, not live user ID
+      user_type: 'strategy_provider',
+      order_id,
+      status: incomingStatus,
+      order_status: incomingOrderStatus,
+      close_id,
+      order_quantity: parseFloat(order.order_quantity), // Include quantity from existing order
+    };
+    if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
+    if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
+    if (!Number.isNaN(provided_close_price) && provided_close_price > 0) pyPayload.close_price = provided_close_price;
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+
+    // Debug: Log the payload we're sending
+    logger.info('Sending payload to Python service', {
+      order_id,
+      pyPayload,
+      operationId
+    });
+
+    // Call Python service (same as live users)
+    let pyResp;
+    try {
+      pyResp = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/close`,
+        pyPayload,
+        { timeout: 20000 }
+      );
+    } catch (err) {
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
+      
+      logger.error('Python service call failed for strategy provider close', {
+        error: err.message,
+        statusCode,
+        detail,
+        order_id,
+        operationId
+      });
+      
+      return res.status(statusCode).json({ 
+        success: false, 
+        order_id, 
+        reason: detail?.detail?.reason || detail?.reason || 'close_failed', 
+        error: detail?.detail || detail,
+        operationId
+      });
+    }
+
+    const result = pyResp.data?.data || {};
+    const flow = result.flow; // 'local' or 'provider'
+
+    logger.info('Strategy provider close result received', {
+      order_id,
+      flow,
+      used_margin_executed: result.used_margin_executed,
+      net_profit: result.net_profit,
+      operationId
+    });
+
+    // Update order status (same pattern as live users)
+    await order.update({
+      order_status: 'CLOSED',
+      close_price: provided_close_price || result.close_price,
+      net_profit: result.net_profit || 0,
+      commission: result.total_commission || 0,
+      swap: result.swap || 0,
+      copy_distribution_status: 'pending', // Will be updated after copy trading
+      copy_distribution_completed_at: null
+    });
+
+    // Handle flow-specific post-close operations (same pattern as live users)
+    if (flow === 'local') {
+      logger.info('Processing local flow post-close operations', {
+        order_id,
+        operationId
+      });
+      // Local flow: Handle updates directly (same as live users)
+      await handleLocalFlowPostClose(result, order, tokenStrategyProviderId, order_id, operationId);
+    } else if (flow === 'provider') {
+      // Provider flow: Updates will be handled by RabbitMQ consumer when worker confirms
+      logger.info('Provider flow close initiated, waiting for worker confirmation', {
+        order_id,
+        flow,
+        operationId
+      });
+    } else {
+      // Fallback: if flow is undefined or unknown, treat as local flow
+      logger.warn('Unknown or missing flow type, defaulting to local flow processing', {
+        order_id,
+        flow,
+        operationId
+      });
+      await handleLocalFlowPostClose(result, order, tokenStrategyProviderId, order_id, operationId);
+    }
+
+    logger.info('Strategy provider order closed successfully', {
+      order_id,
+      strategyProviderId: tokenStrategyProviderId, // Use account ID for consistency
+      operationId
+    });
 
     return res.status(200).json({
       success: true,
+      data: result,
       order_id,
-      message: 'Order closed successfully',
-      close_price: close_price || pyResp.data?.close_price
+      operationId
     });
 
   } catch (error) {
     logger.error('Close strategy provider order error', {
       error: error.message,
-      order_id: req.params.order_id
+      order_id: req.body?.order_id,
+      operationId,
+      req_body: req.body,
+      has_body: !!req.body,
+      body_type: typeof req.body
     });
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      operationId
     });
   }
 }
@@ -633,14 +889,24 @@ async function cancelStrategyProviderOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const { order_id } = req.params;
 
-    // Find the order
+    // First, find the strategy provider account for this user
+    const strategyAccount = await StrategyProviderAccount.findOne({
+      where: { user_id: tokenUserId }
+    });
+
+    if (!strategyAccount) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found' 
+      });
+    }
+
+    // Find the order using the strategy provider account ID
     const order = await StrategyProviderOrder.findOne({
-      where: { order_id },
-      include: [{
-        model: StrategyProviderAccount,
-        as: 'strategyProvider',
-        where: { user_id: tokenUserId }
-      }]
+      where: { 
+        order_id,
+        order_user_id: strategyAccount.id
+      }
     });
 
     if (!order) {
@@ -705,20 +971,60 @@ async function cancelStrategyProviderOrder(req, res) {
  * Add stop loss to strategy provider order
  */
 async function addStopLossToOrder(req, res) {
+  const operationId = `add_sp_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (same as live users)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'addStopLossToOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
-    const { order_id } = req.params;
-    const { stop_loss } = req.body;
+    const role = user.role;
+    
+    // Strategy provider role validation
+    if (role && role !== 'strategy_provider') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
+    }
 
-    // Find the order
+    const body = req.body || {};
+    const order_id = body.order_id; // Get from request body (same as live users)
+    const stop_loss = parseFloat(body.stop_loss);
+    const status = body.status || 'STOPLOSS';
+    const order_status_in = body.order_status || 'OPEN';
+
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: 'order_id is required' });
+    }
+    if (!stop_loss || stop_loss <= 0) {
+      return res.status(400).json({ success: false, message: 'stop_loss must be a positive number' });
+    }
+
+    // First, find the strategy provider account for this user
+    const strategyAccount = await StrategyProviderAccount.findOne({
+      where: { user_id: tokenUserId }
+    });
+
+    if (!strategyAccount) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found' 
+      });
+    }
+
+    // Find the order using the strategy provider account ID
     const order = await StrategyProviderOrder.findOne({
-      where: { order_id },
-      include: [{
-        model: StrategyProviderAccount,
-        as: 'strategyProvider',
-        where: { user_id: tokenUserId }
-      }]
+      where: { 
+        order_id,
+        order_user_id: strategyAccount.id
+      }
     });
 
     if (!order) {
@@ -735,47 +1041,67 @@ async function addStopLossToOrder(req, res) {
       });
     }
 
-    // Generate stop loss ID
+    // Generate stop loss ID (same as live users)
     const stoploss_id = await idGenerator.generateOrderId();
 
-    // Add stop loss through Python service
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
+    // Persist lifecycle ID (same as live users)
+    try {
+      if (stoploss_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'stoploss_id', stoploss_id);
+      }
+    } catch (e) {
+      logger.warn('Failed to persist stoploss lifecycle id', { order_id, stoploss_id, error: e.message });
+    }
+
+    // Build payload to Python (same pattern as live users)
     const pyPayload = {
-      order_id,
-      user_id: order.order_user_id.toString(),
-      user_type: 'strategy_provider',
       symbol: order.symbol,
       order_type: order.order_type,
-      stop_loss: parseFloat(stop_loss),
-      order_quantity: order.order_quantity,
+      user_id: tokenUserId.toString(),
+      user_type: 'strategy_provider',
+      order_id,
+      stop_loss,
+      status,
+      order_status: order_status_in,
       stoploss_id
     };
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    // Call Python service (same as live users)
     const pyResp = await pythonServiceAxios.post(
       `${baseUrl}/api/orders/stoploss/add`,
       pyPayload
     );
 
-    // Update order with stop loss
+    const result = pyResp.data?.data || {};
+
+    // Update order with stop loss (same pattern as live users)
     await order.update({
-      stop_loss: parseFloat(stop_loss)
+      stop_loss: stop_loss
     });
 
-    // Note: No need to replicate SL to followers - they close when master closes
+    logger.info('Strategy provider stop loss added successfully', {
+      order_id,
+      stoploss_id,
+      strategyProviderId: tokenUserId,
+      operationId
+    });
 
     return res.status(200).json({
       success: true,
+      data: result,
       order_id,
-      stop_loss: parseFloat(stop_loss),
       stoploss_id,
-      message: 'Stop loss added successfully'
+      operationId
     });
 
   } catch (error) {
     logger.error('Add stop loss error', {
       error: error.message,
-      order_id: req.params.order_id
+      order_id: req.body?.order_id,
+      operationId
     });
 
     return res.status(500).json({
@@ -789,20 +1115,60 @@ async function addStopLossToOrder(req, res) {
  * Add take profit to strategy provider order
  */
 async function addTakeProfitToOrder(req, res) {
+  const operationId = `add_sp_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (same as live users)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'addTakeProfitToOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
-    const { order_id } = req.params;
-    const { take_profit } = req.body;
+    const role = user.role;
+    
+    // Strategy provider role validation
+    if (role && role !== 'strategy_provider') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
+    }
 
-    // Find the order
+    const body = req.body || {};
+    const order_id = body.order_id; // Get from request body (same as live users)
+    const take_profit = parseFloat(body.take_profit);
+    const status = body.status || 'TAKEPROFIT';
+    const order_status_in = body.order_status || 'OPEN';
+
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: 'order_id is required' });
+    }
+    if (!take_profit || take_profit <= 0) {
+      return res.status(400).json({ success: false, message: 'take_profit must be a positive number' });
+    }
+
+    // First, find the strategy provider account for this user
+    const strategyAccount = await StrategyProviderAccount.findOne({
+      where: { user_id: tokenUserId }
+    });
+
+    if (!strategyAccount) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found' 
+      });
+    }
+
+    // Find the order using the strategy provider account ID
     const order = await StrategyProviderOrder.findOne({
-      where: { order_id },
-      include: [{
-        model: StrategyProviderAccount,
-        as: 'strategyProvider',
-        where: { user_id: tokenUserId }
-      }]
+      where: { 
+        order_id,
+        order_user_id: strategyAccount.id
+      }
     });
 
     if (!order) {
@@ -822,49 +1188,69 @@ async function addTakeProfitToOrder(req, res) {
     // Generate take profit ID
     const takeprofit_id = await idGenerator.generateOrderId();
 
-    // Add take profit through Python service
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
+    // Persist lifecycle ID
+    try {
+      if (takeprofit_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'takeprofit_id', takeprofit_id);
+      }
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit lifecycle id', { order_id, takeprofit_id, error: e.message });
+    }
+
+    // Build payload to Python
     const pyPayload = {
-      order_id,
-      user_id: order.order_user_id.toString(),
-      user_type: 'strategy_provider',
       symbol: order.symbol,
       order_type: order.order_type,
-      take_profit: parseFloat(take_profit),
-      order_quantity: order.order_quantity,
+      user_id: tokenUserId.toString(),
+      user_type: 'strategy_provider',
+      order_id,
+      take_profit,
+      status,
+      order_status: order_status_in,
       takeprofit_id
     };
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
     const pyResp = await pythonServiceAxios.post(
       `${baseUrl}/api/orders/takeprofit/add`,
       pyPayload
     );
 
+    const result = pyResp.data?.data || {};
+
     // Update order with take profit
     await order.update({
-      take_profit: parseFloat(take_profit)
+      take_profit: take_profit
     });
 
-    // Note: No need to replicate TP to followers - they close when master closes
+    logger.info('Strategy provider take profit added successfully', {
+      order_id,
+      takeprofit_id,
+      strategyProviderId: tokenUserId,
+      operationId
+    });
 
     return res.status(200).json({
       success: true,
+      data: result,
       order_id,
-      take_profit: parseFloat(take_profit),
       takeprofit_id,
-      message: 'Take profit added successfully'
+      operationId
     });
 
   } catch (error) {
     logger.error('Add take profit error', {
       error: error.message,
-      order_id: req.params.order_id
+      order_id: req.body?.order_id,
+      operationId
     });
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      operationId
     });
   }
 }
@@ -873,20 +1259,55 @@ async function addTakeProfitToOrder(req, res) {
  * Cancel stop loss from strategy provider order
  */
 async function cancelStopLossFromOrder(req, res) {
+  const operationId = `cancel_sp_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (same as live users)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'cancelStopLossFromOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
-    const { order_id } = req.params;
-    const { stoploss_id } = req.body;
+    const role = user.role;
+    
+    // Strategy provider role validation
+    if (role && role !== 'strategy_provider') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
+    }
 
-    // Find the order
+    const body = req.body || {};
+    const order_id = body.order_id; // Get from request body (same as live users)
+    const stoploss_id = body.stoploss_id || await idGenerator.generateOrderId();
+
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: 'order_id is required' });
+    }
+
+    // First, find the strategy provider account for this user
+    const strategyAccount = await StrategyProviderAccount.findOne({
+      where: { user_id: tokenUserId }
+    });
+
+    if (!strategyAccount) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found' 
+      });
+    }
+
+    // Find the order using the strategy provider account ID
     const order = await StrategyProviderOrder.findOne({
-      where: { order_id },
-      include: [{
-        model: StrategyProviderAccount,
-        as: 'strategyProvider',
-        where: { user_id: tokenUserId }
-      }]
+      where: { 
+        order_id,
+        order_user_id: strategyAccount.id
+      }
     });
 
     if (!order) {
@@ -903,40 +1324,62 @@ async function cancelStopLossFromOrder(req, res) {
       });
     }
 
-    // Cancel stop loss through Python service
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
+    // Persist lifecycle ID
+    try {
+      if (stoploss_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'stoploss_cancel_id', stoploss_id);
+      }
+    } catch (e) {
+      logger.warn('Failed to persist stoploss cancel lifecycle id', { order_id, stoploss_id, error: e.message });
+    }
+
+    // Build payload to Python
     const pyPayload = {
-      order_id,
-      user_id: order.order_user_id.toString(),
-      user_type: 'strategy_provider',
       symbol: order.symbol,
       order_type: order.order_type,
-      stoploss_id: stoploss_id || await idGenerator.generateOrderId()
+      user_id: tokenUserId.toString(),
+      user_type: 'strategy_provider',
+      order_id,
+      status: 'STOPLOSS_CANCEL',
+      order_status: 'OPEN',
+      stoploss_id
     };
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
-    await pythonServiceAxios.post(
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    const pyResp = await pythonServiceAxios.post(
       `${baseUrl}/api/orders/stoploss/cancel`,
       pyPayload
     );
+
+    const result = pyResp.data?.data || {};
 
     // Remove stop loss from order
     await order.update({
       stop_loss: null
     });
 
-    // Note: No need to cancel SL for followers - they close when master closes
+    logger.info('Strategy provider stop loss cancelled successfully', {
+      order_id,
+      stoploss_id,
+      strategyProviderId: tokenUserId,
+      operationId
+    });
 
     return res.status(200).json({
       success: true,
+      data: result,
       order_id,
-      message: 'Stop loss cancelled successfully'
+      stoploss_cancel_id: stoploss_id,
+      operationId
     });
 
   } catch (error) {
     logger.error('Cancel stop loss error', {
       error: error.message,
-      order_id: req.params.order_id
+      order_id: req.body?.order_id,
+      operationId
     });
 
     return res.status(500).json({
@@ -950,20 +1393,55 @@ async function cancelStopLossFromOrder(req, res) {
  * Cancel take profit from strategy provider order
  */
 async function cancelTakeProfitFromOrder(req, res) {
+  const operationId = `cancel_sp_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    // Structured request log (same as live users)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'cancelTakeProfitFromOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
-    const { order_id } = req.params;
-    const { takeprofit_id } = req.body;
+    const role = user.role;
+    
+    // Strategy provider role validation
+    if (role && role !== 'strategy_provider') {
+      return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
+    }
 
-    // Find the order
+    const body = req.body || {};
+    const order_id = body.order_id; // Get from request body (same as live users)
+    const takeprofit_id = body.takeprofit_id || await idGenerator.generateOrderId();
+
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: 'order_id is required' });
+    }
+
+    // First, find the strategy provider account for this user
+    const strategyAccount = await StrategyProviderAccount.findOne({
+      where: { user_id: tokenUserId }
+    });
+
+    if (!strategyAccount) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found' 
+      });
+    }
+
+    // Find the order using the strategy provider account ID
     const order = await StrategyProviderOrder.findOne({
-      where: { order_id },
-      include: [{
-        model: StrategyProviderAccount,
-        as: 'strategyProvider',
-        where: { user_id: tokenUserId }
-      }]
+      where: { 
+        order_id,
+        order_user_id: strategyAccount.id
+      }
     });
 
     if (!order) {
@@ -980,46 +1458,205 @@ async function cancelTakeProfitFromOrder(req, res) {
       });
     }
 
-    // Cancel take profit through Python service
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
+    // Persist lifecycle ID
+    try {
+      if (takeprofit_id) {
+        await orderLifecycleService.addLifecycleId(order_id, 'takeprofit_cancel_id', takeprofit_id);
+      }
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit cancel lifecycle id', { order_id, takeprofit_id, error: e.message });
+    }
+
+    // Build payload to Python
     const pyPayload = {
-      order_id,
-      user_id: order.order_user_id.toString(),
-      user_type: 'strategy_provider',
       symbol: order.symbol,
       order_type: order.order_type,
-      takeprofit_id: takeprofit_id || await idGenerator.generateOrderId()
+      user_id: tokenUserId.toString(),
+      user_type: 'strategy_provider',
+      order_id,
+      status: 'TAKEPROFIT_CANCEL',
+      order_status: 'OPEN',
+      takeprofit_id
     };
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
-    await pythonServiceAxios.post(
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    const pyResp = await pythonServiceAxios.post(
       `${baseUrl}/api/orders/takeprofit/cancel`,
       pyPayload
     );
+
+    const result = pyResp.data?.data || {};
 
     // Remove take profit from order
     await order.update({
       take_profit: null
     });
 
-    // Note: No need to cancel TP for followers - they close when master closes
+    logger.info('Strategy provider take profit cancelled successfully', {
+      order_id,
+      takeprofit_id,
+      strategyProviderId: tokenUserId,
+      operationId
+    });
 
     return res.status(200).json({
       success: true,
+      data: result,
       order_id,
-      message: 'Take profit cancelled successfully'
+      takeprofit_cancel_id: takeprofit_id,
+      operationId
     });
 
   } catch (error) {
     logger.error('Cancel take profit error', {
       error: error.message,
-      order_id: req.params.order_id
+      order_id: req.body?.order_id,
+      operationId
     });
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      operationId
     });
+  }
+}
+
+/**
+ * Handle post-close operations for local flow (same pattern as live users)
+ * Follows Single Responsibility Principle
+ * @param {Object} result - Python service response
+ * @param {Object} order - Strategy provider order
+ * @param {number} userId - User ID
+ * @param {string} orderId - Order ID
+ * @param {string} operationId - Operation ID for logging
+ */
+async function handleLocalFlowPostClose(result, order, userId, orderId, operationId) {
+  logger.info('handleLocalFlowPostClose called', {
+    order_id: orderId,
+    user_id: userId,
+    used_margin_executed: result.used_margin_executed,
+    net_profit: result.net_profit,
+    operationId
+  });
+  
+  try {
+    // 1. Update user margin (same as live users)
+    if (typeof result.used_margin_executed === 'number') {
+      await updateUserUsedMargin({
+        userType: 'strategy_provider',
+        userId: order.order_user_id, // Use the specific strategy provider account ID from the order
+        usedMargin: result.used_margin_executed
+      });
+      
+      logger.info('Strategy provider margin updated after local close', {
+        order_id: orderId,
+        user_id: userId,
+        used_margin: result.used_margin_executed,
+        operationId
+      });
+    }
+
+    // 2. Emit portfolio events (same as live users)
+    try {
+      if (typeof result.used_margin_executed === 'number') {
+        portfolioEvents.emitUserUpdate('strategy_provider', userId.toString(), {
+          type: 'user_margin_update',
+          used_margin_usd: result.used_margin_executed
+        });
+      }
+      
+      portfolioEvents.emitUserUpdate('strategy_provider', userId.toString(), {
+        type: 'order_update',
+        order_id: orderId,
+        update: { order_status: 'CLOSED' }
+      });
+    } catch (eventErr) {
+      logger.warn('Failed to emit portfolio events for strategy provider', {
+        order_id: orderId,
+        error: eventErr.message,
+        operationId
+      });
+    }
+
+    // 3. Update strategy provider net profit (same as live users)
+    if (typeof result.net_profit === 'number') {
+      await StrategyProviderAccount.increment(
+        { net_profit: result.net_profit },
+        { where: { id: order.order_user_id } } // Use the specific strategy provider account ID
+      );
+      
+      logger.info('Strategy provider net profit updated after local close', {
+        order_id: orderId,
+        user_id: userId,
+        net_profit: result.net_profit,
+        operationId
+      });
+    }
+
+    // 4. Process copy trading distribution (strategy provider specific)
+    await processCopyTradingDistribution(order, operationId);
+
+  } catch (error) {
+    logger.error('Failed to handle local flow post-close operations', {
+      order_id: orderId,
+      user_id: userId,
+      error: error.message,
+      operationId
+    });
+  }
+}
+
+/**
+ * Process copy trading distribution for strategy provider order close
+ * Follows Open/Closed Principle - extensible without modification
+ * @param {Object} masterOrder - Strategy provider order
+ * @param {string} operationId - Operation ID for logging
+ */
+async function processCopyTradingDistribution(masterOrder, operationId) {
+  try {
+    logger.info('Processing copy trading distribution for strategy provider close', {
+      orderId: masterOrder.order_id,
+      orderStatus: masterOrder.order_status,
+      operationId
+    });
+
+    // Use existing copy trading service
+    await copyTradingService.processStrategyProviderOrderUpdate(masterOrder);
+
+    // Update copy distribution status
+    await masterOrder.update({
+      copy_distribution_status: 'completed',
+      copy_distribution_completed_at: new Date()
+    });
+
+    logger.info('Copy trading distribution completed successfully', {
+      orderId: masterOrder.order_id,
+      operationId
+    });
+
+  } catch (error) {
+    logger.error('Failed to process copy trading distribution', {
+      orderId: masterOrder.order_id,
+      error: error.message,
+      operationId
+    });
+    
+    // Update status to failed but don't throw - this is non-critical
+    try {
+      await masterOrder.update({
+        copy_distribution_status: 'failed',
+        copy_distribution_completed_at: new Date()
+      });
+    } catch (updateErr) {
+      logger.error('Failed to update copy distribution status to failed', {
+        orderId: masterOrder.order_id,
+        error: updateErr.message,
+        operationId
+      });
+    }
   }
 }
 

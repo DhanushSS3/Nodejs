@@ -714,6 +714,7 @@ class OrderCloser:
 
         return {
             "ok": True,
+            "flow": "provider",
             "order_id": order_id,
             "symbol": symbol,
             "order_type": order_type,

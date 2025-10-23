@@ -264,7 +264,8 @@ async function login(req, res) {
       { expiresIn: '7d' }
     );
 
-    await storeSession(
+    // Store session in Redis with refresh token (enforces 3 session limit)
+    const sessionResult = await storeSession(
       user.id,
       sessionId,
       {
@@ -275,6 +276,16 @@ async function login(req, res) {
       'demo',
       refreshToken
     );
+
+    // Log if any sessions were revoked due to limit
+    if (sessionResult.revokedSessions && sessionResult.revokedSessions.length > 0) {
+      logger.info('Revoked old sessions due to concurrent session limit', {
+        userId: user.id,
+        userType: 'demo',
+        revokedSessions: sessionResult.revokedSessions,
+        newSessionId: sessionId
+      });
+    }
 
     // Log successful login for demo users
     logDemoUserLogin({

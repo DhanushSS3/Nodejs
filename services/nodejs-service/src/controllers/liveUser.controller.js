@@ -325,8 +325,8 @@ async function login(req, res, next) {
       { expiresIn: '7d' }
     );
 
-    // Store session in Redis with refresh token
-    await storeSession(
+    // Store session in Redis with refresh token (enforces 3 session limit)
+    const sessionResult = await storeSession(
       user.id, 
       sessionId, 
       {
@@ -337,6 +337,16 @@ async function login(req, res, next) {
       'live',
       refreshToken // Pass refresh token to be stored separately
     );
+
+    // Log if any sessions were revoked due to limit
+    if (sessionResult.revokedSessions && sessionResult.revokedSessions.length > 0) {
+      logger.info('Revoked old sessions due to concurrent session limit', {
+        userId: user.id,
+        userType: 'live',
+        revokedSessions: sessionResult.revokedSessions,
+        newSessionId: sessionId
+      });
+    }
 
     // Log successful login for live users
     const { logLiveUserLogin } = require('../services/loginLogger');
@@ -598,4 +608,44 @@ async function getUserInfo(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo };
+/**
+ * Get user's active sessions (for debugging/admin purposes)
+ * GET /api/live-users/sessions
+ */
+async function getUserSessions(req, res) {
+  try {
+    const userId = req.user.sub || req.user.user_id || req.user.id;
+    const userType = req.user.account_type === 'strategy_provider' ? 'strategy_provider' : 'live';
+    
+    const { getUserActiveSessions } = require('../utils/redisSession.util');
+    const activeSessions = await getUserActiveSessions(userId, userType);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Active sessions retrieved successfully',
+      data: {
+        userId,
+        userType,
+        activeSessions: activeSessions.map(session => ({
+          sessionId: session.sessionId,
+          createdAt: new Date(session.timestamp).toISOString(),
+          isCurrentSession: session.sessionId === req.user.session_id
+        })),
+        totalSessions: activeSessions.length,
+        maxAllowed: 3
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to get user sessions', {
+      userId: req.user?.sub || req.user?.user_id || req.user?.id,
+      error: error.message
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while retrieving sessions'
+    });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions };

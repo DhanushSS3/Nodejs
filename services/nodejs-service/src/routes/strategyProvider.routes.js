@@ -775,4 +775,8 @@ router.get('/:id/catalog-eligibility', strategyProviderController.checkCatalogEl
 router.post('/:id/switch', authenticateJWT, strategyProviderController.switchToStrategyProvider);
 router.post('/switch-back', authenticateJWT, strategyProviderController.switchBackToLiveUser);
 
+// Token management routes
+router.post('/refresh-token', strategyProviderController.refreshStrategyProviderToken);
+router.post('/logout', authenticateJWT, strategyProviderController.logoutStrategyProvider);
+
 module.exports = router;

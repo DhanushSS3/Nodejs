@@ -66,7 +66,10 @@ async function updateUserUsedMargin({ userType, userId, usedMargin }) {
         { isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED },
         async (t) => {
           // Lock the user row for update
+          // All user types now use primary key (account ID) to avoid ambiguity
+          // when users have multiple accounts of the same type
           const user = await Model.findByPk(userId, { transaction: t, lock: t.LOCK.UPDATE });
+          
           if (!user) {
             throw new Error(`${userType} user not found: ${userId}`);
           }

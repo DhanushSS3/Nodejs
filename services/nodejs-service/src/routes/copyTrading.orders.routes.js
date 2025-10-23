@@ -1,3 +1,25 @@
+/**
+ * Copy Trading Orders Routes
+ * 
+ * ARCHITECTURE: All strategy provider order endpoints follow the same uniform pattern as live user orders:
+ * - JWT Authentication: User info extracted from JWT token (strategy_provider role required)
+ * - Operation Tracking: Each operation has unique operationId for tracing
+ * - Lifecycle Management: Full lifecycle ID generation and persistence
+ * - Structured Logging: Consistent request/response logging
+ * - Error Handling: Uniform error responses with operation tracking
+ * - Python Service: Proper payload structure matching live user patterns
+ * - Margin Updates: Portfolio events and margin persistence
+ * 
+ * SECURITY: 
+ * - All endpoints require JWT authentication with strategy_provider role
+ * - Order ownership validated via strategy provider account association
+ * - No user_id required in request body (extracted from JWT)
+ * 
+ * RESPONSE FORMAT:
+ * Success: { success: true, data: {}, order_id: "", [specific_id]: "", operationId: "" }
+ * Error: { success: false, message: "", operationId: "" }
+ */
+
 const express = require('express');
 const router = express.Router();
 const copyTradingOrdersController = require('../controllers/copyTrading.orders.controller');
@@ -214,47 +236,75 @@ router.get('/strategy-provider/:strategy_provider_id',
 
 /**
  * @swagger
- * /api/copy-trading/orders/strategy-provider/{order_id}/close:
+ * /api/copy-trading/orders/strategy-provider/close:
  *   post:
  *     summary: Close strategy provider order
- *     description: Closes a strategy provider order and triggers closure of all related follower orders
+ *     description: Closes a strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking, lifecycle IDs, and margin updates.
  *     tags: [Copy Trading Orders]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: order_id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID to close
  *     requestBody:
- *       required: false
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required:
+ *               - order_id
  *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to close (required)
+ *                 example: "ord_20231021_001"
  *               close_price:
  *                 type: number
  *                 description: Specific close price (optional, will use market price if not provided)
  *                 example: 1.1025
+ *               status:
+ *                 type: string
+ *                 description: Order status (optional, defaults to CLOSED)
+ *                 example: "CLOSED"
+ *               order_status:
+ *                 type: string
+ *                 description: Engine order status (optional, defaults to CLOSED)
+ *                 example: "CLOSED"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
  *     responses:
  *       200:
  *         description: Order closed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "close_sp_order_1698012345_abc123"
  *       400:
- *         description: Order cannot be closed in current status
+ *         description: Order cannot be closed in current status or invalid parameters
  *       403:
- *         description: Unauthorized access
+ *         description: Unauthorized access or invalid strategy provider role
  *       404:
- *         description: Order not found
+ *         description: Order not found or access denied
  *       500:
  *         description: Internal server error
  */
-router.post('/strategy-provider/:order_id/close',
+router.post('/strategy-provider/close',
   authenticateJWT,
   [
-    param('order_id')
+    body('order_id')
       .notEmpty()
       .withMessage('Order ID is required'),
     body('close_price')
@@ -364,20 +414,13 @@ router.post('/strategy-provider/:order_id/cancel',
 
 /**
  * @swagger
- * /api/copy-trading/orders/strategy-provider/{order_id}/stop-loss:
+ * /api/copy-trading/orders/strategy-provider/stop-loss/add:
  *   post:
  *     summary: Add stop loss to strategy provider order
- *     description: Adds stop loss to an open strategy provider order and replicates to followers
+ *     description: Adds stop loss to an open strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
  *     tags: [Copy Trading Orders]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: order_id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID to add stop loss to
  *     requestBody:
  *       required: true
  *       content:
@@ -385,28 +428,65 @@ router.post('/strategy-provider/:order_id/cancel',
  *           schema:
  *             type: object
  *             required:
+ *               - order_id
  *               - stop_loss
  *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to add stop loss to (required)
+ *                 example: "ord_20231021_001"
  *               stop_loss:
  *                 type: number
  *                 description: Stop loss price
  *                 example: 1.0950
+ *               status:
+ *                 type: string
+ *                 description: Order status (optional, defaults to STOPLOSS)
+ *                 example: "STOPLOSS"
+ *               order_status:
+ *                 type: string
+ *                 description: Engine order status (optional, defaults to OPEN)
+ *                 example: "OPEN"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
  *     responses:
  *       200:
  *         description: Stop loss added successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 stoploss_id:
+ *                   type: string
+ *                   example: "sl_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "add_sp_stoploss_1698012345_abc123"
  *       400:
- *         description: Invalid request or order status
+ *         description: Invalid request, order status, or stop loss value
  *       403:
- *         description: Unauthorized access
+ *         description: Unauthorized access or invalid strategy provider role
  *       404:
- *         description: Order not found
+ *         description: Order not found or access denied
  *       500:
  *         description: Internal server error
  */
-router.post('/strategy-provider/:order_id/stop-loss',
+router.post('/strategy-provider/stop-loss/add',
   authenticateJWT,
   [
-    param('order_id')
+    body('order_id')
       .notEmpty()
       .withMessage('Order ID is required'),
     body('stop_loss')
@@ -419,20 +499,13 @@ router.post('/strategy-provider/:order_id/stop-loss',
 
 /**
  * @swagger
- * /api/copy-trading/orders/strategy-provider/{order_id}/take-profit:
+ * /api/copy-trading/orders/strategy-provider/take-profit/add:
  *   post:
  *     summary: Add take profit to strategy provider order
- *     description: Adds take profit to an open strategy provider order and replicates to followers
+ *     description: Adds take profit to an open strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
  *     tags: [Copy Trading Orders]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: order_id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID to add take profit to
  *     requestBody:
  *       required: true
  *       content:
@@ -440,28 +513,65 @@ router.post('/strategy-provider/:order_id/stop-loss',
  *           schema:
  *             type: object
  *             required:
+ *               - order_id
  *               - take_profit
  *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to add take profit to (required)
+ *                 example: "ord_20231021_001"
  *               take_profit:
  *                 type: number
  *                 description: Take profit price
  *                 example: 1.1050
+ *               status:
+ *                 type: string
+ *                 description: Order status (optional, defaults to TAKEPROFIT)
+ *                 example: "TAKEPROFIT"
+ *               order_status:
+ *                 type: string
+ *                 description: Engine order status (optional, defaults to OPEN)
+ *                 example: "OPEN"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
  *     responses:
  *       200:
  *         description: Take profit added successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 takeprofit_id:
+ *                   type: string
+ *                   example: "tp_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "add_sp_takeprofit_1698012345_abc123"
  *       400:
- *         description: Invalid request or order status
+ *         description: Invalid request, order status, or take profit value
  *       403:
- *         description: Unauthorized access
+ *         description: Unauthorized access or invalid strategy provider role
  *       404:
- *         description: Order not found
+ *         description: Order not found or access denied
  *       500:
  *         description: Internal server error
  */
-router.post('/strategy-provider/:order_id/take-profit',
+router.post('/strategy-provider/take-profit/add',
   authenticateJWT,
   [
-    param('order_id')
+    body('order_id')
       .notEmpty()
       .withMessage('Order ID is required'),
     body('take_profit')
@@ -474,47 +584,70 @@ router.post('/strategy-provider/:order_id/take-profit',
 
 /**
  * @swagger
- * /api/copy-trading/orders/strategy-provider/{order_id}/stop-loss/cancel:
+ * /api/copy-trading/orders/strategy-provider/stop-loss/cancel:
  *   post:
  *     summary: Cancel stop loss from strategy provider order
- *     description: Removes stop loss from strategy provider order and followers
+ *     description: Removes stop loss from strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
  *     tags: [Copy Trading Orders]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: order_id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID to cancel stop loss from
  *     requestBody:
- *       required: false
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required:
+ *               - order_id
  *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to cancel stop loss from (required)
+ *                 example: "ord_20231021_001"
  *               stoploss_id:
  *                 type: string
- *                 description: Stop loss ID (optional)
+ *                 description: Stop loss ID (optional, will be generated if not provided)
  *                 example: "sl_20231021_001"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
  *     responses:
  *       200:
  *         description: Stop loss cancelled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 stoploss_cancel_id:
+ *                   type: string
+ *                   example: "sl_cancel_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "cancel_sp_stoploss_1698012345_abc123"
  *       400:
- *         description: No stop loss to cancel
+ *         description: No stop loss to cancel or invalid parameters
  *       403:
- *         description: Unauthorized access
+ *         description: Unauthorized access or invalid strategy provider role
  *       404:
- *         description: Order not found
+ *         description: Order not found or access denied
  *       500:
  *         description: Internal server error
  */
-router.post('/strategy-provider/:order_id/stop-loss/cancel',
+router.post('/strategy-provider/stop-loss/cancel',
   authenticateJWT,
   [
-    param('order_id')
+    body('order_id')
       .notEmpty()
       .withMessage('Order ID is required'),
     body('stoploss_id')
@@ -528,47 +661,70 @@ router.post('/strategy-provider/:order_id/stop-loss/cancel',
 
 /**
  * @swagger
- * /api/copy-trading/orders/strategy-provider/{order_id}/take-profit/cancel:
+ * /api/copy-trading/orders/strategy-provider/take-profit/cancel:
  *   post:
  *     summary: Cancel take profit from strategy provider order
- *     description: Removes take profit from strategy provider order and followers
+ *     description: Removes take profit from strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
  *     tags: [Copy Trading Orders]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: order_id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID to cancel take profit from
  *     requestBody:
- *       required: false
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required:
+ *               - order_id
  *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to cancel take profit from (required)
+ *                 example: "ord_20231021_001"
  *               takeprofit_id:
  *                 type: string
- *                 description: Take profit ID (optional)
+ *                 description: Take profit ID (optional, will be generated if not provided)
  *                 example: "tp_20231021_001"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
  *     responses:
  *       200:
  *         description: Take profit cancelled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 takeprofit_cancel_id:
+ *                   type: string
+ *                   example: "tp_cancel_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "cancel_sp_takeprofit_1698012345_abc123"
  *       400:
- *         description: No take profit to cancel
+ *         description: No take profit to cancel or invalid parameters
  *       403:
- *         description: Unauthorized access
+ *         description: Unauthorized access or invalid strategy provider role
  *       404:
- *         description: Order not found
+ *         description: Order not found or access denied
  *       500:
  *         description: Internal server error
  */
-router.post('/strategy-provider/:order_id/take-profit/cancel',
+router.post('/strategy-provider/take-profit/cancel',
   authenticateJWT,
   [
-    param('order_id')
+    body('order_id')
       .notEmpty()
       .withMessage('Order ID is required'),
     body('takeprofit_id')

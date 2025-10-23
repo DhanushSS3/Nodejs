@@ -459,4 +459,7 @@ router.get('/financial-summary',
   FinancialSummaryController.getLiveUserFinancialSummary
 );
 
+// Get user's active sessions
+router.get('/sessions', authenticateJWT, require('../controllers/liveUser.controller').getUserSessions);
+
 module.exports = router;

@@ -3,6 +3,9 @@ const { redisCluster } = require('../../config/redis');
 
 // Redis cluster connection pool increased to 1000 connections for high-volume operations
 
+// --- SESSION LIMITS ---
+const MAX_CONCURRENT_SESSIONS = 3; // Maximum concurrent sessions per user
+
 // --- RATE LIMITING ---
 const RATE_LIMIT_ATTEMPTS = 10;
 const RATE_LIMIT_WINDOW = 900; // 15 min in seconds
@@ -162,11 +165,95 @@ function getRefreshTokenKey(refreshToken) {
   return `{${hashPart}}:refresh_token:${refreshToken}`;
 }
 
+function getUserSessionsKey(userId, userType) {
+  // Using userId as hash tag to ensure all user's sessions are in same slot
+  return `{${userId}}:${userType}:sessions`;
+}
+
+async function getUserActiveSessions(userId, userType) {
+  const key = getUserSessionsKey(userId, userType);
+  try {
+    const sessions = await redisCluster.zrange(key, 0, -1, 'WITHSCORES');
+    const activeSessions = [];
+    
+    // Parse sessions with timestamps
+    for (let i = 0; i < sessions.length; i += 2) {
+      const sessionId = sessions[i];
+      const timestamp = parseInt(sessions[i + 1]);
+      activeSessions.push({ sessionId, timestamp });
+    }
+    
+    return activeSessions.sort((a, b) => a.timestamp - b.timestamp); // Oldest first
+  } catch (error) {
+    console.error('Failed to get user active sessions:', error);
+    return [];
+  }
+}
+
+async function addUserSession(userId, sessionId, userType) {
+  const key = getUserSessionsKey(userId, userType);
+  const timestamp = Date.now();
+  
+  try {
+    // Add new session with current timestamp
+    await redisCluster.zadd(key, timestamp, sessionId);
+    
+    // Set expiration for the sessions set (7 days to match refresh token)
+    await redisCluster.expire(key, REFRESH_TOKEN_TTL);
+    
+    return true;
+  } catch (error) {
+    console.error('Failed to add user session:', error);
+    return false;
+  }
+}
+
+async function removeUserSession(userId, sessionId, userType) {
+  const key = getUserSessionsKey(userId, userType);
+  
+  try {
+    await redisCluster.zrem(key, sessionId);
+    return true;
+  } catch (error) {
+    console.error('Failed to remove user session:', error);
+    return false;
+  }
+}
+
+async function enforceSessionLimit(userId, userType) {
+  const activeSessions = await getUserActiveSessions(userId, userType);
+  
+  if (activeSessions.length >= MAX_CONCURRENT_SESSIONS) {
+    // Remove oldest sessions to make room for new one
+    const sessionsToRemove = activeSessions.slice(0, activeSessions.length - MAX_CONCURRENT_SESSIONS + 1);
+    
+    for (const session of sessionsToRemove) {
+      // Delete the actual session data
+      await deleteSession(userId, session.sessionId, userType);
+      
+      // Remove from sessions tracking
+      await removeUserSession(userId, session.sessionId, userType);
+      
+      console.log(`Revoked oldest session for user ${userId} (${userType}): ${session.sessionId}`);
+    }
+    
+    return sessionsToRemove.map(s => s.sessionId);
+  }
+  
+  return [];
+}
+
 async function storeSession(userId, sessionId, sessionData, userType, refreshToken = null) {
   const key = getSessionKey(userId, sessionId, userType);
   try {
+    // Enforce session limit before storing new session
+    const revokedSessions = await enforceSessionLimit(userId, userType);
+    
     // Store session data first
     await redisCluster.set(key, JSON.stringify(sessionData), 'EX', SESSION_TTL);
+    
+    // Add session to user's active sessions tracking
+    await addUserSession(userId, sessionId, userType);
     
     // If refresh token is provided, store it in a separate operation
     if (refreshToken) {
@@ -184,7 +271,11 @@ async function storeSession(userId, sessionId, sessionData, userType, refreshTok
       );
     }
     
-    return true;
+    // Return info about revoked sessions if any
+    return {
+      success: true,
+      revokedSessions: revokedSessions
+    };
   } catch (error) {
     console.error('Failed to store session:', error);
     throw error; // Re-throw to be handled by the caller
@@ -207,6 +298,9 @@ async function deleteSession(userId, sessionId, userType, refreshToken = null) {
   try {
     // Delete session first
     await redisCluster.del(key);
+    
+    // Remove session from user's active sessions tracking
+    await removeUserSession(userId, sessionId, userType);
     
     // If refresh token is provided, delete it as well
     if (refreshToken) {
@@ -392,6 +486,12 @@ module.exports = {
   deleteSession,
   validateRefreshToken,
   deleteRefreshToken,
+  // Session Management
+  getUserActiveSessions,
+  addUserSession,
+  removeUserSession,
+  enforceSessionLimit,
+  MAX_CONCURRENT_SESSIONS,
   getEmailKey,
   getIPKey,
   getSessionKey,

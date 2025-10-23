@@ -17,6 +17,8 @@ const { redisCluster } = require('../../../config/redis');
 const portfolioEvents = require('../events/portfolio.events');
 // Wallet payout service
 const { applyOrderClosePayout } = require('../order.payout.service');
+// Copy trading service for strategy provider order distribution
+const copyTradingService = require('../copyTrading.service');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -726,6 +728,9 @@ async function applyDbUpdate(msg) {
     }
   }
 
+  // Handle post-close operations (margin updates, copy trading, etc.)
+  await handlePostCloseOperations(payload, row);
+
   // Update user's used margin in SQL, if provided
   const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
   if (mirrorUsedMargin != null) {
@@ -789,6 +794,120 @@ async function startOrdersDbConsumer() {
   } catch (err) {
     logger.error('Failed to start Orders DB consumer', { error: err.message });
     // Let the process continue; a supervisor can retry or we can add a backoff/retry here
+  }
+}
+
+/**
+ * Handle post-close operations for all user types
+ * Follows SOLID principles - Single Responsibility for post-close processing
+ * @param {Object} payload - Order update payload
+ * @param {Object} row - Updated order row
+ */
+async function handlePostCloseOperations(payload, row) {
+  const { type, user_type, user_id, order_id, used_margin_executed, net_profit } = payload;
+  
+  // Only process for close confirmations
+  if (type !== 'ORDER_CLOSE_CONFIRMED') {
+    return;
+  }
+
+  try {
+    // 1. Update user margin for all user types (existing logic)
+    if (typeof used_margin_executed === 'number') {
+      await updateUserUsedMargin({ 
+        userType: user_type, 
+        userId: parseInt(user_id, 10), 
+        usedMargin: used_margin_executed 
+      });
+      
+      // Emit portfolio events
+      try {
+        portfolioEvents.emitUserUpdate(user_type, user_id, { 
+          type: 'user_margin_update', 
+          used_margin_usd: used_margin_executed 
+        });
+        portfolioEvents.emitUserUpdate(user_type, user_id, { 
+          type: 'order_update', 
+          order_id, 
+          update: { order_status: 'CLOSED' } 
+        });
+      } catch (eventErr) {
+        logger.warn('Failed to emit portfolio events', { 
+          order_id, 
+          error: eventErr.message 
+        });
+      }
+    }
+
+    // 2. Update net profit for user account (existing logic)
+    if (typeof net_profit === 'number' && Number.isFinite(net_profit)) {
+      const UserModel = getUserModel(user_type);
+      if (UserModel) {
+        await UserModel.increment(
+          { net_profit: net_profit }, 
+          { where: { id: parseInt(user_id, 10) } }
+        );
+      }
+    }
+
+    // 3. Handle copy trading distribution for strategy providers (NEW)
+    if (user_type === 'strategy_provider' && row) {
+      await handleStrategyProviderCopyTrading(row);
+    }
+
+  } catch (error) {
+    logger.error('Failed to handle post-close operations', {
+      order_id,
+      user_type,
+      user_id,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Handle copy trading distribution for strategy provider order close
+ * Follows Open/Closed principle - extensible without modifying existing code
+ * @param {Object} masterOrder - Strategy provider order
+ */
+async function handleStrategyProviderCopyTrading(masterOrder) {
+  try {
+    logger.info('Processing strategy provider order close for copy trading', {
+      orderId: masterOrder.order_id,
+      orderStatus: masterOrder.order_status
+    });
+
+    // Use existing copy trading service to handle follower order distribution
+    await copyTradingService.processStrategyProviderOrderUpdate(masterOrder);
+
+    logger.info('Strategy provider copy trading distribution completed', {
+      orderId: masterOrder.order_id
+    });
+
+  } catch (error) {
+    logger.error('Failed to process strategy provider copy trading', {
+      orderId: masterOrder.order_id,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Get user model based on user type
+ * Follows Dependency Inversion - depends on abstraction
+ * @param {string} userType - Type of user
+ * @returns {Object} User model
+ */
+function getUserModel(userType) {
+  switch (userType) {
+    case 'live':
+      return LiveUser;
+    case 'demo':
+      return DemoUser;
+    case 'strategy_provider':
+      return StrategyProviderAccount;
+    default:
+      return null;
   }
 }
 

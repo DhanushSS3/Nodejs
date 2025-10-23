@@ -80,7 +80,7 @@ class CopyTradingService {
       });
 
       // Create user holdings entry
-      await redisCluster.hset(order_key, {
+      const redisData = {
         order_id: order.order_id,
         symbol: order.symbol,
         order_type: order.order_type,
@@ -94,7 +94,14 @@ class CopyTradingService {
         status: order.order_status,
         execution_status: 'PENDING',
         placed_by: order.placed_by || userType
-      });
+      };
+
+      // Add master_order_id for copy follower orders
+      if (userType === 'copy_follower' && order.master_order_id) {
+        redisData.master_order_id = order.master_order_id.toString();
+      }
+
+      await redisCluster.hset(order_key, redisData);
 
       // Add to user orders index
       await redisCluster.sadd(index_key, order.order_id);
@@ -366,7 +373,7 @@ class CopyTradingService {
         try {
           await updateUserUsedMargin({
             userType: 'copy_follower',
-            userId: parseInt(follower.id),
+            userId: parseInt(follower.id), // Use copy follower account ID to avoid ambiguity
             usedMargin: executionResult.data.used_margin_executed,
           });
           
@@ -1027,14 +1034,25 @@ class CopyTradingService {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       
       const payload = {
-        order_id: copiedOrder.order_id,
-        user_id: copiedOrder.order_user_id,
-        user_type: 'copy_follower', // Use copy_follower user type
-        close_price: masterOrder.close_price,
+        order_id: String(copiedOrder.order_id), // Ensure it's a string
+        user_id: String(copiedOrder.order_user_id), // Ensure it's a string
+        user_type: 'copy_follower',
+        symbol: copiedOrder.symbol,           // Required by Python schema
+        order_type: copiedOrder.order_type,   // Required by Python schema
+        close_price: masterOrder.close_price || null, // Ensure it's not undefined
+        status: 'CLOSED',                     // Required by Python schema
+        order_status: 'CLOSED',               // Required by Python schema
         copy_trading: true
       };
 
-      await axios.post(
+      // Debug log the payload
+      logger.info('Closing follower order payload', {
+        copiedOrderId: copiedOrder.order_id,
+        masterOrderId: masterOrder.order_id,
+        payload
+      });
+
+      const response = await axios.post(
         `${baseUrl}/api/orders/close`,
         payload,
         {
@@ -1045,6 +1063,63 @@ class CopyTradingService {
           }
         }
       );
+
+      // For local flow, update the copy follower order in Node.js database as well
+      if (response.data?.data?.flow === 'local') {
+        try {
+          const result = response.data.data;
+          const updateFields = {
+            order_status: 'CLOSED',
+            status: 'CLOSED'
+          };
+          
+          // Add close result fields if available
+          if (result.close_price != null) updateFields.close_price = String(result.close_price);
+          if (result.net_profit != null) updateFields.net_profit = String(result.net_profit);
+          if (result.swap != null) updateFields.swap = String(result.swap);
+          if (result.total_commission != null) updateFields.commission = String(result.total_commission);
+          
+          // Update copy follower order in database
+          await CopyFollowerOrder.update(updateFields, {
+            where: { order_id: copiedOrder.order_id }
+          });
+          
+          logger.info('Copy follower order updated in database after local close', {
+            copiedOrderId: copiedOrder.order_id,
+            masterOrderId: masterOrder.order_id,
+            updateFields
+          });
+
+          // Update copy follower account margin (same as strategy providers)
+          if (typeof result.used_margin_executed === 'number') {
+            try {
+              await updateUserUsedMargin({
+                userType: 'copy_follower',
+                userId: parseInt(copiedOrder.order_user_id),
+                usedMargin: result.used_margin_executed
+              });
+              
+              logger.info('Copy follower margin updated after local close', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                used_margin: result.used_margin_executed
+              });
+            } catch (marginError) {
+              logger.error('Failed to update copy follower margin', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                error: marginError.message
+              });
+            }
+          }
+          
+        } catch (dbError) {
+          logger.error('Failed to update copy follower order in database', {
+            copiedOrderId: copiedOrder.order_id,
+            error: dbError.message
+          });
+        }
+      }
 
     } catch (error) {
       logger.error('Failed to close follower order', {

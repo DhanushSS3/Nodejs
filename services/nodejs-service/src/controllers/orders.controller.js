@@ -1080,33 +1080,37 @@ async function closeOrder(req, res) {
     const isSelfTrading = user.is_self_trading;
     const userStatus = user.status;
 
-    if (role && role !== 'trader') {
+    const body = req.body || {};
+    const req_user_type = normalizeStr(body.user_type).toLowerCase();
+
+    // Allow internal copy trading calls (no JWT token) and trader role
+    const isInternalAuth = req.headers['x-internal-auth'];
+    const isCopyTradingCall = req_user_type === 'copy_follower' || req_user_type === 'strategy_provider';
+    
+    if (role && role !== 'trader' && !isInternalAuth && !isCopyTradingCall) {
       return res.status(403).json({ success: false, message: 'User role not allowed for close order' });
     }
-    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1' && !isInternalAuth && !isCopyTradingCall) {
       return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
     }
-    if (userStatus !== undefined && String(userStatus) === '0') {
+    if (userStatus !== undefined && String(userStatus) === '0' && !isInternalAuth && !isCopyTradingCall) {
       return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
     }
-
-    const body = req.body || {};
     const order_id = normalizeStr(body.order_id);
     const req_user_id = normalizeStr(body.user_id);
-    const req_user_type = normalizeStr(body.user_type).toLowerCase();
     const provided_close_price = toNumber(body.close_price);
     const incomingStatus = normalizeStr(body.status || 'CLOSED');
     const incomingOrderStatus = normalizeStr(body.order_status || 'CLOSED');
     if (!order_id) {
       return res.status(400).json({ success: false, message: 'order_id is required' });
     }
-    if (!req_user_type || !['live', 'demo'].includes(req_user_type)) {
-      return res.status(400).json({ success: false, message: 'user_type must be live or demo' });
+    if (!req_user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(req_user_type)) {
+      return res.status(400).json({ success: false, message: 'user_type must be live, demo, strategy_provider, or copy_follower' });
     }
     if (!req_user_id) {
       return res.status(400).json({ success: false, message: 'user_id is required' });
     }
-    if (tokenUserId && normalizeStr(req_user_id) !== normalizeStr(tokenUserId)) {
+    if (tokenUserId && normalizeStr(req_user_id) !== normalizeStr(tokenUserId) && !isInternalAuth) {
       return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
     }
     if (!Number.isNaN(provided_close_price) && !(provided_close_price > 0)) {
@@ -1118,7 +1122,18 @@ async function closeOrder(req, res) {
     let sqlRow = null;
     if (!canonical) {
       // Fallback to SQL
-      const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+      let OrderModel;
+      if (req_user_type === 'live') {
+        OrderModel = LiveUserOrder;
+      } else if (req_user_type === 'demo') {
+        OrderModel = DemoUserOrder;
+      } else if (req_user_type === 'strategy_provider') {
+        const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
+        OrderModel = StrategyProviderOrder;
+      } else if (req_user_type === 'copy_follower') {
+        const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+        OrderModel = CopyFollowerOrder;
+      }
       sqlRow = await OrderModel.findOne({ where: { order_id } });
       if (!sqlRow) {
         return res.status(404).json({ success: false, message: 'Order not found' });

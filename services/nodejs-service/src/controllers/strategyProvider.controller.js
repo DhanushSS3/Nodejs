@@ -4,6 +4,7 @@ const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const LiveUser = require('../models/liveUser.model');
 const jwt = require('jsonwebtoken');
 const logger = require('../services/logger.service');
+const redisUserCache = require('../services/redis.user.cache.service');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -607,11 +608,71 @@ async function switchToStrategyProvider(req, res) {
       })) : []
     };
 
-    // Generate new JWT token (15 minutes expiry)
+    // Generate access token (15 minutes expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { 
       expiresIn: '15m', 
       jwtid: sessionId 
     });
+
+    // Generate refresh token for strategy provider (7 days expiry)
+    const refreshToken = jwt.sign(
+      { userId: userId, sessionId, strategyProviderId: strategyProvider.id },
+      JWT_SECRET + '_REFRESH',
+      { expiresIn: '7d' }
+    );
+
+    // Store session in Redis (same as live users) - enforces 3 session limit
+    const { storeSession } = require('../utils/redisSession.util');
+    const sessionResult = await storeSession(
+      userId,
+      sessionId,
+      {
+        ...jwtPayload,
+        jwt: token,
+        refresh_token: refreshToken
+      },
+      'strategy_provider', // Use strategy_provider as userType
+      refreshToken
+    );
+
+    // Log if any sessions were revoked due to limit
+    if (sessionResult.revokedSessions && sessionResult.revokedSessions.length > 0) {
+      logger.info('Revoked old sessions due to concurrent session limit', {
+        userId,
+        userType: 'strategy_provider',
+        strategyProviderId: strategyProvider.id,
+        revokedSessions: sessionResult.revokedSessions,
+        newSessionId: sessionId
+      });
+    }
+
+    // Populate Redis config for strategy provider (same as live users)
+    try {
+      const strategyProviderData = {
+        user_id: userId,
+        user_type: 'strategy_provider',
+        group: strategyProvider.group || 'Standard',
+        leverage: parseFloat(strategyProvider.leverage) || 100,
+        status: strategyProvider.status,
+        is_active: strategyProvider.is_active,
+        sending_orders: strategyProvider.sending_orders || 'rock',
+        wallet_balance: parseFloat(strategyProvider.wallet_balance) || 0,
+        last_updated: new Date().toISOString()
+      };
+      
+      await redisUserCache.updateUser('strategy_provider', userId, strategyProviderData);
+      logger.info('Strategy provider config populated in Redis', {
+        userId,
+        strategyProviderId: strategyProvider.id,
+        sending_orders: strategyProvider.sending_orders || 'rock'
+      });
+    } catch (cacheError) {
+      logger.error('Failed to populate strategy provider config in Redis', {
+        userId,
+        strategyProviderId: strategyProvider.id,
+        error: cacheError.message
+      });
+    }
 
     logger.info('User switched to strategy provider account', {
       userId,
@@ -622,7 +683,11 @@ async function switchToStrategyProvider(req, res) {
     res.json({
       success: true,
       message: 'Successfully switched to strategy provider account',
-      token,
+      access_token: token,
+      refresh_token: refreshToken,
+      expires_in: 1800, // 15 minutes in seconds
+      token_type: 'Bearer',
+      session_id: sessionId,
       account: {
         id: strategyProvider.id,
         account_number: strategyProvider.account_number,
@@ -697,11 +762,42 @@ async function switchBackToLiveUser(req, res) {
       account_type: 'live'
     };
 
-    // Generate new JWT token (15 minutes expiry)
+    // Generate access token (15 minutes expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { 
       expiresIn: '15m', 
       jwtid: sessionId 
     });
+
+    // Generate refresh token for live user (7 days expiry)
+    const refreshToken = jwt.sign(
+      { userId: userId, sessionId },
+      JWT_SECRET + '_REFRESH',
+      { expiresIn: '7d' }
+    );
+
+    // Store session in Redis (same as live user login) - enforces 3 session limit
+    const { storeSession } = require('../utils/redisSession.util');
+    const sessionResult = await storeSession(
+      userId,
+      sessionId,
+      {
+        ...jwtPayload,
+        jwt: token,
+        refresh_token: refreshToken
+      },
+      'live', // Back to live user type
+      refreshToken
+    );
+
+    // Log if any sessions were revoked due to limit
+    if (sessionResult.revokedSessions && sessionResult.revokedSessions.length > 0) {
+      logger.info('Revoked old sessions due to concurrent session limit', {
+        userId,
+        userType: 'live',
+        revokedSessions: sessionResult.revokedSessions,
+        newSessionId: sessionId
+      });
+    }
 
     logger.info('User switched back to live user account', {
       userId,
@@ -711,7 +807,11 @@ async function switchBackToLiveUser(req, res) {
     res.json({
       success: true,
       message: 'Successfully switched back to live user account',
-      token,
+      access_token: token,
+      refresh_token: refreshToken,
+      expires_in: 900, // 15 minutes in seconds
+      token_type: 'Bearer',
+      session_id: sessionId,
       account: {
         id: liveUser.id,
         account_number: liveUser.account_number,
@@ -738,6 +838,163 @@ async function switchBackToLiveUser(req, res) {
   }
 }
 
+/**
+ * Refresh strategy provider access token
+ * POST /api/strategy-providers/refresh-token
+ */
+async function refreshStrategyProviderToken(req, res) {
+  const { refresh_token: refreshToken } = req.body;
+  const { validateRefreshToken, deleteRefreshToken, storeSession } = require('../utils/redisSession.util');
+  
+  if (!refreshToken) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Refresh token is required' 
+    });
+  }
+
+  try {
+    // Verify the refresh token
+    const decoded = jwt.verify(refreshToken, JWT_SECRET + '_REFRESH');
+    
+    // Check if the refresh token exists in Redis and is valid
+    const tokenData = await validateRefreshToken(refreshToken);
+    if (!tokenData || tokenData.userId !== decoded.userId || tokenData.sessionId !== decoded.sessionId) {
+      await deleteRefreshToken(refreshToken);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid or expired refresh token' 
+      });
+    }
+
+    // Get strategy provider account
+    const strategyProvider = await StrategyProviderAccount.findOne({
+      where: {
+        id: decoded.strategyProviderId,
+        user_id: decoded.userId,
+        status: 1,
+        is_active: 1
+      }
+    });
+
+    if (!strategyProvider) {
+      await deleteRefreshToken(refreshToken);
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found' 
+      });
+    }
+
+    // Generate new tokens
+    const sessionId = tokenData.sessionId;
+    const jwtPayload = {
+      sub: decoded.userId,
+      user_type: 'live',
+      account_type: 'strategy_provider',
+      strategy_provider_id: strategyProvider.id,
+      strategy_provider_account_number: strategyProvider.account_number,
+      group: strategyProvider.group,
+      leverage: strategyProvider.leverage,
+      sending_orders: strategyProvider.sending_orders,
+      status: strategyProvider.status,
+      is_active: strategyProvider.is_active,
+      session_id: sessionId,
+      user_id: decoded.userId,
+      role: 'strategy_provider'
+    };
+    
+    const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
+      expiresIn: '15m', 
+      jwtid: sessionId 
+    });
+
+    const newRefreshToken = jwt.sign(
+      { userId: decoded.userId, sessionId, strategyProviderId: strategyProvider.id },
+      JWT_SECRET + '_REFRESH',
+      { expiresIn: '7d' }
+    );
+
+    // Update session in Redis
+    await storeSession(
+      decoded.userId,
+      sessionId,
+      {
+        ...jwtPayload,
+        jwt: newAccessToken,
+        refresh_token: newRefreshToken
+      },
+      'strategy_provider',
+      newRefreshToken
+    );
+
+    // Delete old refresh token
+    await deleteRefreshToken(refreshToken);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Token refreshed successfully',
+      access_token: newAccessToken,
+      refresh_token: newRefreshToken,
+      expires_in: 900,
+      token_type: 'Bearer',
+      session_id: sessionId
+    });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      await deleteRefreshToken(refreshToken);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Your session has expired. Please login again.' 
+      });
+    }
+    
+    logger.error('Failed to refresh strategy provider token', {
+      error: error.message
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while refreshing token'
+    });
+  }
+}
+
+/**
+ * Logout from strategy provider account
+ * POST /api/strategy-providers/logout
+ */
+async function logoutStrategyProvider(req, res) {
+  const { userId, sessionId } = req.user;
+  const { refresh_token: refreshToken } = req.body;
+
+  try {
+    // Invalidate the session and refresh token in Redis
+    const { deleteSession } = require('../utils/redisSession.util');
+    await deleteSession(userId, sessionId, 'strategy_provider', refreshToken);
+
+    logger.info('Strategy provider logged out successfully', {
+      userId,
+      sessionId
+    });
+
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Logout successful' 
+    });
+  } catch (error) {
+    logger.error('Failed to logout strategy provider', {
+      userId,
+      sessionId,
+      error: error.message
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during logout'
+    });
+  }
+}
+
 module.exports = {
   createStrategyProviderAccount,
   getStrategyProviderAccount,
@@ -746,5 +1003,7 @@ module.exports = {
   getCatalogStrategies,
   checkCatalogEligibility,
   switchToStrategyProvider,
-  switchBackToLiveUser
+  switchBackToLiveUser,
+  refreshStrategyProviderToken,
+  logoutStrategyProvider
 };
