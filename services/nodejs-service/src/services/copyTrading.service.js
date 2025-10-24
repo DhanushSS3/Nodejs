@@ -1140,13 +1140,17 @@ class CopyTradingService {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       
       const payload = {
-        order_id: copiedOrder.order_id,
-        user_id: copiedOrder.order_user_id,
-        user_type: 'copy_follower', // Use copy_follower user type
+        order_id: String(copiedOrder.order_id), // Ensure it's a string
+        user_id: String(copiedOrder.order_user_id), // Ensure it's a string
+        user_type: 'copy_follower',
+        symbol: copiedOrder.symbol, // Required by Python schema
+        order_type: copiedOrder.order_type, // Required by Python schema
+        status: 'CANCELLED', // Required by Python schema
+        order_status: 'CANCELLED', // Required by Python schema
         copy_trading: true
       };
 
-      await axios.post(
+      const response = await axios.post(
         `${baseUrl}/api/orders/cancel`,
         payload,
         {
@@ -1157,6 +1161,57 @@ class CopyTradingService {
           }
         }
       );
+
+      // For local flow, update the copy follower order in Node.js database as well
+      if (response.data?.data?.flow === 'local') {
+        try {
+          const result = response.data.data;
+          const updateFields = {
+            order_status: 'CANCELLED',
+            status: 'CANCELLED'
+          };
+          
+          // Update copy follower order in database
+          await CopyFollowerOrder.update(updateFields, {
+            where: { order_id: copiedOrder.order_id }
+          });
+          
+          logger.info('Copy follower order updated in database after local cancel', {
+            copiedOrderId: copiedOrder.order_id,
+            masterOrderId: masterOrder.order_id,
+            updateFields
+          });
+
+          // Update copy follower account margin if provided
+          if (typeof result.used_margin_executed === 'number') {
+            try {
+              await updateUserUsedMargin({
+                userType: 'copy_follower',
+                userId: parseInt(copiedOrder.order_user_id),
+                usedMargin: result.used_margin_executed
+              });
+              
+              logger.info('Copy follower margin updated after local cancel', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                used_margin: result.used_margin_executed
+              });
+            } catch (marginError) {
+              logger.error('Failed to update copy follower margin after cancel', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                error: marginError.message
+              });
+            }
+          }
+          
+        } catch (dbError) {
+          logger.error('Failed to update copy follower order in database after cancel', {
+            copiedOrderId: copiedOrder.order_id,
+            error: dbError.message
+          });
+        }
+      }
 
     } catch (error) {
       logger.error('Failed to cancel follower order', {

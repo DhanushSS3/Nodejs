@@ -3,6 +3,10 @@ import time
 import asyncio
 from typing import Dict, Any, Optional
 from ..config.redis_config import redis_cluster, redis_pubsub_client
+from ..services.logging.execution_price_logger import (
+    log_market_processing, log_redis_issue, log_price_inconsistency, 
+    log_missing_price_data
+)
 import logging
 import math
 
@@ -27,6 +31,8 @@ class MarketDataService:
         Returns:
             bool: True if processing successful, False otherwise
         """
+        start_time = time.time()
+        
         try:
             market_prices = feed_data.get('market_prices', {})
             logger.debug(f"Processing {len(market_prices)} symbols")
@@ -53,10 +59,29 @@ class MarketDataService:
             # Publish price update notifications for Portfolio Calculator
             await self._publish_price_update_notifications(valid_updates)
             
-            logger.debug(f"Processed {len(market_prices)} symbol updates")
+            # Log market processing metrics
+            processing_time_ms = (time.time() - start_time) * 1000
+            log_market_processing(
+                symbols_processed=len(valid_updates),
+                processing_time_ms=processing_time_ms,
+                batch_size=len(market_prices),
+                success=True,
+                total_symbols_received=len(market_prices),
+                valid_symbols=len(valid_updates)
+            )
+            
+            logger.debug(f"Processed {len(market_prices)} symbol updates in {processing_time_ms:.2f}ms")
             return True
             
         except Exception as e:
+            processing_time_ms = (time.time() - start_time) * 1000
+            log_market_processing(
+                symbols_processed=0,
+                processing_time_ms=processing_time_ms,
+                batch_size=len(market_prices) if 'market_prices' in locals() else 0,
+                success=False,
+                error=str(e)
+            )
             logger.error(f"Failed to process market feed: {e}")
             return False
     
@@ -142,33 +167,53 @@ class MarketDataService:
             sell_str = price_data.get('sell')
 
             if buy_str is None and sell_str is None:
+                log_missing_price_data(symbol, ["buy", "sell"], source="websocket_feed")
                 logger.debug(f"No price data provided for {symbol}")
                 return None
 
             update_fields = {}
+            parse_errors = []
 
             # Parse buy price if provided (buy -> ask)
             if buy_str is not None:
                 try:
-                    update_fields['ask'] = float(buy_str)
+                    ask_price = float(buy_str)
+                    update_fields['ask'] = ask_price
                 except (ValueError, TypeError) as e:
+                    parse_errors.append(f"buy: {e}")
                     logger.debug(f"Failed to parse buy price for {symbol}: {e}")
 
             # Parse sell price if provided (sell -> bid)
             if sell_str is not None:
                 try:
-                    update_fields['bid'] = float(sell_str)
+                    bid_price = float(sell_str)
+                    update_fields['bid'] = bid_price
                 except (ValueError, TypeError) as e:
+                    parse_errors.append(f"sell: {e}")
                     logger.debug(f"Failed to parse sell price for {symbol}: {e}")
 
             # If neither side parsed successfully, skip
             if not update_fields:
+                log_missing_price_data(symbol, parse_errors, source="websocket_feed", 
+                                     raw_data=price_data)
                 return None
+
+            # Check for price inconsistency if we have both bid and ask
+            if 'bid' in update_fields and 'ask' in update_fields:
+                bid = update_fields['bid']
+                ask = update_fields['ask']
+                if ask < bid:
+                    log_price_inconsistency(symbol, bid, ask, source="websocket_feed",
+                                          raw_data=price_data)
+                    # Still process the data but log the issue
+                    logger.warning(f"Price inconsistency detected for {symbol}: bid={bid} ask={ask}")
 
             return (symbol, update_fields, timestamp)
 
         except Exception as e:
             logger.error(f"Unexpected error processing partial price for {symbol}: {e}")
+            log_missing_price_data(symbol, ["parsing_error"], source="websocket_feed",
+                                 error=str(e), raw_data=price_data)
             return None
     
     async def _get_existing_price_for_validation(self, symbol: str) -> Optional[Dict[str, float]]:

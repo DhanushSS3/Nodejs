@@ -9,6 +9,7 @@ import websockets
 from typing import Dict, Any, List
 # from services.market_data_service import MarketDataService
 from app.services.market_data_service import MarketDataService
+from app.services.logging.execution_price_logger import log_websocket_issue
 
 # Configure logging
 logging.basicConfig(
@@ -143,6 +144,8 @@ class MarketListener:
         Args:
             message: Raw WebSocket message string
         """
+        start_time = time.time()
+        
         try:
             # Parse JSON message with orjson (5-10x faster)
             data = orjson.loads(message)
@@ -150,22 +153,42 @@ class MarketListener:
             
             # Validate new message structure
             if data.get('type') != 'market_update':
+                log_websocket_issue("INVALID_MESSAGE_TYPE", 
+                                  message_size=len(message),
+                                  message_type=data.get('type'))
                 logger.warning(f"[WEBSOCKET] Message type is not 'market_update': {data.get('type')}")
                 return
             
             if 'data' not in data:
+                log_websocket_issue("MISSING_DATA_KEY", 
+                                  message_size=len(message),
+                                  available_keys=list(data.keys()))
                 logger.warning(f"[WEBSOCKET] Message missing 'data' key. Available keys: {list(data.keys())}")
                 return
             
             message_data = data['data']
             if 'market_prices' not in message_data:
+                log_websocket_issue("MISSING_MARKET_PRICES_KEY", 
+                                  message_size=len(message),
+                                  available_keys=list(message_data.keys()))
                 logger.warning(f"[WEBSOCKET] Message data missing 'market_prices' key. Available keys: {list(message_data.keys())}")
                 return
             
             market_prices = message_data['market_prices']
             if not isinstance(market_prices, dict):
+                log_websocket_issue("INVALID_MARKET_PRICES_FORMAT", 
+                                  message_size=len(message),
+                                  actual_type=type(market_prices).__name__)
                 logger.error(f"[WEBSOCKET] Invalid market_prices format: {type(market_prices)}, expected dict")
                 return
+            
+            # Log processing time for large messages
+            processing_time_ms = (time.time() - start_time) * 1000
+            if processing_time_ms > 50 or len(message) > 10000:  # Log slow processing or large messages
+                log_websocket_issue("SLOW_MESSAGE_PROCESSING", 
+                                  message_size=len(message),
+                                  processing_time_ms=processing_time_ms,
+                                  symbols_count=len(market_prices))
             
             logger.debug(f"[WEBSOCKET] Valid market_prices: {len(market_prices)} symbols")
             
@@ -178,8 +201,15 @@ class MarketListener:
                 await self._process_message_batch()
                 
         except orjson.JSONDecodeError as e:
+            log_websocket_issue("JSON_DECODE_ERROR", 
+                              message_size=len(message),
+                              error=str(e),
+                              message_preview=message[:200])
             logger.error(f"[WEBSOCKET] Invalid JSON in message: {e}. Message preview: {message[:200]}...")
         except Exception as e:
+            log_websocket_issue("UNEXPECTED_ERROR", 
+                              message_size=len(message),
+                              error=str(e))
             logger.error(f"[WEBSOCKET] Unexpected error processing message: {e}")
     
     async def _process_message_batch(self):

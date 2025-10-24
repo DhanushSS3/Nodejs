@@ -20,16 +20,18 @@ loaded = False
 for env_path in env_paths:
     if os.path.exists(env_path):
         load_dotenv(env_path)
-        print(f"✅ Loaded .env from: {os.path.abspath(env_path)}")
+        print(f"[OK] Loaded .env from: {os.path.abspath(env_path)}")
         loaded = True
-        break
+        break 
 
 if not loaded:
-    print("⚠️  No .env file found in expected locations")
+    print("[WARNING] No .env file found in expected locations")
     load_dotenv()  # Fallback to default behavior
 from .api.market_api import router as market_router
 from .api.orders_api import router as orders_router
 from .api.admin_orders_api import router as admin_orders_router
+from .api.health_api import router as health_router
+from .protobuf_market_listener import start_binary_market_listener
 from .market_listener import start_market_listener
 from .services.portfolio_calculator import start_portfolio_listener
 from .services.autocutoff.watcher import start_autocutoff_watcher
@@ -49,9 +51,9 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Python Market Service...")
     
-    # Start market listener as background task
-    asyncio.create_task(start_market_listener())
-    logger.info("Market listener started")
+    # Start binary market listener as background task (now with zlib decompression)
+    asyncio.create_task(start_binary_market_listener())
+    logger.info("Binary market listener started")
     
     # Start portfolio calculator listener as background task
     asyncio.create_task(start_portfolio_listener())
@@ -123,6 +125,7 @@ app.add_middleware(
 app.include_router(market_router, prefix="/api")
 app.include_router(orders_router, prefix="/api")
 app.include_router(admin_orders_router)
+app.include_router(health_router, prefix="/api")
 
 @app.get("/")
 async def root():

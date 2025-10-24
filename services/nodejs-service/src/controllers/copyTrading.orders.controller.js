@@ -501,7 +501,7 @@ async function closeStrategyProviderOrder(req, res) {
     // Determine execution flow early (same as live users)
     let isProviderFlow = false;
     try {
-      const userCfgKey = `user:{strategy_provider:${tokenUserId}}:config`;
+      const userCfgKey = `user:{strategy_provider:${tokenStrategyProviderId}}:config`;
       const ucfg = await redisCluster.hgetall(userCfgKey);
       const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
       isProviderFlow = (so === 'barclays');
@@ -609,7 +609,7 @@ async function closeStrategyProviderOrder(req, res) {
 
     // Ensure user config is available in Redis for Python service
     try {
-      const userCfgKey = `user:{strategy_provider:${tokenUserId}}:config`;
+      const userCfgKey = `user:{strategy_provider:${tokenStrategyProviderId}}:config`;
       const existingConfig = await redisCluster.hgetall(userCfgKey);
       
       // Only update if sending_orders is not already set correctly
@@ -617,7 +617,7 @@ async function closeStrategyProviderOrder(req, res) {
         await redisCluster.hset(userCfgKey, {
           sending_orders: isProviderFlow ? 'barclays' : 'rock',
           user_type: 'strategy_provider',
-          user_id: String(tokenUserId),
+          user_id: String(tokenStrategyProviderId),
           group: 'Standard', // Default group
           last_updated: new Date().toISOString()
         });
