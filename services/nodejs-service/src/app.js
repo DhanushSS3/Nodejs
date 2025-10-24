@@ -31,6 +31,7 @@ const copyTradingRoutes = require('./routes/copyTrading.routes');
 const copyTradingOrderRoutes = require('./routes/copyTrading.orders.routes');
 const adminCronRoutes = require('./routes/admin.cron.routes');
 const superadminFreePassRoutes = require('./routes/superadmin.freepass.routes');
+const pythonHealthRoutes = require('./routes/python.health.routes');
 
 const app = express();
 
@@ -125,6 +126,24 @@ app.use('/api/copy-trading', copyTradingRoutes);
 app.use('/api/copy-trading/orders', copyTradingOrderRoutes);
 app.use('/api/admin/cron', adminCronRoutes);
 app.use('/api/superadmin/strategy-providers', superadminFreePassRoutes);
+app.use('/api/python-health', pythonHealthRoutes);
+
+// Debug endpoint to test Python health routes
+app.get('/api/debug/python-health', (req, res) => {
+  res.json({
+    message: 'Python health routes are registered',
+    pythonServiceUrl: process.env.PYTHON_SERVICE_URL || 'http://localhost:8000',
+    availableRoutes: [
+      'GET /api/python-health/status',
+      'GET /api/python-health/market-data', 
+      'GET /api/python-health/execution-prices',
+      'GET /api/python-health/websocket/status',
+      'GET /api/python-health/cleanup/status',
+      'POST /api/python-health/cleanup/force',
+      'POST /api/python-health/protobuf/switch'
+    ]
+  });
+});
 
 // 404 handler
 app.use(notFoundHandler);
