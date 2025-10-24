@@ -8,6 +8,13 @@ class PythonHealthController {
     this.pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
     this.pythonServiceTimeout = parseInt(process.env.PYTHON_SERVICE_TIMEOUT) || 10000; // 10 seconds
     
+    // Log configuration for debugging
+    console.log('PythonHealthController initialized:', {
+      pythonServiceUrl: this.pythonServiceUrl,
+      timeout: this.pythonServiceTimeout,
+      env: process.env.NODE_ENV || 'development'
+    });
+    
     // Configure axios instance for Python service
     this.pythonClient = axios.create({
       baseURL: this.pythonServiceUrl,
@@ -363,4 +370,16 @@ class PythonHealthController {
   }
 }
 
-module.exports = new PythonHealthController();
+// Create instance and bind methods to preserve 'this' context
+const pythonHealthController = new PythonHealthController();
+
+module.exports = {
+  getHealthStatus: pythonHealthController.getHealthStatus.bind(pythonHealthController),
+  getMarketDataHealth: pythonHealthController.getMarketDataHealth.bind(pythonHealthController),
+  getExecutionPriceHealth: pythonHealthController.getExecutionPriceHealth.bind(pythonHealthController),
+  getWebSocketStatus: pythonHealthController.getWebSocketStatus.bind(pythonHealthController),
+  getCleanupStatus: pythonHealthController.getCleanupStatus.bind(pythonHealthController),
+  forceCleanup: pythonHealthController.forceCleanup.bind(pythonHealthController),
+  getExecutionPriceIssues: pythonHealthController.getExecutionPriceIssues.bind(pythonHealthController),
+  switchProtobufListener: pythonHealthController.switchProtobufListener.bind(pythonHealthController)
+};

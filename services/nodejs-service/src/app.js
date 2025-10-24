@@ -129,20 +129,41 @@ app.use('/api/superadmin/strategy-providers', superadminFreePassRoutes);
 app.use('/api/python-health', pythonHealthRoutes);
 
 // Debug endpoint to test Python health routes
-app.get('/api/debug/python-health', (req, res) => {
-  res.json({
-    message: 'Python health routes are registered',
-    pythonServiceUrl: process.env.PYTHON_SERVICE_URL || 'http://localhost:8000',
-    availableRoutes: [
-      'GET /api/python-health/status',
-      'GET /api/python-health/market-data', 
-      'GET /api/python-health/execution-prices',
-      'GET /api/python-health/websocket/status',
-      'GET /api/python-health/cleanup/status',
-      'POST /api/python-health/cleanup/force',
-      'POST /api/python-health/protobuf/switch'
-    ]
-  });
+app.get('/api/debug/python-health', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
+    
+    // Test basic connectivity to Python service
+    let pythonConnectivity = 'unknown';
+    try {
+      const response = await axios.get(`${pythonServiceUrl}/health`, { timeout: 5000 });
+      pythonConnectivity = response.status === 200 ? 'connected' : 'error';
+    } catch (error) {
+      pythonConnectivity = `error: ${error.message}`;
+    }
+    
+    res.json({
+      message: 'Python health routes are registered',
+      pythonServiceUrl: pythonServiceUrl,
+      pythonConnectivity: pythonConnectivity,
+      environment: process.env.NODE_ENV || 'development',
+      availableRoutes: [
+        'GET /api/python-health/status',
+        'GET /api/python-health/market-data', 
+        'GET /api/python-health/execution-prices',
+        'GET /api/python-health/websocket/status',
+        'GET /api/python-health/cleanup/status',
+        'POST /api/python-health/cleanup/force',
+        'POST /api/python-health/protobuf/switch'
+      ]
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Debug endpoint failed',
+      message: error.message
+    });
+  }
 });
 
 // 404 handler
