@@ -174,9 +174,22 @@ class OrderExecutor:
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
 
         # 3) Determine strategy
-        if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
+        if user_type == "demo":
+            # Demo accounts always use local execution
             strategy: BaseExecutionStrategy = LocalExecutionStrategy(payload)
             flow = "local"
+        elif user_type == "live":
+            # Live accounts use sending_orders to determine execution flow
+            if sending_orders == "rock":
+                strategy = LocalExecutionStrategy(payload)
+                flow = "local"
+            elif sending_orders == "barclays":
+                strategy = ProviderExecutionStrategy(payload)
+                flow = "provider"
+            else:
+                # Default to local execution for live accounts if sending_orders not specified
+                strategy = LocalExecutionStrategy(payload)
+                flow = "local"
         elif user_type in ["strategy_provider", "copy_follower"]:
             # Copy trading accounts respect sending_orders field like live accounts
             if sending_orders == "rock":
