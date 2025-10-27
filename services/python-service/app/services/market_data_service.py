@@ -85,25 +85,33 @@ class MarketDataService:
             logger.error(f"Failed to process market feed: {e}")
             return False
     
-    async def _process_partial_updates_sharded(self, valid_updates: list, shard_size: int = 500):
+    async def _process_partial_updates_sharded(self, valid_updates: list, shard_size: int = 100):
         """
-        Process partial price updates using multiple Redis pipelines for better performance
+        Process partial price updates using multiple Redis pipelines optimized for high-frequency data
         
         Args:
             valid_updates: List of validated partial price update tuples
-            shard_size: Number of symbols per pipeline shard
+            shard_size: Number of symbols per pipeline shard (reduced for better concurrency)
         """
-        # Split into shards
+        if not valid_updates:
+            return
+            
+        # Split into smaller shards for better parallelism with high-frequency data
         shards = [valid_updates[i:i + shard_size] for i in range(0, len(valid_updates), shard_size)]
         
-        # Process shards concurrently
+        # Process shards concurrently with higher concurrency
         tasks = []
         for shard in shards:
             task = self._process_partial_update_shard(shard)
             tasks.append(task)
         
-        # Wait for all shards to complete
-        await asyncio.gather(*tasks)
+        # Use asyncio.gather with return_exceptions to handle partial failures
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Log any shard processing failures
+        failed_shards = sum(1 for result in results if isinstance(result, Exception))
+        if failed_shards > 0:
+            logger.warning(f"Failed to process {failed_shards}/{len(shards)} shards")
     
     async def _process_partial_update_shard(self, update_shard: list):
         """
@@ -112,23 +120,24 @@ class MarketDataService:
         Args:
             update_shard: List of partial price update tuples for this shard
         """
-        max_retries = 3
-        retry_delay = 0.1  # 100ms
+        max_retries = 2  # Reduce retries for faster processing
+        retry_delay = 0.05  # 50ms - faster retry
         
         for attempt in range(max_retries):
             try:
                 async with self.redis.pipeline() as pipe:
+                    # Batch all operations in pipeline for better performance
                     for symbol, update_fields, timestamp in update_shard:
-                        # Use simple format to match all readers
                         key = f"market:{symbol}"
-                        
-                        # Always update timestamp
                         update_fields['ts'] = timestamp
                         
-                        # Use HSET to update only the provided fields (bid/ask/ts)
-                        # This preserves existing bid or ask if only one is updated
+                        # Use HSET with mapping for atomic field updates
                         pipe.hset(key, mapping=update_fields)
+                        
+                        # Set expiration to prevent stale data accumulation (5 minutes)
+                        pipe.expire(key, 300)
                     
+                    # Execute all operations atomically
                     await pipe.execute()
                     return  # Success, exit retry loop
                     
@@ -384,7 +393,7 @@ class MarketDataService:
     
     async def _publish_price_update_notifications(self, valid_updates: list):
         """
-        Publish symbol notifications to Redis Pub/Sub for Portfolio Calculator
+        Publish symbol notifications to Redis Pub/Sub for Portfolio Calculator (optimized for high-frequency)
         
         Args:
             valid_updates: List of validated price update tuples (symbol, update_fields, timestamp)
@@ -392,19 +401,34 @@ class MarketDataService:
         if not valid_updates:
             return
         
-        # Extract unique symbols from valid updates
-        symbols_in_message = [update[0] for update in valid_updates]  # symbol is first element in tuple
+        # Extract unique symbols from valid updates (avoid duplicates)
+        symbols_in_message = list(set(update[0] for update in valid_updates))
         
-        logger.debug(f"Publishing price update notifications for {len(symbols_in_message)} symbols")
+        if not symbols_in_message:
+            return
+            
+        logger.debug(f"Publishing price update notifications for {len(symbols_in_message)} unique symbols")
         
-        # Use dedicated Redis client for pub/sub operations
-        for symbol in symbols_in_message:
-            try:
-                await self.pubsub_redis.publish("market_price_updates", symbol)
-                logger.debug(f"Published price update notification for {symbol}")
-            except Exception as e:
-                logger.error(f"Failed to publish symbol {symbol}: {e}")
-                # Continue with other symbols even if one fails
+        # Batch publish notifications for better performance
+        try:
+            # Use pipeline for pub/sub operations to reduce network round trips
+            async with self.pubsub_redis.pipeline() as pipe:
+                for symbol in symbols_in_message:
+                    pipe.publish("market_price_updates", symbol)
+                
+                # Execute all publications at once
+                await pipe.execute()
+                
+            logger.debug(f"Batch published {len(symbols_in_message)} symbol notifications")
+            
+        except Exception as e:
+            logger.error(f"Failed to batch publish notifications: {e}")
+            # Fallback to individual publishing
+            for symbol in symbols_in_message:
+                try:
+                    await self.pubsub_redis.publish("market_price_updates", symbol)
+                except Exception as symbol_error:
+                    logger.error(f"Failed to publish symbol {symbol}: {symbol_error}")
     
     def is_price_stale(self, timestamp: int) -> bool:
         """Check if price timestamp is stale (>5s old)"""

@@ -57,15 +57,16 @@ class RedisConfig:
             }
             return mapping.get(host, (host, port))
 
-        # Create minimal configuration compatible with redis 5.0.1
+        # Create optimized configuration for 8-core CPU with high-frequency data
+        # Using only supported parameters for redis-py compatibility
         self.cluster_config = {
             "startup_nodes": startup_nodes,
             "decode_responses": True,
             "password": redis_password,
             "health_check_interval": 30,
-            "socket_connect_timeout": 10,
-            "socket_timeout": 10,
-            "max_connections": 50,
+            "socket_connect_timeout": 5,    # Faster connection timeout
+            "socket_timeout": 5,            # Faster socket timeout
+            "max_connections": 200,         # 25 connections per core (8 cores)
             "address_remap": address_remap,
         }
     
@@ -76,11 +77,15 @@ class RedisConfig:
 # Global async Redis cluster instance
 redis_cluster = RedisConfig().get_cluster()
 
-# Single Redis connection for pub/sub operations
+# Optimized Redis connection pool for pub/sub operations
 redis_password = os.getenv("REDIS_PASSWORD") or "admin@livefxhub@123"
 redis_pubsub_client = redis.Redis(
     host='127.0.0.1', 
     port=7001, 
     decode_responses=True,
-    password=redis_password
+    password=redis_password,
+    max_connections=50,          # Connection pool for pub/sub
+    socket_connect_timeout=3,    # Faster connection timeout
+    socket_timeout=3,            # Faster socket timeout
+    health_check_interval=30     # Health check every 30s
 )
