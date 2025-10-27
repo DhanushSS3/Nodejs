@@ -4,7 +4,8 @@ const LiveUser = require('../models/liveUser.model');
 const logger = require('./logger.service');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
-const { Op } = require('sequelize');
+const { Op, sequelize } = require('sequelize');
+const db = require('../config/db');
 
 class StrategyProviderService {
   
@@ -640,6 +641,12 @@ class StrategyProviderService {
         failures.push(`Return must be >= ${requirements.min_return_percentage}% (current: ${totalReturn.toFixed(2)}%)`);
       }
 
+      // Check minimum equity requirement
+      const currentEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
+      if (currentEquity < requirements.min_equity) {
+        failures.push(`Minimum equity of $${requirements.min_equity} required (current: $${currentEquity.toFixed(2)})`);
+      }
+
       const isEligible = failures.length === 0;
 
       return {
@@ -656,6 +663,7 @@ class StrategyProviderService {
           days_since_last_trade: orderStats.last_trade_date ? 
             Math.floor((now - new Date(orderStats.last_trade_date)) / (1000 * 60 * 60 * 24)) : 999,
           total_return_percentage: totalReturn,
+          current_equity: parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0),
           status: strategyProvider.status,
           is_active: strategyProvider.is_active
         }
@@ -746,6 +754,157 @@ class StrategyProviderService {
         last_trade_date: null,
         last_closed_trade_date: null
       };
+    }
+  }
+
+  /**
+   * Get catalog requirements configuration
+   * @returns {Object} Catalog requirements
+   */
+  getCatalogRequirements() {
+    return {
+      min_closed_trades: 10,
+      min_days_since_first_trade: 30,
+      max_days_since_last_trade: 7,
+      min_return_percentage: 0,
+      min_equity: 100.00
+    };
+  }
+
+  /**
+   * Update catalog eligibility for all strategy providers based on minimum balance
+   * This should be run periodically to remove providers with insufficient balance
+   * @returns {Object} Update results
+   */
+  async updateCatalogEligibilityByBalance() {
+    try {
+      const minBalance = 100.00;
+      
+      // Find all strategy providers currently in catalog but with insufficient balance
+      const ineligibleProviders = await StrategyProviderAccount.findAll({
+        where: {
+          is_catalog_eligible: true,
+          status: 1,
+          is_active: 1,
+          catalog_free_pass: false, // Don't remove free pass accounts
+          [Op.or]: [
+            {
+              wallet_balance: {
+                [Op.lt]: minBalance
+              },
+              net_profit: {
+                [Op.gte]: 0
+              }
+            },
+            {
+              [Op.and]: [
+                {
+                  wallet_balance: {
+                    [Op.gte]: 0
+                  }
+                },
+                {
+                  net_profit: {
+                    [Op.lt]: 0
+                  }
+                },
+                db.where(
+                  db.literal('wallet_balance + net_profit'),
+                  Op.lt,
+                  minBalance
+                )
+              ]
+            }
+          ]
+        },
+        attributes: ['id', 'strategy_name', 'wallet_balance', 'net_profit', 'user_id']
+      });
+
+      const removedFromCatalog = [];
+      
+      // Remove each provider from catalog
+      for (const provider of ineligibleProviders) {
+        const currentEquity = parseFloat(provider.wallet_balance || 0) + parseFloat(provider.net_profit || 0);
+        
+        await StrategyProviderAccount.update(
+          {
+            is_catalog_eligible: false,
+            catalog_eligibility_updated_at: new Date()
+          },
+          {
+            where: { id: provider.id }
+          }
+        );
+
+        removedFromCatalog.push({
+          id: provider.id,
+          strategy_name: provider.strategy_name,
+          current_equity: currentEquity,
+          user_id: provider.user_id
+        });
+
+        logger.info('Strategy provider removed from catalog due to insufficient balance', {
+          strategyProviderId: provider.id,
+          strategyName: provider.strategy_name,
+          currentEquity,
+          minBalance,
+          userId: provider.user_id
+        });
+      }
+
+      return {
+        success: true,
+        removed_count: removedFromCatalog.length,
+        removed_providers: removedFromCatalog,
+        min_balance_requirement: minBalance
+      };
+
+    } catch (error) {
+      logger.error('Failed to update catalog eligibility by balance', {
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Check if strategy provider can start trading (has minimum balance)
+   * @param {number} strategyProviderId - Strategy provider ID
+   * @returns {Object} Trading eligibility result
+   */
+  async checkTradingEligibility(strategyProviderId) {
+    try {
+      const strategyProvider = await StrategyProviderAccount.findByPk(strategyProviderId);
+      
+      if (!strategyProvider) {
+        return { eligible: false, reason: 'Strategy provider not found' };
+      }
+
+      const minBalance = 100.00;
+      const currentEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
+      
+      if (currentEquity < minBalance) {
+        return {
+          eligible: false,
+          reason: `Minimum balance of $${minBalance} required to start trading. Current equity: $${currentEquity.toFixed(2)}`,
+          current_equity: currentEquity,
+          min_balance: minBalance
+        };
+      }
+
+      return {
+        eligible: true,
+        reason: 'Trading eligibility requirements met',
+        current_equity: currentEquity,
+        min_balance: minBalance
+      };
+
+    } catch (error) {
+      logger.error('Failed to check trading eligibility', {
+        strategyProviderId,
+        error: error.message
+      });
+      return { eligible: false, reason: 'Error checking trading eligibility' };
     }
   }
 

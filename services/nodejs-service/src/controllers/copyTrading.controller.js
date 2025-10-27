@@ -64,6 +64,17 @@ async function createFollowerAccount(req, res) {
       });
     }
 
+    // Check if strategy provider has minimum balance to accept followers
+    const strategyProviderEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
+    const minStrategyBalance = 100.00;
+    
+    if (strategyProviderEquity < minStrategyBalance) {
+      return res.status(400).json({
+        success: false,
+        message: `Strategy provider does not meet minimum balance requirement of $${minStrategyBalance}. Current equity: $${strategyProviderEquity.toFixed(2)}`
+      });
+    }
+
     // Check if user is trying to follow their own strategy
     if (strategyProvider.user_id === userId) {
       return res.status(400).json({
@@ -114,10 +125,20 @@ async function createFollowerAccount(req, res) {
       });
     }
 
-    // Check if user has sufficient balance
+    // Check if user has sufficient balance and meets minimum balance requirement
     const userBalance = parseFloat(liveUser.wallet_balance || 0);
     const investmentAmountFloat = parseFloat(investment_amount);
+    const minBalance = 100.00;
     
+    // Check minimum balance requirement
+    if (userBalance < minBalance) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum balance of $${minBalance} required to start copy trading. Current balance: $${userBalance.toFixed(2)}`
+      });
+    }
+    
+    // Check if user has sufficient balance for investment
     if (userBalance < investmentAmountFloat) {
       return res.status(400).json({
         success: false,

@@ -339,6 +339,7 @@ async function applyDbUpdate(msg) {
         const symbolP = rowP?.symbol ?? undefined;
         const orderTypeP = rowP?.order_type ?? undefined;
 
+        // Apply payout for all user types (live, demo, strategy_provider, copy_follower)
         await applyOrderClosePayout({
           userType: String(user_type),
           userId: parseInt(String(user_id), 10),
@@ -850,7 +851,12 @@ async function handlePostCloseOperations(payload, row) {
       }
     }
 
-    // 3. Handle copy trading distribution for strategy providers (NEW)
+    // 3. Update closed_trades field for strategy providers
+    if (user_type === 'strategy_provider') {
+      await updateStrategyProviderClosedTrades(user_id);
+    }
+
+    // 4. Handle copy trading distribution for strategy providers (NEW)
     if (user_type === 'strategy_provider' && row) {
       await handleStrategyProviderCopyTrading(row);
     }
@@ -860,6 +866,39 @@ async function handlePostCloseOperations(payload, row) {
       order_id,
       user_type,
       user_id,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Update closed_trades field for strategy provider account
+ * @param {string} userId - Strategy provider user ID
+ */
+async function updateStrategyProviderClosedTrades(userId) {
+  try {
+    // Count total closed trades for this strategy provider
+    const closedTradesCount = await StrategyProviderOrder.count({
+      where: {
+        order_user_id: parseInt(userId, 10),
+        order_status: 'CLOSED'
+      }
+    });
+
+    // Update the strategy provider account with the closed trades count
+    await StrategyProviderAccount.update(
+      { closed_trades: closedTradesCount },
+      { where: { user_id: parseInt(userId, 10) } }
+    );
+
+    logger.info('Updated strategy provider closed_trades field', {
+      userId,
+      closedTradesCount
+    });
+
+  } catch (error) {
+    logger.error('Failed to update strategy provider closed_trades', {
+      userId,
       error: error.message
     });
   }
@@ -906,6 +945,8 @@ function getUserModel(userType) {
       return DemoUser;
     case 'strategy_provider':
       return StrategyProviderAccount;
+    case 'copy_follower':
+      return CopyFollowerAccount;
     default:
       return null;
   }

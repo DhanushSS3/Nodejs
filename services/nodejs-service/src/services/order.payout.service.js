@@ -1,6 +1,8 @@
 const sequelize = require('../config/db');
 const { Transaction } = require('sequelize');
 const { LiveUser, DemoUser } = require('../models');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const UserTransaction = require('../models/userTransaction.model');
 const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
@@ -8,7 +10,18 @@ const { redisCluster } = require('../../config/redis');
 const { logOrderClosureSwap } = require('../utils/swap.logger');
 
 function getUserModel(userType) {
-  return userType === 'live' ? LiveUser : DemoUser;
+  switch (userType) {
+    case 'live':
+      return LiveUser;
+    case 'demo':
+      return DemoUser;
+    case 'strategy_provider':
+      return StrategyProviderAccount;
+    case 'copy_follower':
+      return CopyFollowerAccount;
+    default:
+      return LiveUser; // Default fallback
+  }
 }
 
 function toNum(v) {
@@ -71,8 +84,8 @@ async function applyOrderClosePayout({
       const after = runningBalance + amount;
       await UserTransaction.create({
         transaction_id: txnId,
-        user_id: parseInt(String(userId), 10),
-        user_type: String(userType),
+        user_id: transactionUserId,
+        user_type: transactionUserType,
         order_id: orderPk || null,
         type: 'commission',
         amount: amount,
@@ -166,6 +179,17 @@ async function applyOrderClosePayout({
   try {
     const key = `user:{${String(userType)}:${String(userId)}}:config`;
     await redisCluster.hset(key, { wallet_balance: String(txResult.balance_after) });
+    
+    // For strategy providers and copy followers, also update their account-specific cache
+    if (String(userType) === 'strategy_provider' || String(userType) === 'copy_follower') {
+      logger.info('Updated wallet balance for copy trading account', {
+        userType: String(userType),
+        userId: String(userId),
+        balanceAfter: txResult.balance_after,
+        netProfit: np,
+        commission: com
+      });
+    }
   } catch (e) {
     logger.warn('Failed to sync Redis wallet_balance after payout', { error: e.message, userId: String(userId), userType: String(userType) });
   }

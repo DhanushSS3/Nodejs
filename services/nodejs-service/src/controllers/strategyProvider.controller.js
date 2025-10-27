@@ -48,6 +48,25 @@ async function createStrategyProviderAccount(req, res) {
         message: 'Maximum number of strategy provider accounts reached'
       });
     }
+
+    // Check if user has minimum balance of $100 to start trading
+    const liveUser = await LiveUser.findByPk(userId);
+    if (!liveUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User account not found'
+      });
+    }
+
+    const userBalance = parseFloat(liveUser.wallet_balance || 0);
+    const minBalance = 100.00;
+    
+    if (userBalance < minBalance) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum balance of $${minBalance} required to create a strategy provider account. Current balance: $${userBalance.toFixed(2)}`
+      });
+    }
     
     // Validate required fields
     const { strategy_name } = req.body;
@@ -960,6 +979,108 @@ async function refreshStrategyProviderToken(req, res) {
 }
 
 /**
+ * Update catalog eligibility based on minimum balance requirement
+ * POST /api/strategy-providers/update-catalog-eligibility
+ */
+async function updateCatalogEligibilityByBalance(req, res) {
+  try {
+    // This endpoint should be restricted to admin users or system processes
+    const userId = getUserId(req.user);
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    // Update catalog eligibility
+    const result = await strategyProviderService.updateCatalogEligibilityByBalance();
+    
+    logger.info('Catalog eligibility updated by balance requirement', {
+      userId,
+      removedCount: result.removed_count,
+      ip: req.ip
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Catalog eligibility updated successfully',
+      data: result
+    });
+
+  } catch (error) {
+    logger.error('Failed to update catalog eligibility by balance', {
+      userId: getUserId(req.user),
+      error: error.message,
+      ip: req.ip
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while updating catalog eligibility'
+    });
+  }
+}
+
+/**
+ * Check trading eligibility for strategy provider
+ * GET /api/strategy-providers/:id/trading-eligibility
+ */
+async function checkTradingEligibility(req, res) {
+  try {
+    const userId = getUserId(req.user);
+    const strategyProviderId = parseInt(req.params.id);
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+    
+    if (!strategyProviderId || isNaN(strategyProviderId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid strategy provider ID'
+      });
+    }
+
+    // Check trading eligibility
+    const eligibilityResult = await strategyProviderService.checkTradingEligibility(strategyProviderId);
+    
+    logger.info('Trading eligibility checked', {
+      userId,
+      strategyProviderId,
+      eligible: eligibilityResult.eligible,
+      ip: req.ip
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Trading eligibility checked successfully',
+      data: {
+        strategy_provider_id: strategyProviderId,
+        eligibility: eligibilityResult
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to check trading eligibility', {
+      userId: getUserId(req.user),
+      strategyProviderId: req.params.id,
+      error: error.message,
+      ip: req.ip
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while checking trading eligibility'
+    });
+  }
+}
+
+/**
  * Logout from strategy provider account
  * POST /api/strategy-providers/logout
  */
@@ -1002,6 +1123,8 @@ module.exports = {
   getPrivateStrategyByLink,
   getCatalogStrategies,
   checkCatalogEligibility,
+  updateCatalogEligibilityByBalance,
+  checkTradingEligibility,
   switchToStrategyProvider,
   switchBackToLiveUser,
   refreshStrategyProviderToken,
