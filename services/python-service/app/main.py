@@ -47,60 +47,117 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
+    """Enhanced application lifespan manager with comprehensive error handling"""
     # Startup
-    logger.info("Starting Python Market Service...")
+    logger.info("🚀 Starting Python Market Service...")
     
-    # Start binary market listener as background task (now with zlib decompression)
-    asyncio.create_task(start_binary_market_listener())
-    logger.info("Binary market listener started")
+    # Track all background tasks for proper cleanup
+    background_tasks = []
     
-    # Start portfolio calculator listener as background task
-    asyncio.create_task(start_portfolio_listener())
-    logger.info("Portfolio calculator listener started")
+    # Step 1: Validate prerequisites
+    startup_success = await _validate_startup_prerequisites()
+    if not startup_success:
+        logger.error("❌ Startup prerequisites validation failed")
+        # Continue anyway but log the issues
+    
+    # Step 2: Start critical services with error handling
+    try:
+        # Start binary market listener (critical for price data)
+        binary_listener_task = asyncio.create_task(start_binary_market_listener())
+        background_tasks.append(("binary_market_listener", binary_listener_task))
+        logger.info("✅ Binary market listener started")
+        
+        # Start JSON market listener (backup for price data)
+        json_listener_task = asyncio.create_task(start_market_listener())
+        background_tasks.append(("json_market_listener", json_listener_task))
+        logger.info("✅ JSON market listener started")
+        
+    except Exception as e:
+        logger.error(f"❌ Critical error starting market listeners: {e}")
+        # This is critical - market data is essential
+        
+    # Step 3: Start supporting services
+    try:
+        # Start portfolio calculator listener
+        portfolio_task = asyncio.create_task(start_portfolio_listener())
+        background_tasks.append(("portfolio_listener", portfolio_task))
+        logger.info("✅ Portfolio calculator listener started")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to start portfolio listener: {e}")
 
-    # Start provider persistent connection manager for send+receive
-    provider_manager = get_provider_connection_manager()
-    provider_task = asyncio.create_task(provider_manager.run())
-    logger.info("Provider connection manager started")
+    # Step 4: Start provider services
+    provider_manager = None
+    provider_task = None
+    try:
+        provider_manager = get_provider_connection_manager()
+        provider_task = asyncio.create_task(provider_manager.run())
+        background_tasks.append(("provider_manager", provider_task))
+        logger.info("✅ Provider connection manager started")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to start provider connection manager: {e}")
 
-    # Start provider pending monitor (continuous margin checks and cancel on insufficient margin)
+    # Step 5: Start monitoring services
     pending_monitor_task = None
     try:
         pending_monitor_task = asyncio.create_task(start_provider_pending_monitor())
-        logger.info("Provider pending monitor started")
+        background_tasks.append(("pending_monitor", pending_monitor_task))
+        logger.info("✅ Provider pending monitor started")
     except Exception as e:
-        logger.error(f"Failed to start provider pending monitor: {e}")
+        logger.error(f"⚠️ Failed to start provider pending monitor: {e}")
 
-    # Start AutoCutoff watcher (alerts + liquidation engine)
+    # Step 6: Start AutoCutoff watcher
     try:
-        asyncio.create_task(start_autocutoff_watcher())
-        logger.info("AutoCutoff watcher started")
+        autocutoff_task = asyncio.create_task(start_autocutoff_watcher())
+        background_tasks.append(("autocutoff_watcher", autocutoff_task))
+        logger.info("✅ AutoCutoff watcher started")
     except Exception as e:
-        logger.error(f"Failed to start AutoCutoff watcher: {e}")
+        logger.error(f"⚠️ Failed to start AutoCutoff watcher: {e}")
+    
+    # Step 7: Start health monitoring
+    try:
+        health_monitor_task = asyncio.create_task(_health_monitor_loop())
+        background_tasks.append(("health_monitor", health_monitor_task))
+        logger.info("✅ Health monitor started")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to start health monitor: {e}")
+    
+    # Log startup summary
+    logger.info(f"🎯 Startup complete! Running {len(background_tasks)} background services")
+    for service_name, task in background_tasks:
+        status = "✅ Running" if not task.done() else "❌ Failed"
+        logger.info(f"   - {service_name}: {status}")
 
     
     yield
     
-    # Shutdown
-    logger.info("Shutting down Python Market Service...")
-    try:
-        await provider_manager.stop()
-        provider_task.cancel()
+    # Enhanced shutdown process
+    logger.info("⏹️ Shutting down Python Market Service...")
+    
+    # Graceful shutdown of all background tasks
+    for service_name, task in background_tasks:
         try:
-            await provider_task
-        except Exception:
-            pass
-        
-        # Cancel pending monitor task
-        if pending_monitor_task is not None:
-            pending_monitor_task.cancel()
+            logger.info(f"⏹️ Stopping {service_name}...")
+            task.cancel()
             try:
-                await pending_monitor_task
-            except Exception:
-                pass
-    except Exception:
-        pass
+                await asyncio.wait_for(task, timeout=10.0)  # 10 second timeout
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ {service_name} did not stop within timeout")
+            except asyncio.CancelledError:
+                logger.info(f"✅ {service_name} stopped gracefully")
+            except Exception as e:
+                logger.error(f"❌ Error stopping {service_name}: {e}")
+        except Exception as e:
+            logger.error(f"❌ Error during {service_name} shutdown: {e}")
+    
+    # Special handling for provider manager
+    if provider_manager:
+        try:
+            await provider_manager.stop()
+            logger.info("✅ Provider manager stopped")
+        except Exception as e:
+            logger.error(f"❌ Error stopping provider manager: {e}")
+    
+    logger.info("✅ Shutdown complete")
 
 # Create FastAPI app
 app = FastAPI(
@@ -163,12 +220,129 @@ async def health_check():
             "timestamp": int(time.time() * 1000)
         }
 
+async def _validate_startup_prerequisites() -> bool:
+    """Validate that all prerequisites are met before starting services"""
+    logger.info("🔍 Validating startup prerequisites...")
+    
+    validation_results = []
+    
+    # Check Redis connectivity
+    try:
+        from .config.redis_config import redis_cluster
+        await redis_cluster.ping()
+        logger.info("✅ Redis cluster connectivity: OK")
+        validation_results.append(True)
+    except Exception as e:
+        logger.error(f"❌ Redis cluster connectivity: FAILED - {e}")
+        validation_results.append(False)
+    
+    # Check environment variables
+    required_env_vars = ['REDIS_PASSWORD', 'REDIS_HOSTS']
+    env_check = True
+    for var in required_env_vars:
+        if not os.getenv(var):
+            logger.warning(f"⚠️ Environment variable {var} not set")
+            env_check = False
+    
+    if env_check:
+        logger.info("✅ Environment variables: OK")
+    else:
+        logger.warning("⚠️ Some environment variables missing")
+    
+    validation_results.append(env_check)
+    
+    # Check system resources
+    try:
+        import psutil
+        memory_percent = psutil.virtual_memory().percent
+        if memory_percent > 90:
+            logger.warning(f"⚠️ High memory usage: {memory_percent}%")
+        else:
+            logger.info(f"✅ Memory usage: {memory_percent}%")
+        validation_results.append(memory_percent < 95)
+    except Exception as e:
+        logger.warning(f"⚠️ Could not check system resources: {e}")
+        validation_results.append(True)  # Don't fail startup for this
+    
+    success_rate = sum(validation_results) / len(validation_results)
+    logger.info(f"📊 Prerequisites validation: {success_rate*100:.1f}% passed")
+    
+    return success_rate >= 0.5  # At least 50% of checks should pass
+
+async def _health_monitor_loop():
+    """Background health monitoring loop"""
+    logger.info("💊 Starting health monitor loop...")
+    
+    while True:
+        try:
+            await asyncio.sleep(300)  # Check every 5 minutes
+            
+            # Quick health check
+            from .config.redis_config import redis_cluster
+            
+            # Test Redis
+            redis_ok = False
+            try:
+                await redis_cluster.ping()
+                redis_ok = True
+            except Exception:
+                pass
+            
+            # Test market data freshness
+            fresh_data_count = 0
+            symbols = ["EURUSD", "GBPUSD", "USDSEK"]
+            
+            for symbol in symbols:
+                try:
+                    import json
+                    import time
+                    
+                    key = f"market_data:{symbol}"
+                    raw_data = await redis_cluster.get(key)
+                    
+                    if raw_data:
+                        data = json.loads(raw_data)
+                        age = time.time() - data.get("timestamp", 0)
+                        if age < 120:  # Fresh if less than 2 minutes old
+                            fresh_data_count += 1
+                except Exception:
+                    pass
+            
+            # Log health summary
+            redis_status = "✅" if redis_ok else "❌"
+            data_status = "✅" if fresh_data_count >= 2 else "⚠️" if fresh_data_count >= 1 else "❌"
+            
+            logger.info(f"💊 Health Check - Redis: {redis_status} | Fresh Data: {data_status} ({fresh_data_count}/{len(symbols)})")
+            
+            # Alert on critical issues
+            if not redis_ok:
+                logger.error("🚨 CRITICAL: Redis cluster is not responding!")
+            
+            if fresh_data_count == 0:
+                logger.error("🚨 CRITICAL: No fresh market data available!")
+            
+        except Exception as e:
+            logger.error(f"❌ Health monitor error: {e}")
+            await asyncio.sleep(60)  # Shorter retry on error
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    
+    # Production-ready configuration
+    config = {
+        "host": "0.0.0.0",
+        "port": 8000,
+        "log_level": "info",
+        "access_log": True,
+        "reload": False,  # Disable reload in production
+        "workers": 1,  # Single worker for WebSocket connections
+    }
+    
+    # Enable reload only in development
+    if os.getenv("ENVIRONMENT") == "development":
+        config["reload"] = True
+        logger.info("🔧 Development mode: reload enabled")
+    else:
+        logger.info("🚀 Production mode: optimized for stability")
+    
+    uvicorn.run("main:app", **config)
