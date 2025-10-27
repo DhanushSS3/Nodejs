@@ -368,9 +368,121 @@ class PythonHealthController {
       });
     }
   }
+
+  /**
+   * Get comprehensive debug information for production troubleshooting
+   */
+  async getComprehensiveDebug(req, res) {
+    try {
+      const response = await this.pythonClient.get('/api/debug/comprehensive');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Comprehensive debug information retrieved successfully',
+        data: response.data,
+        python_service_url: this.pythonServiceUrl,
+        response_time_ms: response.headers['x-response-time'] || 'N/A'
+      });
+      
+    } catch (error) {
+      console.error('Comprehensive debug failed:', error.message);
+      
+      return res.status(503).json({
+        success: false,
+        message: 'Failed to retrieve comprehensive debug information',
+        error: error.message,
+        python_service_url: this.pythonServiceUrl,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Get detailed Redis cluster diagnostics including connection pool analysis
+   */
+  async getRedisClusterDebug(req, res) {
+    try {
+      const response = await this.pythonClient.get('/api/debug/redis-cluster');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Redis cluster diagnostics retrieved successfully',
+        data: response.data,
+        python_service_url: this.pythonServiceUrl,
+        response_time_ms: response.headers['x-response-time'] || 'N/A'
+      });
+      
+    } catch (error) {
+      console.error('Redis cluster debug failed:', error.message);
+      
+      return res.status(503).json({
+        success: false,
+        message: 'Failed to retrieve Redis cluster diagnostics',
+        error: error.message,
+        python_service_url: this.pythonServiceUrl,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Debug WebSocket to Redis data flow to identify connection issues
+   */
+  async getWebSocketToRedisDebug(req, res) {
+    try {
+      const response = await this.pythonClient.get('/api/debug/websocket-to-redis');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'WebSocket to Redis flow analysis retrieved successfully',
+        data: response.data,
+        python_service_url: this.pythonServiceUrl,
+        response_time_ms: response.headers['x-response-time'] || 'N/A'
+      });
+      
+    } catch (error) {
+      console.error('WebSocket to Redis debug failed:', error.message);
+      
+      return res.status(503).json({
+        success: false,
+        message: 'Failed to retrieve WebSocket to Redis flow analysis',
+        error: error.message,
+        python_service_url: this.pythonServiceUrl,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Get WebSocket listener status and configuration
+   */
+  async getListenerStatus(req, res) {
+    try {
+      const response = await this.pythonClient.get('/api/listener-status');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'WebSocket listener status retrieved successfully',
+        data: response.data,
+        python_service_url: this.pythonServiceUrl,
+        response_time_ms: response.headers['x-response-time'] || 'N/A'
+      });
+      
+    } catch (error) {
+      console.error('Listener status failed:', error.message);
+      
+      return res.status(503).json({
+        success: false,
+        message: 'Failed to retrieve WebSocket listener status',
+        error: error.message,
+        python_service_url: this.pythonServiceUrl,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
 }
 
-// Create instance and bind methods to preserve 'this' context
+// Create singleton instance
 const pythonHealthController = new PythonHealthController();
 
 module.exports = {
@@ -381,5 +493,11 @@ module.exports = {
   getCleanupStatus: pythonHealthController.getCleanupStatus.bind(pythonHealthController),
   forceCleanup: pythonHealthController.forceCleanup.bind(pythonHealthController),
   getExecutionPriceIssues: pythonHealthController.getExecutionPriceIssues.bind(pythonHealthController),
-  switchProtobufListener: pythonHealthController.switchProtobufListener.bind(pythonHealthController)
+  switchProtobufListener: pythonHealthController.switchProtobufListener.bind(pythonHealthController),
+  
+  // New comprehensive debug endpoints
+  getComprehensiveDebug: pythonHealthController.getComprehensiveDebug.bind(pythonHealthController),
+  getRedisClusterDebug: pythonHealthController.getRedisClusterDebug.bind(pythonHealthController),
+  getWebSocketToRedisDebug: pythonHealthController.getWebSocketToRedisDebug.bind(pythonHealthController),
+  getListenerStatus: pythonHealthController.getListenerStatus.bind(pythonHealthController)
 };

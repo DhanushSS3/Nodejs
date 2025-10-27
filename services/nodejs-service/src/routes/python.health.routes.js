@@ -385,4 +385,172 @@ router.post('/protobuf/switch',
   PythonHealthController.switchProtobufListener
 );
 
+/**
+ * @swagger
+ * /api/python-health/debug/comprehensive:
+ *   get:
+ *     summary: Get comprehensive debug information for production troubleshooting
+ *     tags: [Python Health]
+ *     security:
+ *       - adminAuth: []
+ *     responses:
+ *       200:
+ *         description: Comprehensive debug information
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     timestamp:
+ *                       type: integer
+ *                     system_info:
+ *                       type: object
+ *                     redis_diagnostics:
+ *                       type: object
+ *                     websocket_diagnostics:
+ *                       type: object
+ *                     market_data_diagnostics:
+ *                       type: object
+ *                     performance_metrics:
+ *                       type: object
+ */
+router.get('/debug/comprehensive',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  PythonHealthController.getComprehensiveDebug
+);
+
+/**
+ * @swagger
+ * /api/python-health/debug/redis-cluster:
+ *   get:
+ *     summary: Get detailed Redis cluster diagnostics including connection pool analysis
+ *     tags: [Python Health]
+ *     security:
+ *       - adminAuth: []
+ *     responses:
+ *       200:
+ *         description: Redis cluster diagnostics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     cluster_health:
+ *                       type: object
+ *                     individual_nodes:
+ *                       type: object
+ *                     connection_pool:
+ *                       type: object
+ *                       properties:
+ *                         active_connections:
+ *                           type: integer
+ *                         utilization_percent:
+ *                           type: number
+ *                         connection_success_rate:
+ *                           type: number
+ *                         avg_response_time_ms:
+ *                           type: number
+ */
+router.get('/debug/redis-cluster',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  PythonHealthController.getRedisClusterDebug
+);
+
+/**
+ * @swagger
+ * /api/python-health/debug/websocket-to-redis:
+ *   get:
+ *     summary: Debug WebSocket to Redis data flow to identify connection issues
+ *     tags: [Python Health]
+ *     security:
+ *       - adminAuth: []
+ *     responses:
+ *       200:
+ *         description: WebSocket to Redis flow analysis
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     websocket_status:
+ *                       type: object
+ *                     redis_write_test:
+ *                       type: object
+ *                     market_service_status:
+ *                       type: object
+ *                     data_flow_analysis:
+ *                       type: object
+ *                     potential_issues:
+ *                       type: array
+ */
+router.get('/debug/websocket-to-redis',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  PythonHealthController.getWebSocketToRedisDebug
+);
+
+/**
+ * @swagger
+ * /api/python-health/listener-status:
+ *   get:
+ *     summary: Get WebSocket listener configuration and performance comparison
+ *     tags: [Python Health]
+ *     security:
+ *       - adminAuth: []
+ *     responses:
+ *       200:
+ *         description: WebSocket listener status and configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     current_listener:
+ *                       type: string
+ *                       enum: [binary, json]
+ *                     recommendation:
+ *                       type: string
+ *                     configuration:
+ *                       type: object
+ *                     performance_comparison:
+ *                       type: object
+ *                     bottleneck_analysis:
+ *                       type: object
+ */
+router.get('/listener-status',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  PythonHealthController.getListenerStatus
+);
+
 module.exports = router;

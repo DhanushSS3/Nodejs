@@ -61,19 +61,23 @@ async def lifespan(app: FastAPI):
         # Continue anyway but log the issues
     
     # Step 2: Start critical services with error handling
+    # Configure which WebSocket listener to use (avoid running both simultaneously)
+    use_binary_listener = os.getenv("USE_BINARY_LISTENER", "true").lower() == "true"
+    
     try:
-        # Start binary market listener (critical for price data)
-        binary_listener_task = asyncio.create_task(start_binary_market_listener())
-        background_tasks.append(("binary_market_listener", binary_listener_task))
-        logger.info("✅ Binary market listener started")
-        
-        # Start JSON market listener (backup for price data)
-        json_listener_task = asyncio.create_task(start_market_listener())
-        background_tasks.append(("json_market_listener", json_listener_task))
-        logger.info("✅ JSON market listener started")
+        if use_binary_listener:
+            # Start binary market listener (preferred - more efficient)
+            binary_listener_task = asyncio.create_task(start_binary_market_listener())
+            background_tasks.append(("binary_market_listener", binary_listener_task))
+            logger.info("✅ Binary market listener started (protobuf mode)")
+        else:
+            # Start JSON market listener (fallback mode)
+            json_listener_task = asyncio.create_task(start_market_listener())
+            background_tasks.append(("json_market_listener", json_listener_task))
+            logger.info("✅ JSON market listener started (fallback mode)")
         
     except Exception as e:
-        logger.error(f"❌ Critical error starting market listeners: {e}")
+        logger.error(f"❌ Critical error starting market listener: {e}")
         # This is critical - market data is essential
         
     # Step 3: Start supporting services

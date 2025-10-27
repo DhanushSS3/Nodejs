@@ -57,14 +57,15 @@ class RedisConfig:
             }
             return mapping.get(host, (host, port))
 
+        # Create minimal configuration compatible with redis 5.0.1
         self.cluster_config = {
             "startup_nodes": startup_nodes,
             "decode_responses": True,
             "password": redis_password,
             "health_check_interval": 30,
-            "socket_connect_timeout": 5,
-            "socket_timeout": 5,
-            "max_connections": 1000,
+            "socket_connect_timeout": 10,
+            "socket_timeout": 10,
+            "max_connections": 50,
             "address_remap": address_remap,
         }
     

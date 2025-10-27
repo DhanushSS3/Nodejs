@@ -127,14 +127,14 @@ class MarketListener:
         
         async with websockets.connect(
             current_url,
-            ping_interval=25,      # Ping every 25 seconds
-            ping_timeout=8,        # Wait 8 seconds for pong
+            ping_interval=None,    # Disable ping temporarily to test
+            ping_timeout=None,     # Disable ping timeout
             close_timeout=10,
             max_size=10**7,        # Handle large messages
             compression=None       # Disable compression for stability
         ) as websocket:
             logger.info("Connected to market feed successfully")
-            logger.info(f"WebSocket ping interval: 25s, ping timeout: 8s")
+            logger.info("WebSocket ping: DISABLED (testing mode)")
             
             # Warmup market data immediately after connection to prevent stale prices
             logger.info("🔥 Warming up market data after connection...")
