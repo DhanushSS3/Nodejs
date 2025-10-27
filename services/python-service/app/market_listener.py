@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 # from services.market_data_service import MarketDataService
 from app.services.market_data_service import MarketDataService
 from app.services.logging.execution_price_logger import log_websocket_issue
+from app.market_data_warmup import warmup_after_reconnection
 
 # Configure logging
 logging.basicConfig(
@@ -52,9 +53,11 @@ class MarketListener:
                     await self._connect_and_listen()
                     reconnect_count = 0  # Reset on successful connection
                     
-                except websockets.exceptions.ConnectionClosed:
+                except websockets.exceptions.ConnectionClosed as e:
                     reconnect_count += 1
-                    logger.warning(f"WebSocket connection closed. Reconnecting... (attempt {reconnect_count})")
+                    logger.warning(f"🔌 WebSocket connection closed: {e}")
+                    logger.warning(f"🔄 Reconnecting... (attempt {reconnect_count}/{self.max_reconnect_attempts})")
+                    logger.info(f"⏳ Waiting {self.reconnect_delay}s before reconnection")
                     await asyncio.sleep(self.reconnect_delay)
                     
                 except websockets.exceptions.InvalidURI:
@@ -124,18 +127,45 @@ class MarketListener:
         
         async with websockets.connect(
             current_url,
-            ping_interval=30,
-            ping_timeout=10,
-            close_timeout=10
+            ping_interval=25,      # Ping every 25 seconds
+            ping_timeout=8,        # Wait 8 seconds for pong
+            close_timeout=10,
+            max_size=10**7,        # Handle large messages
+            compression=None       # Disable compression for stability
         ) as websocket:
             logger.info("Connected to market feed successfully")
+            logger.info(f"WebSocket ping interval: 25s, ping timeout: 8s")
+            
+            # Warmup market data immediately after connection to prevent stale prices
+            logger.info("🔥 Warming up market data after connection...")
+            warmup_success = await warmup_after_reconnection()
+            if warmup_success:
+                logger.info("✅ Market data warmup successful")
+            else:
+                logger.warning("⚠️ Market data warmup had issues, but continuing...")
+            
+            # Track connection health
+            message_count = 0
+            last_message_time = time.time()
             
             async for message in websocket:
                 try:
+                    message_count += 1
+                    current_time = time.time()
+                    
+                    # Log periodic health info
+                    if message_count % 100 == 0:
+                        uptime = current_time - last_message_time if message_count == 100 else current_time - last_message_time
+                        logger.info(f"📈 Received {message_count} messages, connection stable for {uptime:.1f}s")
+                    
                     await self._process_message(message)
+                    last_message_time = current_time
+                    
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
                     # Continue listening even if one message fails
+            
+            logger.warning("WebSocket message loop ended")
     
     async def _process_message(self, message: str):
         """
