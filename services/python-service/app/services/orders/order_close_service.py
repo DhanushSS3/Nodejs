@@ -399,7 +399,15 @@ class OrderCloser:
             # Wait for ack on cancel id; abort if REJECTED; proceed only if CANCELLED
             cancel_id = cp.get("takeprofit_cancel_id") or cp.get("stoploss_cancel_id")
             if cancel_id:
-                ord_stat = await self._wait_for_provider_ack_multi([str(cancel_id)], ["CANCELLED", "REJECTED"], timeout_ms=5000)
+                # Wait for acknowledgment on both cancel_id and original trigger_id
+                # Production provider may return ack with original takeprofit_id/stoploss_id instead of cancel_id
+                ack_ids = [str(cancel_id)]
+                if cp.get("takeprofit_id"):
+                    ack_ids.append(str(cp.get("takeprofit_id")))
+                if cp.get("stoploss_id"):
+                    ack_ids.append(str(cp.get("stoploss_id")))
+                
+                ord_stat = await self._wait_for_provider_ack_multi(ack_ids, ["CANCELLED", "REJECTED"], timeout_ms=5000)
                 if ord_stat is None:
                     return {"ok": False, "reason": f"cancel_ack_timeout:{status_name}"}
                 if ord_stat == "REJECTED":
