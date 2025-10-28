@@ -35,9 +35,11 @@ class MarketDataService:
         
         try:
             market_prices = feed_data.get('market_prices', {})
-            logger.debug(f"Processing {len(market_prices)} symbols")
+            logger.info(f"🔍 MARKET_SERVICE: Processing {len(market_prices)} symbols")
+            logger.info(f"🔍 MARKET_SERVICE: Feed data keys: {list(feed_data.keys())}")
+            
             if not market_prices:
-                logger.warning("No market_prices found in market feed")
+                logger.error(f"❌ MARKET_SERVICE: No market_prices found in market feed. Feed data: {feed_data}")
                 return False
             
             current_timestamp = int(time.time() * 1000)  # epoch milliseconds
@@ -50,8 +52,10 @@ class MarketDataService:
                     valid_updates.append(processed_data)
             
             if not valid_updates:
-                logger.debug("No valid price updates to process")
+                logger.error(f"❌ MARKET_SERVICE: No valid price updates to process from {len(market_prices)} symbols")
                 return False
+            
+            logger.info(f"✅ MARKET_SERVICE: Processing {len(valid_updates)} valid updates to Redis")
             
             # Process partial updates with Redis merge logic
             await self._process_partial_updates_sharded(valid_updates)
@@ -85,18 +89,18 @@ class MarketDataService:
             logger.error(f"Failed to process market feed: {e}")
             return False
     
-    async def _process_partial_updates_sharded(self, valid_updates: list, shard_size: int = 100):
+    async def _process_partial_updates_sharded(self, valid_updates: list, shard_size: int = 1000):
         """
-        Process partial price updates using multiple Redis pipelines optimized for high-frequency data
+        Process partial price updates using Redis pipelines - ZERO TICK LOSS optimized
         
         Args:
             valid_updates: List of validated partial price update tuples
-            shard_size: Number of symbols per pipeline shard (reduced for better concurrency)
+            shard_size: Large shard size for maximum throughput
         """
         if not valid_updates:
             return
             
-        # Split into smaller shards for better parallelism with high-frequency data
+        # Use larger shards for maximum throughput - process more symbols per pipeline
         shards = [valid_updates[i:i + shard_size] for i in range(0, len(valid_updates), shard_size)]
         
         # Process shards concurrently with higher concurrency
@@ -120,8 +124,8 @@ class MarketDataService:
         Args:
             update_shard: List of partial price update tuples for this shard
         """
-        max_retries = 2  # Reduce retries for faster processing
-        retry_delay = 0.05  # 50ms - faster retry
+        max_retries = 1  # Minimal retries for maximum speed
+        retry_delay = 0.01  # 10ms - ultra-fast retry for zero tick loss
         
         for attempt in range(max_retries):
             try:
@@ -138,7 +142,9 @@ class MarketDataService:
                         pipe.expire(key, 300)
                     
                     # Execute all operations atomically
-                    await pipe.execute()
+                    results = await pipe.execute()
+                    logger.info(f"✅ REDIS_STORAGE: Successfully stored {len(update_shard)} symbols to Redis")
+                    logger.info(f"✅ REDIS_STORAGE: Pipeline results: {len(results)} operations completed")
                     return  # Success, exit retry loop
                     
             except (ConnectionError, TimeoutError, OSError) as e:

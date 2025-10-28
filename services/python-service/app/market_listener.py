@@ -33,9 +33,8 @@ class MarketListener:
         self.reconnect_delay = 5  # seconds
         self.max_reconnect_attempts = 10
         self.is_running = False
-        self.message_queue = []
-        self.batch_size = 10  # Process messages in batches
-        self.batch_timeout = 0.1  # 100ms batch timeout
+        # ZERO TICK LOSS: Process every message immediately
+        # No queuing, no batching, no delays - immediate Redis updates
         
     async def start(self):
         """Start the market listener with auto-reconnection and batch processing"""
@@ -43,9 +42,7 @@ class MarketListener:
         reconnect_count = 0
         
         logger.info("Starting market data listener...")
-        
-        # Start batch timeout task
-        batch_task = asyncio.create_task(self._batch_timeout_handler())
+        logger.info("🚀 ZERO TICK LOSS MODE: Every message processed immediately")
         
         try:
             while self.is_running and reconnect_count < self.max_reconnect_attempts:
@@ -89,25 +86,10 @@ class MarketListener:
                 logger.error("Max reconnection attempts reached. Stopping market listener.")
         
         finally:
-            # Clean up batch task
-            batch_task.cancel()
-            try:
-                await batch_task
-            except asyncio.CancelledError:
-                pass
-            
-            # Process any remaining messages
-            if self.message_queue:
-                await self._process_message_batch()
+            # Clean shutdown - no batch processing to clean up
         
         logger.info("Market listener stopped")
     
-    async def _batch_timeout_handler(self):
-        """Handle batch timeout to prevent messages from sitting too long"""
-        while self.is_running:
-            await asyncio.sleep(self.batch_timeout)
-            if self.message_queue:
-                await self._process_message_batch()
     
     def _try_next_url(self):
         """Try the next URL in the list. Returns True if switched, False if no more URLs."""
@@ -169,17 +151,14 @@ class MarketListener:
     
     async def _process_message(self, message: str):
         """
-        Queue incoming WebSocket message for batch processing
+        Process incoming WebSocket message immediately - ZERO TICK LOSS
         
         Args:
             message: Raw WebSocket message string
         """
-        start_time = time.time()
-        
         try:
             # Parse JSON message with orjson (5-10x faster)
             data = orjson.loads(message)
-            logger.debug(f"[WEBSOCKET] Received message: {len(message)} chars")
             
             # Validate new message structure
             if data.get('type') != 'market_update':
@@ -197,100 +176,36 @@ class MarketListener:
                 return
             
             message_data = data['data']
-            if 'market_prices' not in message_data:
-                log_websocket_issue("MISSING_MARKET_PRICES_KEY", 
-                                  message_size=len(message),
-                                  available_keys=list(message_data.keys()))
-                logger.warning(f"[WEBSOCKET] Message data missing 'market_prices' key. Available keys: {list(message_data.keys())}")
-                return
             
-            market_prices = message_data['market_prices']
-            if not isinstance(market_prices, dict):
-                log_websocket_issue("INVALID_MARKET_PRICES_FORMAT", 
-                                  message_size=len(message),
-                                  actual_type=type(market_prices).__name__)
-                logger.error(f"[WEBSOCKET] Invalid market_prices format: {type(market_prices)}, expected dict")
-                return
-            
-            # Log processing time for large messages
-            processing_time_ms = (time.time() - start_time) * 1000
-            if processing_time_ms > 50 or len(message) > 10000:  # Log slow processing or large messages
-                log_websocket_issue("SLOW_MESSAGE_PROCESSING", 
-                                  message_size=len(message),
-                                  processing_time_ms=processing_time_ms,
-                                  symbols_count=len(market_prices))
-            
-            logger.debug(f"[WEBSOCKET] Valid market_prices: {len(market_prices)} symbols")
-            
-            # Add to batch queue with normalized structure
-            normalized_data = {'market_prices': market_prices}
-            self.message_queue.append(normalized_data)
-            
-            # Process batch if size threshold reached
-            if len(self.message_queue) >= self.batch_size:
-                await self._process_message_batch()
+            # IMMEDIATE PROCESSING - no queuing, no batching
+            await self._process_single_message_immediate(message_data)
                 
         except orjson.JSONDecodeError as e:
             log_websocket_issue("JSON_DECODE_ERROR", 
                               message_size=len(message),
-                              error=str(e),
-                              message_preview=message[:200])
-            logger.error(f"[WEBSOCKET] Invalid JSON in message: {e}. Message preview: {message[:200]}...")
+                              error=str(e))
+            logger.error(f"[WEBSOCKET] Failed to parse JSON: {e}")
         except Exception as e:
-            log_websocket_issue("UNEXPECTED_ERROR", 
+            log_websocket_issue("MESSAGE_PROCESSING_ERROR", 
                               message_size=len(message),
                               error=str(e))
-            logger.error(f"[WEBSOCKET] Unexpected error processing message: {e}")
+            logger.error(f"[WEBSOCKET] Error processing message: {e}")
     
-    async def _process_message_batch(self):
+    async def _process_single_message_immediate(self, message_data: Dict[str, Any]):
         """
-        Process queued messages in batch for better performance
+        Process a single message immediately with zero delay
+        ZERO TICK LOSS: Every message goes straight to Redis
         """
-        if not self.message_queue:
-            logger.debug("[BATCH] No messages in queue to process")
-            return
-        
-        batch = self.message_queue.copy()
-        self.message_queue.clear()
-        
-        logger.debug(f"[BATCH] Processing {len(batch)} messages")
-        
         try:
-            # Merge all market_prices from batch into single feed
-            merged_market_prices = {}
-            total_symbols = 0
+            # Process market feed immediately
+            success = await self.market_service.process_market_feed(message_data)
             
-            for data in batch:
-                market_prices = data.get('market_prices', {})
+            if not success:
+                logger.warning(f"Failed to process market feed immediately")
                 
-                # Merge partial price updates - later updates override earlier ones
-                for symbol, price_data in market_prices.items():
-                    if symbol not in merged_market_prices:
-                        merged_market_prices[symbol] = {}
-                    
-                    # Merge buy/sell prices (partial updates)
-                    # buy -> ask (price users pay to buy), sell -> bid (price users get when selling)
-                    if 'buy' in price_data:
-                        merged_market_prices[symbol]['buy'] = price_data['buy']
-                    if 'sell' in price_data:
-                        merged_market_prices[symbol]['sell'] = price_data['sell']
-                
-                total_symbols += len(market_prices)
-            
-            if merged_market_prices:
-                # Process merged feed with new structure
-                merged_data = {'market_prices': merged_market_prices}
-                success = await self.market_service.process_market_feed(merged_data)
-                
-                if success:
-                    logger.debug(f"[BATCH] ✅ Successfully processed {len(merged_market_prices)} unique symbols from {len(batch)} messages")
-                else:
-                    logger.info(f"[BATCH] ❌ Failed to process batch of {len(batch)} messages with {len(merged_market_prices)} symbols")
-            else:
-                logger.warning(f"[BATCH] No market_prices found in batch of {len(batch)} messages")
-            
         except Exception as e:
-            logger.error(f"[BATCH] Error processing message batch: {e}")
+            logger.error(f"Error in immediate message processing: {e}")
+    
     
     async def stop(self):
         """Stop the market listener gracefully"""

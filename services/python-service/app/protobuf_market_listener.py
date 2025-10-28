@@ -39,11 +39,8 @@ class ProtobufMarketListener:
         self.max_reconnect_attempts = 10
         self.is_running = False
         
-        # High-frequency message processing
-        self.message_queue = deque()
-        self.batch_size = 50  # Process 50 messages per batch
-        self.batch_timeout = 0.01  # 10ms batch timeout for low latency
-        self.processing_task = None
+        # ZERO TICK LOSS: Process every message immediately
+        # No queuing, no batching, no delays - immediate Redis updates
         
         # Performance metrics
         self.stats = {
@@ -63,10 +60,7 @@ class ProtobufMarketListener:
         
         logger.info("Starting protobuf market data listener...")
         logger.info(f"Target WebSocket: {self.ws_url}")
-        logger.info(f"Batch processing: {self.batch_size} messages per batch, {self.batch_timeout*1000}ms timeout")
-        
-        # Start batch processing task
-        self.processing_task = asyncio.create_task(self._batch_processor())
+        logger.info("🚀 ZERO TICK LOSS MODE: Every message processed immediately")
         
         try:
             while self.is_running and reconnect_count < self.max_reconnect_attempts:
@@ -88,13 +82,7 @@ class ProtobufMarketListener:
                 logger.error("Max reconnection attempts reached. Stopping listener.")
         
         finally:
-            # Clean shutdown
-            if self.processing_task:
-                self.processing_task.cancel()
-                try:
-                    await self.processing_task
-                except asyncio.CancelledError:
-                    pass
+            # Clean shutdown - no batch processing to clean up
         
         logger.info("Protobuf market listener stopped")
     
@@ -115,117 +103,22 @@ class ProtobufMarketListener:
             async for message in websocket:
                 try:
                     if isinstance(message, bytes):
-                        # Queue message for batch processing instead of processing immediately
-                        self.message_queue.append(message)
+                        # ZERO TICK LOSS: Process every message immediately
+                        await self._process_single_message_immediate(message)
                         self.stats['messages_processed'] += 1
                         self.stats['bytes_processed'] += len(message)
-                        self.stats['queue_size'] = len(self.message_queue)
                     else:
                         logger.warning(f"Received non-binary message, ignoring: {type(message)}")
                         
                 except Exception as e:
-                    logger.error(f"Error queuing message: {e}")
+                    logger.error(f"Error processing message immediately: {e}")
                     self.stats['parse_errors'] += 1
     
-    async def _batch_processor(self):
-        """Process messages in batches for high-frequency data handling"""
-        logger.info("Starting batch processor for high-frequency market data")
-        
-        last_performance_log = time.time()
-        performance_log_interval = 30  # Log performance every 30 seconds
-        
-        while self.is_running:
-            try:
-                # Wait for messages or timeout
-                await asyncio.sleep(self.batch_timeout)
-                
-                # Periodic performance logging
-                current_time = time.time()
-                if current_time - last_performance_log >= performance_log_interval:
-                    self.log_performance_summary()
-                    last_performance_log = current_time
-                
-                if not self.message_queue:
-                    continue
-                
-                # Extract batch of messages
-                batch = []
-                batch_size = min(self.batch_size, len(self.message_queue))
-                
-                for _ in range(batch_size):
-                    if self.message_queue:
-                        batch.append(self.message_queue.popleft())
-                
-                if batch:
-                    # Process batch concurrently
-                    await self._process_message_batch(batch)
-                    
-                    # Update stats
-                    self.stats['batches_processed'] += 1
-                    self.stats['avg_batch_size'] = (
-                        (self.stats['avg_batch_size'] * (self.stats['batches_processed'] - 1) + len(batch)) 
-                        / self.stats['batches_processed']
-                    )
-                    self.stats['queue_size'] = len(self.message_queue)
-                    
-            except asyncio.CancelledError:
-                logger.info("Batch processor cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Batch processor error: {e}")
-                await asyncio.sleep(0.1)  # Brief pause on error
-    
-    async def _process_message_batch(self, batch: list):
-        """Process a batch of binary messages efficiently"""
-        batch_start_time = time.time()
-        
-        # Decode all messages in parallel
-        decode_tasks = []
-        for message in batch:
-            task = asyncio.create_task(self._decode_single_message(message))
-            decode_tasks.append(task)
-        
-        # Wait for all decoding to complete
-        decoded_results = await asyncio.gather(*decode_tasks, return_exceptions=True)
-        
-        # Collect all valid market data
-        all_market_data = {}
-        successful_decodes = 0
-        
-        for result in decoded_results:
-            if isinstance(result, Exception):
-                self.stats['parse_errors'] += 1
-                continue
-                
-            if result and result.get('type') == 'market_update':
-                market_data = result.get('data', {}).get('market_prices', {})
-                if market_data:
-                    all_market_data.update(market_data)
-                    successful_decodes += 1
-        
-        # Process all market data in one batch
-        if all_market_data:
-            feed_data = {'market_prices': all_market_data}
-            success = await self.market_service.process_market_feed(feed_data)
-            
-            if success:
-                self.stats['successful_decodes'] += successful_decodes
-                
-            # Log batch processing metrics
-            processing_time_ms = (time.time() - batch_start_time) * 1000
-            log_market_processing(
-                symbols_processed=len(all_market_data),
-                processing_time_ms=processing_time_ms,
-                batch_size=len(batch),
-                success=success,
-                total_symbols_received=len(all_market_data),
-                valid_symbols=len(all_market_data)
-            )
-            
-            logger.debug(f"Processed batch: {len(batch)} messages -> {len(all_market_data)} symbols in {processing_time_ms:.2f}ms")
-    
-    async def _decode_single_message(self, message: bytes):
-        """Decode a single binary message (async version)"""
+    async def _process_single_message_immediate(self, message: bytes):
+        """
+        Process a single message immediately with zero delay
+        ZERO TICK LOSS: Every message goes straight to Redis
+        """
         try:
             # Step 1: Decompress binary data
             decompressed_data = zlib.decompress(message)
@@ -233,76 +126,24 @@ class ProtobufMarketListener:
             # Step 2: Decode protobuf
             decoded_data = self._decode_market_update(decompressed_data)
             
-            return decoded_data
-            
-        except Exception as e:
-            logger.debug(f"Failed to decode message: {e}")
-            return None
-    
-    async def _process_binary_message(self, message: bytes):
-        """
-        Process binary message following frontend JavaScript logic:
-        1. Decompress with zlib (pako.inflate equivalent)
-        2. Decode protobuf using MarketUpdate schema
-        3. Extract market_prices data
-        """
-        start_time = time.time()
-        
-        try:
-            self.stats['messages_processed'] += 1
-            self.stats['bytes_processed'] += len(message)
-            
-            logger.debug(f"Processing binary message: {len(message)} bytes")
-            
-            # Step 1: Decompress binary data (equivalent to pako.inflate)
-            try:
-                decompressed_data = zlib.decompress(message)
-                logger.debug(f"Decompressed data size: {len(decompressed_data)} bytes")
-            except zlib.error as e:
-                logger.error(f"Failed to decompress binary message: {e}")
-                return
-            
-            # Step 2: Decode protobuf (equivalent to MarketUpdate.decode)
-            decoded_data = self._decode_market_update(decompressed_data)
-            
             if not decoded_data:
-                logger.debug("No data decoded from protobuf")
                 return
             
-            # Step 3: Process market update (same as regular market_listener.py)
+            # Step 3: Process market update immediately
             if decoded_data.get('type') == 'market_update':
                 market_data = decoded_data.get('data', {}).get('market_prices', {})
                 
                 if market_data:
-                    logger.debug(f"Processing market update with {len(market_data)} symbols")
-                    
-                    # Use the same method as market_listener.py - process_market_feed
+                    # IMMEDIATE Redis update - no batching, no delays
                     feed_data = {'market_prices': market_data}
                     success = await self.market_service.process_market_feed(feed_data)
                     
                     if success:
                         self.stats['successful_decodes'] += 1
-                        logger.debug(f"✅ Successfully processed {len(market_data)} symbols via protobuf")
-                    else:
-                        logger.warning(f"❌ Failed to process protobuf market feed with {len(market_data)} symbols")
                     
-                    # Log processing metrics (same format as market_listener.py)
-                    processing_time_ms = (time.time() - start_time) * 1000
-                    log_market_processing(
-                        symbols_processed=len(market_data),
-                        processing_time_ms=processing_time_ms,
-                        batch_size=1,  # Single protobuf message
-                        success=success,
-                        total_symbols_received=len(market_data),
-                        valid_symbols=len(market_data)
-                    )
-            
         except Exception as e:
-            logger.error(f"Binary message processing error: {e}")
+            logger.error(f"Failed to process message immediately: {e}")
             self.stats['parse_errors'] += 1
-            log_websocket_issue("PROTOBUF_DECODE_ERROR", 
-                              message_size=len(message),
-                              error=str(e))
     
     def _decode_market_update(self, data: bytes) -> Optional[Dict[str, Any]]:
         """
@@ -328,6 +169,8 @@ class ProtobufMarketListener:
             result = {}
             offset = 0
             
+            logger.info(f"🔍 DEBUGGING: Decoding protobuf data, size: {len(data)} bytes")
+            
             while offset < len(data):
                 # Read field tag and wire type
                 if offset >= len(data):
@@ -338,6 +181,8 @@ class ProtobufMarketListener:
                 field_number = tag_byte >> 3
                 offset += 1
                 
+                logger.info(f"🔍 DEBUGGING: Field {field_number}, wire_type {wire_type}")
+                
                 if field_number == 1 and wire_type == 2:  # type field (string)
                     length, bytes_read = self._read_varint(data, offset)
                     offset += bytes_read
@@ -345,11 +190,13 @@ class ProtobufMarketListener:
                     if offset + length <= len(data):
                         result['type'] = data[offset:offset + length].decode('utf-8')
                         offset += length
-                        logger.debug(f"Decoded type: {result['type']}")
+                        logger.info(f"✅ DEBUGGING: Decoded type: {result['type']}")
                 
                 elif field_number == 2 and wire_type == 2:  # data field (MarketPrices)
                     length, bytes_read = self._read_varint(data, offset)
                     offset += bytes_read
+                    
+                    logger.info(f"🔍 DEBUGGING: MarketPrices data length: {length}")
                     
                     if offset + length <= len(data):
                         market_prices_data = data[offset:offset + length]
@@ -357,18 +204,30 @@ class ProtobufMarketListener:
                         
                         if market_prices:
                             result['data'] = {'market_prices': market_prices}
-                            logger.debug(f"Decoded {len(market_prices)} market prices")
+                            logger.info(f"✅ DEBUGGING: Decoded {len(market_prices)} market prices: {list(market_prices.keys())[:5]}")
+                        else:
+                            logger.error(f"❌ DEBUGGING: Failed to decode market prices from {length} bytes")
                         
                         offset += length
                 
                 else:
                     # Skip unknown fields
+                    logger.info(f"⚠️ DEBUGGING: Skipping unknown field {field_number}")
                     offset = self._skip_field(data, offset, wire_type)
             
-            return result if result else None
+            if result:
+                logger.info(f"✅ DEBUGGING: Successfully decoded protobuf with type: {result.get('type')}")
+                if 'data' in result:
+                    market_count = len(result['data'].get('market_prices', {}))
+                    logger.info(f"✅ DEBUGGING: Market data contains {market_count} symbols")
+                return result
+            else:
+                logger.error(f"❌ DEBUGGING: No valid data decoded from {len(data)} bytes")
+                return None
             
         except Exception as e:
-            logger.error(f"Protobuf decode error: {e}")
+            logger.error(f"❌ DEBUGGING: Protobuf decode error: {e}")
+            logger.error(f"❌ DEBUGGING: Data preview: {data[:50].hex() if len(data) >= 50 else data.hex()}")
             return None
     
     def _decode_market_prices(self, data: bytes) -> Dict[str, Dict[str, float]]:

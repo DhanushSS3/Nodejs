@@ -1142,6 +1142,15 @@ async function closeOrder(req, res) {
       const sqlUserId = normalizeStr(sqlRow.order_user_id);
       const reqUserId = normalizeStr(req_user_id);
       if (sqlUserId !== reqUserId) {
+        logger.error('🚨 ORDER_OWNERSHIP_FAILED_SQL', { 
+          order_id, 
+          sql_user_id: sqlRow.order_user_id, 
+          req_user_id, 
+          req_user_type,
+          normalized_sql: sqlUserId, 
+          normalized_req: reqUserId,
+          source: 'SQL_DATABASE'
+        });
         return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       }
       // Must be currently OPEN
@@ -1166,6 +1175,17 @@ async function closeOrder(req, res) {
       const reqUserId = normalizeStr(req_user_id);
       const canonicalUserType = normalizeStr(canonical.user_type).toLowerCase();
       if (canonicalUserId !== reqUserId || canonicalUserType !== req_user_type) {
+        logger.error('🚨 ORDER_OWNERSHIP_FAILED_REDIS', { 
+          order_id, 
+          canonical_user_id: canonical.user_id, 
+          canonical_user_type: canonical.user_type,
+          req_user_id, 
+          req_user_type,
+          normalized_canonical_id: canonicalUserId, 
+          normalized_req_id: reqUserId,
+          normalized_canonical_type: canonicalUserType,
+          source: 'REDIS_CANONICAL'
+        });
         return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       }
       // Must be currently OPEN (engine/UI state). Do NOT use canonical.status here
