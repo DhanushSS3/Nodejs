@@ -130,8 +130,8 @@ class ProtobufMarketListener:
         while not self._shutdown_event.is_set():
             updates = []
             try:
-                # Await at least 1 update, or timeout after 50ms
-                item = await asyncio.wait_for(self.redis_queue.get(), timeout=0.05)
+                # Await at least 1 update, or timeout after ~20ms
+                item = await asyncio.wait_for(self.redis_queue.get(), timeout=0.02)
                 updates.append(item)
                 while True:
                     updates.append(self.redis_queue.get_nowait())

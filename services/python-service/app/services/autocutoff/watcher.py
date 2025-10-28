@@ -9,21 +9,19 @@ from .liquidation import LiquidationEngine
 logger = logging.getLogger(__name__)
 
 ALERT_TTL_SEC = 10800  # 3 hours (3 * 60 * 60)
+SEM_LIMIT = 50
 
 
 async def _get_margin_level(user_type: str, user_id: str) -> float:
     try:
-        pf = await redis_cluster.hgetall(f"user_portfolio:{{{user_type}:{user_id}}}")
-        if pf and pf.get("margin_level") is not None:
-            margin_level = float(pf.get("margin_level"))
-            used_margin = float(pf.get("used_margin", 0))
-            
-            # If used_margin is 0, margin_level should be infinite (safe)
-            # Don't trigger alerts/liquidation for users with no margin usage
+        # Fetch only required fields to reduce payload
+        pf = await redis_cluster.hmget(f"user_portfolio:{{{user_type}:{user_id}}}", ["margin_level", "used_margin"])
+        if pf and (pf[0] is not None):
+            margin_level = float(pf[0])
+            used_margin = float(pf[1] or 0)
             if used_margin == 0:
                 logger.info("AutoCutoffWatcher: User %s:%s has no used margin (%.2f), treating as safe margin level", user_type, user_id, used_margin)
-                return 999.0  # Return high margin level to prevent alerts/liquidation
-            
+                return 999.0
             return margin_level
     except Exception as e:
         logger.warning("AutoCutoffWatcher: Failed to get margin level for %s:%s: %s", user_type, user_id, e)
@@ -107,9 +105,22 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
                 pass
 
 
+async def _handle_user_limited(user_type: str, user_id: str, notifier: EmailNotifier, liq: LiquidationEngine, sem: asyncio.Semaphore):
+    async with sem:
+        await _handle_user(user_type, user_id, notifier, liq)
+
+
 async def _watch_loop():
     notifier = EmailNotifier()
     liq = LiquidationEngine()
+    sem = asyncio.Semaphore(SEM_LIMIT)
+
+    # Optional: log pool usage once at startup
+    try:
+        pool = redis_cluster.connection_pool
+        logger.info("AutoCutoffWatcher: Redis pool max=%s", getattr(pool, "max_connections", None))
+    except Exception:
+        pass
 
     # Subscribe to portfolio updates
     pubsub = redis_pubsub_client.pubsub()
@@ -126,8 +137,8 @@ async def _watch_loop():
             user_type, user_id = data.split(":", 1)
             user_type = user_type.strip().lower()
             user_id = user_id.strip()
-            # Fire-and-forget per-user handler to avoid blocking the loop
-            asyncio.create_task(_handle_user(user_type, user_id, notifier, liq))
+            # Fire-and-forget per-user handler with concurrency limit
+            asyncio.create_task(_handle_user_limited(user_type, user_id, notifier, liq, sem))
     except asyncio.CancelledError:
         logger.info("AutoCutoffWatcher cancelled")
     except Exception as e:
