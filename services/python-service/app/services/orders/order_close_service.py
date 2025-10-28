@@ -372,6 +372,7 @@ class OrderCloser:
                 "symbol": symbol,
                 "status": "TAKEPROFIT-CANCEL",
                 "type": "order",
+                "take_profit_cancel_id": str(payload.get("takeprofit_cancel_id"))
             }
             if tp_id:
                 cp_tp["takeprofit_id"] = str(tp_id)
