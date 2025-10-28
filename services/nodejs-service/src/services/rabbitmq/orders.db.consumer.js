@@ -730,7 +730,7 @@ async function applyDbUpdate(msg) {
   }
 
   // Handle post-close operations (margin updates, copy trading, etc.)
-  await handlePostCloseOperations(payload, row);
+  await handlePostCloseOperations(msg, row);
 
   // Update user's used margin in SQL, if provided
   const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
