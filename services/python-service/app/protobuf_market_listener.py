@@ -59,6 +59,8 @@ class ProtobufMarketListener:
         self.writer_task = None
         self._shutdown_event = asyncio.Event()
         self.last_values = {}  # symbol -> (bid, ask)
+        self._last_sent_ms = {}  # symbol -> last enqueue timestamp
+        self._last_msg_ms = 0
         
     async def start(self):
         """Start the market listener with auto-reconnection and batch processing"""
@@ -104,27 +106,52 @@ class ProtobufMarketListener:
         
         async with websockets.connect(
             self.ws_url,
-            ping_interval=None,  # Disable ping-pong - server sends continuous data
-            ping_timeout=None,   # No ping timeout needed
-            close_timeout=5,     # Faster close timeout
-            max_size=10**7,      # 10MB max message size for high-frequency data
-            read_limit=2**20     # 1MB read buffer for better throughput
+            ping_interval=10,  # faster heartbeat to detect dead conns
+            ping_timeout=10,
+            close_timeout=5,
+            max_size=10**7,
+            read_limit=2**20
         ) as websocket:
             logger.info("Connected to market feed successfully")
-            
-            async for message in websocket:
+            # Reset last message timer at connect
+            self._last_msg_ms = int(time.time() * 1000)
+
+            # Idle watchdog: force reconnect if no data for >30s
+            async def _idle_watchdog():
                 try:
-                    if isinstance(message, bytes):
-                        # ZERO TICK LOSS: Process every message immediately
-                        await self._process_single_message_immediate(message)
-                        self.stats['messages_processed'] += 1
-                        self.stats['bytes_processed'] += len(message)
-                    else:
-                        logger.warning(f"Received non-binary message, ignoring: {type(message)}")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing message immediately: {e}")
-                    self.stats['parse_errors'] += 1
+                    while True:
+                        await asyncio.sleep(5)
+                        now = int(time.time() * 1000)
+                        last_age = now - (self._last_msg_ms or now)
+                        if last_age > 30000:  # 30s
+                            logger.warning(f"Idle watchdog: no market data for {last_age}ms, closing websocket to reconnect")
+                            try:
+                                await websocket.close()
+                            except Exception:
+                                pass
+                            break
+                except asyncio.CancelledError:
+                    return
+
+            watchdog_task = asyncio.create_task(_idle_watchdog())
+            try:
+                async for message in websocket:
+                    try:
+                        if isinstance(message, bytes):
+                            self._last_msg_ms = int(time.time() * 1000)
+                            await self._process_single_message_immediate(message)
+                            self.stats['messages_processed'] += 1
+                            self.stats['bytes_processed'] += len(message)
+                        else:
+                            logger.warning(f"Received non-binary message, ignoring: {type(message)}")
+                    except Exception as e:
+                        logger.error(f"Error processing message immediately: {e}")
+                        self.stats['parse_errors'] += 1
+            finally:
+                try:
+                    watchdog_task.cancel()
+                except Exception:
+                    pass
     
     async def _redis_writer(self):
         while not self._shutdown_event.is_set():
@@ -144,11 +171,24 @@ class ProtobufMarketListener:
                 continue
 
             async with self.redis_semaphore:
-                async with self.market_service.redis.pipeline() as pipe:
-                    ts = int(time.time() * 1000)
-                    for symbol, bid, ask in updates:
-                        pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
-                    await pipe.execute()
+                try:
+                    async with self.market_service.redis.pipeline() as pipe:
+                        ts = int(time.time() * 1000)
+                        for symbol, bid, ask in updates:
+                            pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
+                        await pipe.execute()
+                except Exception as e:
+                    logger.error(f"Redis writer pipeline error: {e}")
+                    await asyncio.sleep(0.05)
+            # Periodic debug (every ~1s): queue size and last msg age
+            try:
+                if int(time.time() * 1000) // 1000 % 1 == 0:
+                    last_age_ms = (int(time.time() * 1000) - self._last_msg_ms) if self._last_msg_ms else -1
+                    self.stats['queue_size'] = self.redis_queue.qsize()
+                    if last_age_ms >= 60000:  # >60s without messages
+                        logger.warning(f"Market feed silence: last message age {last_age_ms}ms, queue={self.stats['queue_size']}")
+            except Exception:
+                pass
     
     async def _process_single_message_immediate(self, message: bytes):
         """
@@ -164,6 +204,7 @@ class ProtobufMarketListener:
             # Step 3: Deduplicate and enqueue
             if decoded_data.get('type') == 'market_update':
                 market_data = decoded_data.get('data', {}).get('market_prices', {})
+                now_ms = int(time.time() * 1000)
                 for symbol, price_data in market_data.items():
                     bid = float(price_data.get('sell', 0)) if 'sell' in price_data else None
                     ask = float(price_data.get('buy', 0)) if 'buy' in price_data else None
@@ -181,8 +222,13 @@ class ProtobufMarketListener:
                                 updated = True
                             if ask is not None and (prev_ask is None or abs(ask - prev_ask) > 1e-5):
                                 updated = True
+                        # Force refresh at least every 5 seconds to keep ts fresh
+                        last_sent = self._last_sent_ms.get(symbol)
+                        if not updated and (last_sent is None or (now_ms - last_sent) >= 5000):
+                            updated = True
                         if updated:
                             self.last_values[symbol] = (bid, ask)
+                            self._last_sent_ms[symbol] = now_ms
                             await self.redis_queue.put((symbol, bid, ask))
         except Exception as e:
             logger.error(f"Failed to process message immediately: {e}")

@@ -303,16 +303,14 @@ async def _health_monitor_loop():
             
             for symbol in symbols:
                 try:
-                    import json
                     import time
-                    
-                    key = f"market_data:{symbol}"
-                    raw_data = await redis_cluster.get(key)
-                    
-                    if raw_data:
-                        data = json.loads(raw_data)
-                        age = time.time() - data.get("timestamp", 0)
-                        if age < 120:  # Fresh if less than 2 minutes old
+                    # Read ts from market hash instead of legacy JSON
+                    key = f"market:{symbol}"
+                    vals = await redis_cluster.hmget(key, ["ts"])  # [ts]
+                    if vals and vals[0]:
+                        ts_ms = int(vals[0])
+                        age_ms = int(time.time() * 1000) - ts_ms
+                        if age_ms < 120000:  # < 2 minutes
                             fresh_data_count += 1
                 except Exception:
                     pass
