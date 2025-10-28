@@ -182,7 +182,7 @@ class ProtobufMarketListener:
                 field_number = tag_byte >> 3
                 offset += 1
                 
-                logger.info(f"🔍 DEBUGGING: Field {field_number}, wire_type {wire_type}")
+                # logger.info(f"🔍 DEBUGGING: Field {field_number}, wire_type {wire_type}")
                 
                 if field_number == 1 and wire_type == 2:  # type field (string)
                     length, bytes_read = self._read_varint(data, offset)
@@ -197,7 +197,7 @@ class ProtobufMarketListener:
                     length, bytes_read = self._read_varint(data, offset)
                     offset += bytes_read
                     
-                    logger.info(f"🔍 DEBUGGING: MarketPrices data length: {length}")
+                    # logger.info(f"🔍 DEBUGGING: MarketPrices data length: {length}")
                     
                     if offset + length <= len(data):
                         market_prices_data = data[offset:offset + length]
@@ -205,7 +205,7 @@ class ProtobufMarketListener:
                         
                         if market_prices:
                             result['data'] = {'market_prices': market_prices}
-                            logger.info(f"✅ DEBUGGING: Decoded {len(market_prices)} market prices: {list(market_prices.keys())[:5]}")
+                            # logger.info(f"✅ DEBUGGING: Decoded {len(market_prices)} market prices: {list(market_prices.keys())[:5]}")
                         else:
                             logger.error(f"❌ DEBUGGING: Failed to decode market prices from {length} bytes")
                         
@@ -213,14 +213,14 @@ class ProtobufMarketListener:
                 
                 else:
                     # Skip unknown fields
-                    logger.info(f"⚠️ DEBUGGING: Skipping unknown field {field_number}")
+                    # logger.info(f"⚠️ DEBUGGING: Skipping unknown field {field_number}")
                     offset = self._skip_field(data, offset, wire_type)
             
             if result:
-                logger.info(f"✅ DEBUGGING: Successfully decoded protobuf with type: {result.get('type')}")
-                if 'data' in result:
-                    market_count = len(result['data'].get('market_prices', {}))
-                    logger.info(f"✅ DEBUGGING: Market data contains {market_count} symbols")
+                # logger.info(f"✅ DEBUGGING: Successfully decoded protobuf with type: {result.get('type')}")
+                # if 'data' in result:
+                #     market_count = len(result['data'].get('market_prices', {}))
+                #     logger.info(f"✅ DEBUGGING: Market data contains {market_count} symbols")
                 return result
             else:
                 logger.error(f"❌ DEBUGGING: No valid data decoded from {len(data)} bytes")

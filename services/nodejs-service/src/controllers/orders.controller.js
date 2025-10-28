@@ -779,6 +779,27 @@ async function _getCanonicalOrder(order_id) {
   return null;
 }
 
+async function _getValidCanonicalOrFallback(order_id, user_type) {
+  const canonical = await _getCanonicalOrder(order_id);
+  
+  // Check if canonical data is incomplete (missing user_id or user_type)
+  const isCanonicalIncomplete = canonical && (!canonical.user_id || !canonical.user_type);
+  
+  if (isCanonicalIncomplete) {
+    logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
+      order_id,
+      canonical_user_id: canonical.user_id,
+      canonical_user_type: canonical.user_type,
+      reason: 'Incomplete canonical data, falling back to SQL'
+    });
+  }
+  
+  return {
+    canonical: (!canonical || isCanonicalIncomplete) ? null : canonical,
+    shouldFallbackToSQL: !canonical || isCanonicalIncomplete
+  };
+}
+
 function _isMarketOpenByType(typeVal) {
   // type==4 => crypto (24/7)
   try {
@@ -1120,7 +1141,19 @@ async function closeOrder(req, res) {
     // Load canonical order
     const canonical = await _getCanonicalOrder(order_id);
     let sqlRow = null;
-    if (!canonical) {
+    
+    // Check if canonical data is incomplete (missing user_id or user_type)
+    const isCanonicalIncomplete = canonical && (!canonical.user_id || !canonical.user_type);
+    
+    if (!canonical || isCanonicalIncomplete) {
+      if (isCanonicalIncomplete) {
+        logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
+          order_id,
+          canonical_user_id: canonical.user_id,
+          canonical_user_type: canonical.user_type,
+          reason: 'Incomplete canonical data, falling back to SQL'
+        });
+      }
       // Fallback to SQL
       let OrderModel;
       if (req_user_type === 'live') {
@@ -1465,7 +1498,19 @@ async function addStopLoss(req, res) {
     const canonical = await _getCanonicalOrder(order_id);
     const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
     let row = null;
-    if (!canonical) {
+    
+    // Check if canonical data is incomplete (missing user_id or user_type)
+    const isCanonicalIncomplete = canonical && (!canonical.user_id || !canonical.user_type);
+    
+    if (!canonical || isCanonicalIncomplete) {
+      if (isCanonicalIncomplete) {
+        logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
+          order_id,
+          canonical_user_id: canonical.user_id,
+          canonical_user_type: canonical.user_type,
+          reason: 'Incomplete canonical data, falling back to SQL'
+        });
+      }
       row = await OrderModel.findOne({ where: { order_id } });
       if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
       if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
@@ -1644,7 +1689,19 @@ async function addTakeProfit(req, res) {
     const canonical = await _getCanonicalOrder(order_id);
     const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
     let row = null;
-    if (!canonical) {
+    
+    // Check if canonical data is incomplete (missing user_id or user_type)
+    const isCanonicalIncomplete = canonical && (!canonical.user_id || !canonical.user_type);
+    
+    if (!canonical || isCanonicalIncomplete) {
+      if (isCanonicalIncomplete) {
+        logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
+          order_id,
+          canonical_user_id: canonical.user_id,
+          canonical_user_type: canonical.user_type,
+          reason: 'Incomplete canonical data, falling back to SQL'
+        });
+      }
       row = await OrderModel.findOne({ where: { order_id } });
       if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
       if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });

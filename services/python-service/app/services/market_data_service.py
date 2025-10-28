@@ -55,7 +55,7 @@ class MarketDataService:
                 logger.error(f"❌ MARKET_SERVICE: No valid price updates to process from {len(market_prices)} symbols")
                 return False
             
-            logger.info(f"✅ MARKET_SERVICE: Processing {len(valid_updates)} valid updates to Redis")
+            # logger.info(f"✅ MARKET_SERVICE: Processing {len(valid_updates)} valid updates to Redis")
             
             # Process partial updates with Redis merge logic
             await self._process_partial_updates_sharded(valid_updates)

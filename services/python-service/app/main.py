@@ -38,11 +38,16 @@ from .services.autocutoff.watcher import start_autocutoff_watcher
 from .services.orders.provider_connection import get_provider_connection_manager
 from .services.pending.provider_pending_monitor import start_provider_pending_monitor
 
-# Configure logging
+# Configure logging with noise reduction
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Reduce noise from uvicorn lifespan errors (these are normal during shutdown)
+logging.getLogger("uvicorn.lifespan.on").setLevel(logging.CRITICAL)
+logging.getLogger("starlette.routing").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
