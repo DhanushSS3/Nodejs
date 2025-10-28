@@ -35,8 +35,8 @@ class MarketDataService:
         
         try:
             market_prices = feed_data.get('market_prices', {})
-            logger.info(f"🔍 MARKET_SERVICE: Processing {len(market_prices)} symbols")
-            logger.info(f"🔍 MARKET_SERVICE: Feed data keys: {list(feed_data.keys())}")
+            # logger.info(f"🔍 MARKET_SERVICE: Processing {len(market_prices)} symbols")
+            # logger.info(f"🔍 MARKET_SERVICE: Feed data keys: {list(feed_data.keys())}")
             
             if not market_prices:
                 logger.error(f"❌ MARKET_SERVICE: No market_prices found in market feed. Feed data: {feed_data}")
@@ -143,8 +143,8 @@ class MarketDataService:
                     
                     # Execute all operations atomically
                     results = await pipe.execute()
-                    logger.info(f"✅ REDIS_STORAGE: Successfully stored {len(update_shard)} symbols to Redis")
-                    logger.info(f"✅ REDIS_STORAGE: Pipeline results: {len(results)} operations completed")
+                    # logger.info(f"✅ REDIS_STORAGE: Successfully stored {len(update_shard)} symbols to Redis")
+                    # logger.info(f"✅ REDIS_STORAGE: Pipeline results: {len(results)} operations completed")
                     return  # Success, exit retry loop
                     
             except (ConnectionError, TimeoutError, OSError) as e:

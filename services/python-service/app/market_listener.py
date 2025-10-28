@@ -1,6 +1,4 @@
 
-
-
 import asyncio
 import orjson
 import logging
@@ -87,6 +85,7 @@ class MarketListener:
         
         finally:
             # Clean shutdown - no batch processing to clean up
+            pass
         
         logger.info("Market listener stopped")
     

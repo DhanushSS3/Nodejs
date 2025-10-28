@@ -83,6 +83,7 @@ class ProtobufMarketListener:
         
         finally:
             # Clean shutdown - no batch processing to clean up
+            pass
         
         logger.info("Protobuf market listener stopped")
     
@@ -169,7 +170,7 @@ class ProtobufMarketListener:
             result = {}
             offset = 0
             
-            logger.info(f"🔍 DEBUGGING: Decoding protobuf data, size: {len(data)} bytes")
+            # logger.info(f"🔍 DEBUGGING: Decoding protobuf data, size: {len(data)} bytes")
             
             while offset < len(data):
                 # Read field tag and wire type
@@ -190,7 +191,7 @@ class ProtobufMarketListener:
                     if offset + length <= len(data):
                         result['type'] = data[offset:offset + length].decode('utf-8')
                         offset += length
-                        logger.info(f"✅ DEBUGGING: Decoded type: {result['type']}")
+                        # logger.info(f"✅ DEBUGGING: Decoded type: {result['type']}")
                 
                 elif field_number == 2 and wire_type == 2:  # data field (MarketPrices)
                     length, bytes_read = self._read_varint(data, offset)
