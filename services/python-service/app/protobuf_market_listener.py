@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from collections import deque
 from app.services.market_data_service import MarketDataService
 from app.services.logging.execution_price_logger import log_websocket_issue, log_market_processing
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -53,6 +54,11 @@ class ProtobufMarketListener:
             'avg_batch_size': 0
         }
         
+        self.redis_queue = asyncio.Queue()
+        self.redis_semaphore = asyncio.Semaphore(10)  # Reasonable default, adjust as needed
+        self.writer_task = None
+        self._shutdown_event = asyncio.Event()
+        
     async def start(self):
         """Start the market listener with auto-reconnection and batch processing"""
         self.is_running = True
@@ -61,6 +67,8 @@ class ProtobufMarketListener:
         logger.info("Starting protobuf market data listener...")
         logger.info(f"Target WebSocket: {self.ws_url}")
         logger.info("🚀 ZERO TICK LOSS MODE: Every message processed immediately")
+        
+        self.writer_task = asyncio.create_task(self._redis_writer())
         
         try:
             while self.is_running and reconnect_count < self.max_reconnect_attempts:
@@ -82,8 +90,10 @@ class ProtobufMarketListener:
                 logger.error("Max reconnection attempts reached. Stopping listener.")
         
         finally:
-            # Clean shutdown - no batch processing to clean up
-            pass
+            # Clean shutdown
+            if self.writer_task:
+                self._shutdown_event.set()
+                await self.writer_task
         
         logger.info("Protobuf market listener stopped")
     
@@ -115,6 +125,30 @@ class ProtobufMarketListener:
                     logger.error(f"Error processing message immediately: {e}")
                     self.stats['parse_errors'] += 1
     
+    async def _redis_writer(self):
+        while not self._shutdown_event.is_set():
+            updates = []
+            try:
+                # Await at least 1 update, or timeout after 50ms
+                item = await asyncio.wait_for(self.redis_queue.get(), timeout=0.05)
+                updates.append(item)
+                while True:
+                    updates.append(self.redis_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                pass
+            except asyncio.TimeoutError:
+                pass
+
+            if not updates:
+                continue
+
+            async with self.redis_semaphore:
+                async with self.market_service.redis.pipeline() as pipe:
+                    ts = int(time.time() * 1000)
+                    for symbol, bid, ask in updates:
+                        pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
+                    await pipe.execute()
+    
     async def _process_single_message_immediate(self, message: bytes):
         """
         Process a single message immediately with zero delay
@@ -130,17 +164,17 @@ class ProtobufMarketListener:
             if not decoded_data:
                 return
             
-            # Step 3: Process market update immediately
+            # Step 3: Enqueue market update for Redis batching
             if decoded_data.get('type') == 'market_update':
                 market_data = decoded_data.get('data', {}).get('market_prices', {})
                 
                 if market_data:
-                    # IMMEDIATE Redis update - no batching, no delays
-                    feed_data = {'market_prices': market_data}
-                    success = await self.market_service.process_market_feed(feed_data)
-                    
-                    if success:
-                        self.stats['successful_decodes'] += 1
+                    for symbol, price_data in market_data.items():
+                        bid = float(price_data.get('sell', 0)) if 'sell' in price_data else None
+                        ask = float(price_data.get('buy', 0)) if 'buy' in price_data else None
+                        # Only enqueue if at least one price exists
+                        if bid is not None or ask is not None:
+                            await self.redis_queue.put((symbol, bid, ask))
                     
         except Exception as e:
             logger.error(f"Failed to process message immediately: {e}")

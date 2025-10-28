@@ -261,38 +261,25 @@ class MarketDataService:
     
     async def get_symbol_price(self, symbol: str) -> Optional[Dict[str, float]]:
         """
-        Get current price for a symbol with staleness check
-        
-        Args:
-            symbol: Trading symbol
-            
-        Returns:
-            Dict with bid, ask, ts or None if stale/missing
+        Get current price for a symbol with staleness check.
+        As of Oct 2025, DO NOT reject stale data for order placement/close. Staleness only affects monitoring, not endpoint logic.
         """
         try:
-            # Fetch from structured hash
             key = f"market:{symbol}"
             price_data = await self.redis.hmget(key, ["bid", "ask", "ts"])
-            
             if not all(price_data):
                 logger.debug(f"No price data found for {symbol}")
                 return None
-            
             bid, ask, ts = price_data
             timestamp = int(ts)
             current_time = int(time.time() * 1000)
-            
-            # Check staleness (reject if >5s old)
             if current_time - timestamp > (self.staleness_threshold * 1000):
-                logger.warning(f"Stale price data for {symbol}: {(current_time - timestamp) / 1000}s old")
-                return None
-            
+                logger.warning(f"Stale price data for {symbol}: {(current_time - timestamp) / 1000}s old (proceeding anyway)")
             return {
                 "bid": float(bid),
                 "ask": float(ask),
                 "ts": timestamp
             }
-            
         except Exception as e:
             logger.error(f"Failed to get price for {symbol}: {e}")
             return None

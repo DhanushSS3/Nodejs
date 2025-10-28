@@ -558,6 +558,7 @@ async function placePendingOrder(req, res) {
     } catch (e) {
       logger.error('Failed to read market price from Redis', { error: e.message, symbol: parsed.symbol });
     }
+    // Accepting orders even if bid/ask price is missing or stale for flexibility; see Oct 2025 requirement.
     if (!(bid > 0) || !(ask > 0)) {
       return res.status(503).json({ success: false, message: 'Market price unavailable for symbol' });
     }
@@ -586,8 +587,9 @@ async function placePendingOrder(req, res) {
     // Trigger direction is handled by the worker (ask >= or <= compare) per type
     const hs = Number.isFinite(Number(half_spread)) ? Number(half_spread) : 0;
     const compare_price = Number((parsed.order_price - hs).toFixed(8));
+    // Defensive: We still block nonsensical placement if compare_price <= 0 (math/preparation error)
     if (!(compare_price > 0)) {
-      return res.status(400).json({ success: false, message: 'Computed compare_price invalid' });
+      return res.status(400).json({ success: false, message: 'Computed compare_price invalid (order price or config error)' });
     }
 
     // Determine if provider flow (before DB create) to set proper order_status

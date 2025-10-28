@@ -35,22 +35,22 @@ async def get_all_prices():
 async def get_symbol_price(symbol: str):
     """
     Get current price for a specific symbol
-    
-    Args:
-        symbol: Trading symbol (e.g., EURUSD)
-        
-    Returns:
-        Dict containing bid, ask, and timestamp
+    As of Oct 2025, do not raise 404 for missing/stale: return empty/default for higher availability.
     """
     try:
         price_data = await market_service.get_symbol_price(symbol.upper())
-        
         if not price_data:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Price data not found or stale for symbol: {symbol}"
-            )
-        
+            # Return default data instead of 404 to permit tolerant client handling
+            return {
+                "success": False,
+                "message": f"No price data found for {symbol}; possibly missing or stale.",
+                "data": {
+                    "symbol": symbol.upper(),
+                    "bid": None,
+                    "ask": None,
+                    "ts": None
+                }
+            }
         return {
             "success": True,
             "message": f"Price retrieved successfully for {symbol}",
@@ -59,8 +59,6 @@ async def get_symbol_price(symbol: str):
                 **price_data
             }
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Failed to get price for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve price for {symbol}")
