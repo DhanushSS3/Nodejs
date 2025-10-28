@@ -58,6 +58,7 @@ class ProtobufMarketListener:
         self.redis_semaphore = asyncio.Semaphore(10)  # Reasonable default, adjust as needed
         self.writer_task = None
         self._shutdown_event = asyncio.Event()
+        self.last_values = {}  # symbol -> (bid, ask)
         
     async def start(self):
         """Start the market listener with auto-reconnection and batch processing"""
@@ -151,31 +152,38 @@ class ProtobufMarketListener:
     
     async def _process_single_message_immediate(self, message: bytes):
         """
-        Process a single message immediately with zero delay
-        ZERO TICK LOSS: Every message goes straight to Redis
+        Process a single message: deduplicate first, only enqueue symbol if changed beyond threshold.
         """
         try:
             # Step 1: Decompress binary data
             decompressed_data = zlib.decompress(message)
-            
             # Step 2: Decode protobuf
             decoded_data = self._decode_market_update(decompressed_data)
-            
             if not decoded_data:
                 return
-            
-            # Step 3: Enqueue market update for Redis batching
+            # Step 3: Deduplicate and enqueue
             if decoded_data.get('type') == 'market_update':
                 market_data = decoded_data.get('data', {}).get('market_prices', {})
-                
-                if market_data:
-                    for symbol, price_data in market_data.items():
-                        bid = float(price_data.get('sell', 0)) if 'sell' in price_data else None
-                        ask = float(price_data.get('buy', 0)) if 'buy' in price_data else None
-                        # Only enqueue if at least one price exists
-                        if bid is not None or ask is not None:
+                for symbol, price_data in market_data.items():
+                    bid = float(price_data.get('sell', 0)) if 'sell' in price_data else None
+                    ask = float(price_data.get('buy', 0)) if 'buy' in price_data else None
+                    # Only enqueue if at least one price exists
+                    if bid is not None or ask is not None:
+                        prev = self.last_values.get(symbol)
+                        updated = False
+                        # Always update if no previous, else check threshold
+                        if prev is None:
+                            updated = True
+                        else:
+                            prev_bid, prev_ask = prev
+                            # Nulls always count as update
+                            if bid is not None and (prev_bid is None or abs(bid - prev_bid) > 1e-5):
+                                updated = True
+                            if ask is not None and (prev_ask is None or abs(ask - prev_ask) > 1e-5):
+                                updated = True
+                        if updated:
+                            self.last_values[symbol] = (bid, ask)
                             await self.redis_queue.put((symbol, bid, ask))
-                    
         except Exception as e:
             logger.error(f"Failed to process message immediately: {e}")
             self.stats['parse_errors'] += 1
