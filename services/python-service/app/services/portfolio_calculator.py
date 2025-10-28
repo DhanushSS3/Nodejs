@@ -290,11 +290,31 @@ class PortfolioCalculatorListener:
         """
         prices = {}
         try:
-            for symbol in symbols:
-                redis_key = f"market:{symbol}"
-                price_data = await redis_cluster.hgetall(redis_key)
-                if price_data:
-                    prices[symbol] = {k: float(v) for k, v in price_data.items() if k in ('bid', 'ask') and v is not None}
+            if not symbols:
+                return prices
+            # Pipeline HMGET for all symbols to reduce round trips and pool usage
+            pipe = redis_cluster.pipeline()
+            keys = [f"market:{symbol}" for symbol in symbols]
+            for k in keys:
+                pipe.hmget(k, ["bid", "ask"])  # [bid, ask]
+            results = await pipe.execute()
+            for i, symbol in enumerate(symbols):
+                try:
+                    vals = results[i]
+                except Exception:
+                    vals = None
+                if vals and len(vals) >= 2:
+                    try:
+                        bid = float(vals[0]) if vals[0] is not None else None
+                    except Exception:
+                        bid = None
+                    try:
+                        ask = float(vals[1]) if vals[1] is not None else None
+                    except Exception:
+                        ask = None
+                    # Only include if any price exists
+                    if (bid is not None) or (ask is not None):
+                        prices[symbol] = {"bid": bid, "ask": ask}
             return prices
         except Exception as e:
             self.logger.error(f"Error fetching market prices for symbols {symbols}: {e}")

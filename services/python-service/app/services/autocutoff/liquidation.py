@@ -237,19 +237,26 @@ class LiquidationEngine:
         # Pre-fetch prices for known symbols
         symbols = list({str(od.get("symbol") or "").upper() for od in orders if od.get("symbol")})
         if symbols:
-            for sym in symbols:
-                try:
-                    raw = await redis_cluster.hgetall(f"market:{sym}")
-                    if raw:
+            try:
+                pipe = redis_cluster.pipeline()
+                keys = [f"market:{sym}" for sym in symbols]
+                for k in keys:
+                    pipe.hmget(k, ["bid", "ask"])  # [bid, ask]
+                res = await pipe.execute()
+                for i, sym in enumerate(symbols):
+                    vals = res[i] if i < len(res) else None
+                    if vals and len(vals) >= 2:
                         try:
-                            prices_cache[sym] = {
-                                "bid": float(raw.get("bid")) if raw.get("bid") is not None else None,
-                                "ask": float(raw.get("ask")) if raw.get("ask") is not None else None,
-                            }
+                            b = float(vals[0]) if vals[0] is not None else None
                         except Exception:
-                            prices_cache[sym] = {"bid": None, "ask": None}
-                except Exception:
-                    pass
+                            b = None
+                        try:
+                            a = float(vals[1]) if vals[1] is not None else None
+                        except Exception:
+                            a = None
+                        prices_cache[sym] = {"bid": b, "ask": a}
+            except Exception:
+                pass
 
         group_cache: Dict[str, Dict] = {}
         losses: List[Tuple[float, Dict]] = []

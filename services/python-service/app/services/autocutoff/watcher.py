@@ -143,6 +143,14 @@ async def _watch_loop():
         logger.info("AutoCutoffWatcher cancelled")
     except Exception as e:
         logger.exception("AutoCutoffWatcher error: %s", e)
+        # Attempt to reconnect on timeout or transient errors
+        try:
+            await pubsub.unsubscribe("portfolio_updates")
+            await pubsub.close()
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+        asyncio.create_task(_watch_loop())
     finally:
         try:
             await pubsub.unsubscribe("portfolio_updates")

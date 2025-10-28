@@ -84,8 +84,8 @@ redis_pubsub_client = redis.Redis(
     port=7001, 
     decode_responses=True,
     password=redis_password,
-    max_connections=50,          # Connection pool for pub/sub
-    socket_connect_timeout=3,    # Faster connection timeout
-    socket_timeout=3,            # Faster socket timeout
+    max_connections=10,          # Pub/Sub uses a small dedicated pool
+    socket_connect_timeout=5,    # Connection timeout
+    socket_timeout=None,         # Disable read timeout for long-lived pub/sub listen
     health_check_interval=30     # Health check every 30s
 )
