@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from collections import deque
 from app.services.market_data_service import MarketDataService
 from app.services.logging.execution_price_logger import log_websocket_issue, log_market_processing
+from app.config.redis_config import redis_pubsub_client
 import threading
 
 # Configure logging
@@ -212,6 +213,19 @@ class ProtobufMarketListener:
                         for symbol, bid, ask in updates:
                             pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
                         await pipe.execute()
+                    
+                    # Publish updated symbols to notify portfolio calculator and other subscribers
+                    unique_symbols = list(set([symbol for symbol, _, _ in updates]))
+                    if unique_symbols:
+                        try:
+                            async with redis_pubsub_client.pipeline() as pub_pipe:
+                                for sym in unique_symbols:
+                                    pub_pipe.publish("market_price_updates", sym)
+                                await pub_pipe.execute()
+                            logger.debug(f"Published {len(unique_symbols)} symbol updates to market_price_updates channel")
+                        except Exception as pub_err:
+                            logger.warning(f"Failed to publish market_price_updates: {pub_err}")
+                            
                 except Exception as e:
                     logger.error(f"Redis writer pipeline error: {e}")
                     await asyncio.sleep(0.05)

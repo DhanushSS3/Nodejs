@@ -264,6 +264,15 @@ async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]
         index_key = f"user_orders_index:{{{hash_tag}}}"
         order_ids = await redis_cluster.smembers(index_key)
         keys: List[str] = []
+        
+        # Handle unexpected return types from smembers
+        if isinstance(order_ids, dict):
+            logger.warning("fetch_user_orders: smembers returned dict for %s:%s, converting to list", user_type, user_id)
+            order_ids = list(order_ids.values() if order_ids else [])
+        elif not isinstance(order_ids, (list, set, tuple)):
+            logger.warning("fetch_user_orders: smembers returned unexpected type for %s:%s: %s", user_type, user_id, type(order_ids))
+            order_ids = []
+            
         if order_ids:
             # Ensure all order IDs are strings (handle bytes, dicts, etc.)
             sanitized_order_ids = []

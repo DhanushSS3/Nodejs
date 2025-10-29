@@ -130,6 +130,8 @@ class PortfolioCalculatorListener:
         """
         For each dirty user, fetch all open orders, fetch prices, calculate, and update Redis
         """
+        if user_ids:
+            self.logger.info(f"⚙️ Portfolio calc: Processing {len(user_ids)} dirty {user_type} users")
         for user_key in user_ids:
             try:
                 if not user_key.startswith(f"{user_type}:"):
@@ -772,10 +774,11 @@ class PortfolioCalculatorListener:
             portfolio['used_margin'] = str(round(chosen_used, 2))
 
             await redis_cluster.hset(redis_key, mapping=portfolio)
-            self.logger.debug(f"Updated portfolio for {redis_key}: {portfolio}")
+            self.logger.info(f"✅ Portfolio calc: WROTE portfolio to Redis key={redis_key} equity={portfolio.get('equity')} margin_level={portfolio.get('margin_level')}")
             # Publish a lightweight notification for watchers (AutoCutoff, dashboards, etc.)
             try:
                 await redis_pubsub_client.publish('portfolio_updates', f"{user_type}:{user_id}")
+                self.logger.debug(f"📢 Portfolio calc: Published portfolio_updates for {user_type}:{user_id}")
             except Exception as pub_err:
                 self.logger.warning(f"Failed to publish portfolio update for {user_type}:{user_id}: {pub_err}")
         except Exception as e:
@@ -784,7 +787,7 @@ class PortfolioCalculatorListener:
     
     async def _listen_loop(self):
         """Main listening loop for market price updates"""
-        self.logger.info("Portfolio Calculator Listener is now active")
+        self.logger.info("Portfolio Calculator Listener is now active and listening for market_price_updates")
         
         try:
             async for message in self._pubsub.listen():
@@ -792,7 +795,8 @@ class PortfolioCalculatorListener:
                     break
                 
                 if message['type'] == 'message':
-                    symbol = message['data']
+                    symbol = str(message.get('data', ''))
+                    # self.logger.info(f"🎯 Portfolio calc: Received market_price_updates message for symbol={symbol}")
                     await self._process_symbol_update(symbol)
                     
         except Exception as e:
@@ -808,13 +812,15 @@ class PortfolioCalculatorListener:
         Single Responsibility: Only handles symbol update processing
         """
         try:
-            self.logger.debug(f"Processing symbol update: {symbol}")
+            # self.logger.info(f"🔔 Portfolio calc: Processing symbol update: {symbol}")
             
             # Fetch affected users for all user types
             live_users = await self._fetch_symbol_holders(symbol, 'live')
             demo_users = await self._fetch_symbol_holders(symbol, 'demo')
             strategy_provider_users = await self._fetch_symbol_holders(symbol, 'strategy_provider')
             copy_follower_users = await self._fetch_symbol_holders(symbol, 'copy_follower')
+            
+            # self.logger.info(f"📊 Portfolio calc: Found holders - live:{len(live_users)} demo:{len(demo_users)} strategy_provider:{len(strategy_provider_users)} copy_follower:{len(copy_follower_users)}")
             
             # Add to dirty user sets
             users_added = 0
