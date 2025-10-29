@@ -106,12 +106,14 @@ class ProtobufMarketListener:
         
         async with websockets.connect(
             self.ws_url,
-            ping_interval=10,  # faster heartbeat to detect dead conns
-            ping_timeout=10,
+            ping_interval=None,  # Don't send pings (server will ping us)
+            ping_timeout=None,   # No timeout (server controls ping/pong)
             close_timeout=5,
             max_size=10**7,
             read_limit=2**20
         ) as websocket:
+            # Server sends pings every 30s, websockets library will auto-respond with pong
+            # This keeps us alive without interfering with server's ping/pong mechanism
             logger.info("Connected to market feed successfully")
             # Reset last message timer at connect
             self._last_msg_ms = int(time.time() * 1000)
@@ -134,19 +136,52 @@ class ProtobufMarketListener:
                     return
 
             watchdog_task = asyncio.create_task(_idle_watchdog())
+            
+            # CRITICAL FIX: Add timeout to receive loop to detect silent stalls
+            # 
+            # Root Cause: If the websocket server's ZeroMQ listener stalls, it stops broadcasting
+            # to clients, but the websocket connection stays open. Without this timeout, the
+            # client waits forever in websocket.recv(), causing "No fresh data" after 4+ minutes.
+            #
+            # Server-side issue (for future fix):
+            # - WebSocket server's `for await (const [msg] of sock)` in ZeroMQ blocks forever
+            # - No timeout or reconnection logic on server when ZMQ publisher dies
+            # - Cache-only broadcasts mean no data = no broadcasts = silent stall
+            #
+            # This client-side fix: Force reconnect after 30s of no data
+            timeout_seconds = 30  # Force break if no data received for 30s
+            
             try:
-                async for message in websocket:
+                while True:
                     try:
-                        if isinstance(message, bytes):
-                            self._last_msg_ms = int(time.time() * 1000)
-                            await self._process_single_message_immediate(message)
-                            self.stats['messages_processed'] += 1
-                            self.stats['bytes_processed'] += len(message)
-                        else:
-                            logger.warning(f"Received non-binary message, ignoring: {type(message)}")
-                    except Exception as e:
-                        logger.error(f"Error processing message immediately: {e}")
-                        self.stats['parse_errors'] += 1
+                        # Use asyncio.wait_for to timeout the receive operation
+                        # Note: websockets library automatically handles server pings (responds with pong)
+                        message = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
+                        
+                        try:
+                            if isinstance(message, bytes):
+                                self._last_msg_ms = int(time.time() * 1000)
+                                await self._process_single_message_immediate(message)
+                                self.stats['messages_processed'] += 1
+                                self.stats['bytes_processed'] += len(message)
+                            else:
+                                logger.debug(f"Received control frame (ping/pong handled automatically)")
+                                # Server ping/pong frames are handled automatically by websockets library
+                                # We don't need to do anything with them
+                        except Exception as e:
+                            logger.error(f"Error processing message immediately: {e}")
+                            self.stats['parse_errors'] += 1
+                    except asyncio.TimeoutError:
+                        # No data received within timeout - websocket is likely dead
+                        now = int(time.time() * 1000)
+                        last_age = now - (self._last_msg_ms or now)
+                        logger.error(f"⚠️ RECEIVE TIMEOUT: No data for {last_age}ms. Websocket appears dead, forcing reconnect.")
+                        break
+                    except websockets.exceptions.ConnectionClosed:
+                        # Normal close from server - will be caught by outer handler
+                        logger.info("WebSocket connection closed by server")
+                        break
+                        
             finally:
                 try:
                     watchdog_task.cancel()
