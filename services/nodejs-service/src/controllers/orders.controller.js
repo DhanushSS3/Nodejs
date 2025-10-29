@@ -132,6 +132,16 @@ async function placeInstantOrder(req, res) {
     if (errors.length) {
       return res.status(400).json({ success: false, message: 'Invalid payload fields', fields: errors });
     }
+    // Trading hours check for non-crypto instruments (Mon-Fri only, UTC). Crypto (type=4) always open
+    try {
+      const gf = await groupsCache.getGroupFields('Standard', parsed.symbol, ['type']);
+      const gType = gf && gf.type != null ? gf.type : null;
+      if (!_isMarketOpenByType(gType)) {
+        return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+      }
+    } catch (e) {
+      // If groups lookup fails, proceed; do not hard-block
+    }
     mark('after_validate');
 
     // Ensure user places orders only for themselves (if token has id)
@@ -536,6 +546,16 @@ async function placePendingOrder(req, res) {
     const { errors, parsed } = validatePendingPayload(req.body || {});
     if (errors.length) {
       return res.status(400).json({ success: false, message: 'Invalid payload fields', fields: errors });
+    }
+    // Trading hours check for non-crypto instruments (Mon-Fri only, UTC). Crypto (type=4) always open
+    try {
+      const gf = await groupsCache.getGroupFields(userGroup, String(parsed.symbol).toUpperCase(), ['type']);
+      const gType = gf && gf.type != null ? gf.type : null;
+      if (!_isMarketOpenByType(gType)) {
+        return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+      }
+    } catch (e) {
+      // If groups lookup fails, proceed; do not hard-block
     }
 
     // Ensure user places orders only for themselves (if token has id)
