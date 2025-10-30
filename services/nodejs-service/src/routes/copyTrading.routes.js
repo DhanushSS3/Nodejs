@@ -20,10 +20,16 @@ router.get('/accounts',
   copyTradingController.getFollowerAccounts
 );
 
-// Update follower account settings
+// Update follower account settings (legacy)
 router.put('/accounts/:follower_id', 
   authenticateJWT,
   copyTradingController.updateFollowerAccount
+);
+
+// Update follower account settings with strict validation
+router.put('/accounts/:id', 
+  authenticateJWT,
+  copyTradingController.updateFollowerAccountStrict
 );
 
 // Stop following a strategy

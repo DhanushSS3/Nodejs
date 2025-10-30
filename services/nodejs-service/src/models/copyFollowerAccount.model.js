@@ -27,6 +27,7 @@ const CopyFollowerAccount = sequelize.define('CopyFollowerAccount', {
   // Account Identity
   account_name: { 
     type: DataTypes.STRING(150), 
+    unique: true,
     allowNull: false // e.g., "Following John's EURUSD Strategy"
   },
   account_number: { 
@@ -315,3 +316,4 @@ const CopyFollowerAccount = sequelize.define('CopyFollowerAccount', {
 });
 
 module.exports = CopyFollowerAccount;
+

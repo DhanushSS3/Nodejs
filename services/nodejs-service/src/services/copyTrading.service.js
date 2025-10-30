@@ -512,9 +512,42 @@ class CopyTradingService {
    */
   async calculateFollowerLotSize(masterOrder, follower) {
     try {
-      // Get strategy provider equity (calculated from wallet_balance + net_profit)
+      // Get strategy provider and require live equity from Redis portfolio data
       const strategyProvider = await StrategyProviderAccount.findByPk(masterOrder.order_user_id);
-      const masterEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
+      if (!strategyProvider) {
+        throw new Error(`Strategy provider not found: ${masterOrder.order_user_id}`);
+      }
+
+      // Fetch live equity from Redis portfolio data (required)
+      const portfolioKey = `user_portfolio:{strategy_provider:${masterOrder.order_user_id}}`;
+      let portfolioData;
+      try {
+        portfolioData = await redisCluster.hgetall(portfolioKey);
+      } catch (redisError) {
+        logger.error('Failed to fetch portfolio data from Redis', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          error: redisError.message
+        });
+        throw new Error(`Cannot fetch live portfolio data for strategy provider ${masterOrder.order_user_id}: ${redisError.message}`);
+      }
+
+      if (!portfolioData || !portfolioData.equity) {
+        logger.error('No live equity data available in Redis portfolio', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          portfolioData: portfolioData ? Object.keys(portfolioData) : null
+        });
+        throw new Error(`No live equity data available for strategy provider ${masterOrder.order_user_id}. Portfolio calculation may not be running.`);
+      }
+
+      const masterEquity = parseFloat(portfolioData.equity);
+      logger.info('Using live equity from Redis portfolio', {
+        strategyProviderId: masterOrder.order_user_id,
+        portfolioKey,
+        liveEquity: masterEquity,
+        portfolioFields: Object.keys(portfolioData)
+      });
       
       // Get follower investment amount (their equity in copy trading)
       const followerInvestment = parseFloat(follower.investment_amount || 0);
@@ -524,8 +557,8 @@ class CopyTradingService {
         strategyProvider: {
           id: strategyProvider.id,
           wallet_balance: strategyProvider.wallet_balance,
-          net_profit: strategyProvider.net_profit,
-          calculatedEquity: masterEquity
+          liveEquity: masterEquity,
+          equitySource: 'redis_live'
         },
         follower: {
           id: follower.id,
@@ -538,7 +571,7 @@ class CopyTradingService {
       });
       
       if (masterEquity <= 0) {
-        throw new Error(`Master equity is zero or negative: wallet_balance=${strategyProvider.wallet_balance}, net_profit=${strategyProvider.net_profit}, calculated=${masterEquity}`);
+        throw new Error(`Master equity is zero or negative: live_equity=${masterEquity} from Redis portfolio`);
       }
 
       // Calculate basic ratio
@@ -554,11 +587,12 @@ class CopyTradingService {
       // Get group min/max lot constraints
       const groupConstraints = await this.getGroupLotConstraints(follower.group, masterOrder.symbol);
       
-      // Ensure calculated lot meets minimum requirements
-      const finalLotSize = Math.max(calculatedLotSize, groupConstraints.minLot);
-      
-      // Ensure doesn't exceed maximum
-      const constrainedLotSize = Math.min(finalLotSize, groupConstraints.maxLot);
+      // Don't round up to minimum - let the caller decide whether to skip or not
+      // Only constrain to maximum if it exceeds the limit
+      let finalLotSize = calculatedLotSize;
+      if (finalLotSize > groupConstraints.maxLot) {
+        finalLotSize = groupConstraints.maxLot;
+      }
 
       return {
         masterEquity,
@@ -566,7 +600,7 @@ class CopyTradingService {
         ratio,
         masterLotSize,
         calculatedLotSize,
-        finalLotSize: constrainedLotSize,
+        finalLotSize,
         minLot: groupConstraints.minLot,
         maxLot: groupConstraints.maxLot
       };

@@ -16,6 +16,7 @@ const redisUserCache = require('../services/redis.user.cache.service');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
 const { applyOrderClosePayout } = require('../services/order.payout.service');
+const lotValidationService = require('../services/lot.validation.service');
 
 // Create reusable axios instance with HTTP keep-alive for Python service calls
 const pythonServiceAxios = axios.create({
@@ -116,6 +117,7 @@ async function placeInstantOrder(req, res) {
     const role = user.role || user.user_role;
     const isSelfTrading = user.is_self_trading;
     const userStatus = user.status;
+    const userGroup = user && user.group ? String(user.group) : 'Standard';
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for order placement' });
@@ -132,9 +134,25 @@ async function placeInstantOrder(req, res) {
     if (errors.length) {
       return res.status(400).json({ success: false, message: 'Invalid payload fields', fields: errors });
     }
+
+    // Validate lot size against group constraints
+    const lotValidation = await lotValidationService.validateLotSize(userGroup, parsed.symbol, parsed.order_quantity);
+    if (!lotValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: lotValidation.message,
+        lot_constraints: {
+          provided_lot: lotValidation.lotSize,
+          min_lot: lotValidation.minLot,
+          max_lot: lotValidation.maxLot,
+          user_group: userGroup,
+          symbol: parsed.symbol
+        }
+      });
+    }
     // Trading hours check for non-crypto instruments (Mon-Fri only, UTC). Crypto (type=4) always open
     try {
-      const gf = await groupsCache.getGroupFields('Standard', parsed.symbol, ['type']);
+      const gf = await groupsCache.getGroupFields(userGroup, parsed.symbol, ['type']);
       const gType = gf && gf.type != null ? gf.type : null;
       if (!_isMarketOpenByType(gType)) {
         return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
@@ -546,6 +564,22 @@ async function placePendingOrder(req, res) {
     const { errors, parsed } = validatePendingPayload(req.body || {});
     if (errors.length) {
       return res.status(400).json({ success: false, message: 'Invalid payload fields', fields: errors });
+    }
+
+    // Validate lot size against group constraints
+    const lotValidation = await lotValidationService.validateLotSize(userGroup, parsed.symbol, parsed.order_quantity);
+    if (!lotValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: lotValidation.message,
+        lot_constraints: {
+          provided_lot: lotValidation.lotSize,
+          min_lot: lotValidation.minLot,
+          max_lot: lotValidation.maxLot,
+          user_group: userGroup,
+          symbol: parsed.symbol
+        }
+      });
     }
     // Trading hours check for non-crypto instruments (Mon-Fri only, UTC). Crypto (type=4) always open
     try {

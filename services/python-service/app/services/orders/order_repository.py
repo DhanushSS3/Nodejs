@@ -260,17 +260,20 @@ async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]
         return []
         
     try:
-        hash_tag = f"{user_type}:{user_id}"
+        # Ensure user_type and user_id are strings to prevent dict injection
+        user_type_str = str(user_type) if user_type is not None else ""
+        user_id_str = str(user_id) if user_id is not None else ""
+        hash_tag = f"{user_type_str}:{user_id_str}"
         index_key = f"user_orders_index:{{{hash_tag}}}"
         order_ids = await redis_cluster.smembers(index_key)
         keys: List[str] = []
         
         # Handle unexpected return types from smembers
         if isinstance(order_ids, dict):
-            logger.warning("fetch_user_orders: smembers returned dict for %s:%s, converting to list", user_type, user_id)
+            logger.error("fetch_user_orders: smembers returned dict for %s:%s: %s, converting to list", user_type, user_id, order_ids)
             order_ids = list(order_ids.values() if order_ids else [])
         elif not isinstance(order_ids, (list, set, tuple)):
-            logger.warning("fetch_user_orders: smembers returned unexpected type for %s:%s: %s", user_type, user_id, type(order_ids))
+            logger.error("fetch_user_orders: smembers returned unexpected type for %s:%s: %s", user_type, user_id, type(order_ids))
             order_ids = []
             
         if order_ids:
@@ -292,7 +295,9 @@ async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]
             keys = [f"user_holdings:{{{hash_tag}}}:{oid}" for oid in sanitized_order_ids]
         else:
             # Fallback to SCAN (flatten any cluster-returned dict of lists)
-            pattern = f"user_holdings:{{{hash_tag}}}:*"
+            # Ensure hash_tag is a string for pattern construction
+            safe_hash_tag = str(hash_tag) if hash_tag is not None else f"{user_type_str}:{user_id_str}"
+            pattern = f"user_holdings:{{{safe_hash_tag}}}:*"
             cursor = b"0"
             raw_keys: List[Any] = []
             while cursor:

@@ -736,6 +736,15 @@ async function applyDbUpdate(msg) {
   const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
   if (mirrorUsedMargin != null) {
     try {
+      logger.info('Updating user margin from DB consumer', {
+        order_id: String(order_id),
+        user_id: String(user_id),
+        user_type: String(user_type),
+        message_type: type,
+        mirrorUsedMargin,
+        used_margin_usd,
+        used_margin_executed
+      });
       await updateUserUsedMargin({ userType: String(user_type), userId: parseInt(String(user_id), 10), usedMargin: mirrorUsedMargin });
     } catch (e) {
       logger.error('Failed to persist used margin in SQL', { error: e.message, user_id, user_type });

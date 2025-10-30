@@ -15,6 +15,8 @@ const copyTradingRedisService = require('../services/copyTradingRedis.service');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
+const lotValidationService = require('../services/lot.validation.service');
+const groupsCache = require('../services/groups.cache.service');
 
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
@@ -140,6 +142,25 @@ async function placeStrategyProviderOrder(req, res) {
       });
     }
     mark('after_validate');
+
+    // Get strategy provider group for lot validation
+    const strategyProviderGroup = 'Standard'; // Default group for strategy providers
+    
+    // Validate lot size against group constraints
+    const lotValidation = await lotValidationService.validateLotSize(strategyProviderGroup, parsed.symbol, parsed.order_quantity);
+    if (!lotValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: lotValidation.message,
+        lot_constraints: {
+          provided_lot: lotValidation.lotSize,
+          min_lot: lotValidation.minLot,
+          max_lot: lotValidation.maxLot,
+          user_group: strategyProviderGroup,
+          symbol: parsed.symbol
+        }
+      });
+    }
 
     // Verify strategy provider account exists and belongs to user
     const strategyProvider = await StrategyProviderAccount.findOne({

@@ -130,8 +130,8 @@ class PortfolioCalculatorListener:
         """
         For each dirty user, fetch all open orders, fetch prices, calculate, and update Redis
         """
-        if user_ids:
-            self.logger.info(f"⚙️ Portfolio calc: Processing {len(user_ids)} dirty {user_type} users")
+        # if user_ids:
+            # self.logger.info(f"⚙️ Portfolio calc: Processing {len(user_ids)} dirty {user_type} users")
         for user_key in user_ids:
             try:
                 if not user_key.startswith(f"{user_type}:"):
@@ -774,7 +774,7 @@ class PortfolioCalculatorListener:
             portfolio['used_margin'] = str(round(chosen_used, 2))
 
             await redis_cluster.hset(redis_key, mapping=portfolio)
-            self.logger.info(f"✅ Portfolio calc: WROTE portfolio to Redis key={redis_key} equity={portfolio.get('equity')} margin_level={portfolio.get('margin_level')}")
+            # self.logger.info(f"✅ Portfolio calc: WROTE portfolio to Redis key={redis_key} equity={portfolio.get('equity')} margin_level={portfolio.get('margin_level')}")
             # Publish a lightweight notification for watchers (AutoCutoff, dashboards, etc.)
             try:
                 await redis_pubsub_client.publish('portfolio_updates', f"{user_type}:{user_id}")

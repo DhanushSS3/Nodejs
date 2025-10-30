@@ -172,6 +172,16 @@ class OrderExecutor:
             return {"ok": False, "reason": "invalid_leverage"}
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        
+        # Debug logging for provider flow determination
+        logger.info("Provider flow determination", {
+            "user_type": user_type,
+            "user_id": user_id,
+            "group": group,
+            "sending_orders": sending_orders,
+            "sending_orders_raw": cfg.get("sending_orders"),
+            "config_keys": list(cfg.keys()) if cfg else []
+        })
 
         # 3) Determine strategy
         if user_type == "demo":
@@ -204,6 +214,15 @@ class OrderExecutor:
                 flow = "provider"
         else:
             return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
+
+        # Log the selected flow for debugging
+        logger.info("Execution flow selected", {
+            "user_type": user_type,
+            "user_id": user_id,
+            "flow": flow,
+            "sending_orders": sending_orders,
+            "strategy_class": strategy.__class__.__name__
+        })
 
         # 4) Idempotency
         idem_key = None

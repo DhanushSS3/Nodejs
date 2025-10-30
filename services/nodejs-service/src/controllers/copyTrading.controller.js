@@ -40,6 +40,53 @@ async function createFollowerAccount(req, res) {
       });
     }
 
+    // Validate account_name uniqueness for the user
+    const existingAccountName = await CopyFollowerAccount.findOne({
+      where: {
+        user_id: userId,
+        account_name: account_name,
+        status: 1
+      }
+    });
+
+    if (existingAccountName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account name already exists. Please choose a different account name.'
+      });
+    }
+
+    // Validate SL/TP modes and their corresponding values
+    if (copy_sl_mode && copy_sl_mode !== 'none') {
+      if (copy_sl_mode === 'percentage' && (!sl_percentage || parseFloat(sl_percentage) <= 0)) {
+        return res.status(400).json({
+          success: false,
+          message: 'SL percentage is required and must be greater than 0 when copy_sl_mode is percentage'
+        });
+      }
+      if (copy_sl_mode === 'amount' && (!sl_amount || parseFloat(sl_amount) <= 0)) {
+        return res.status(400).json({
+          success: false,
+          message: 'SL amount is required and must be greater than 0 when copy_sl_mode is amount'
+        });
+      }
+    }
+
+    if (copy_tp_mode && copy_tp_mode !== 'none') {
+      if (copy_tp_mode === 'percentage' && (!tp_percentage || parseFloat(tp_percentage) <= 0)) {
+        return res.status(400).json({
+          success: false,
+          message: 'TP percentage is required and must be greater than 0 when copy_tp_mode is percentage'
+        });
+      }
+      if (copy_tp_mode === 'amount' && (!tp_amount || parseFloat(tp_amount) <= 0)) {
+        return res.status(400).json({
+          success: false,
+          message: 'TP amount is required and must be greater than 0 when copy_tp_mode is amount'
+        });
+      }
+    }
+
     // Validate investment amount
     if (parseFloat(investment_amount) < 100) {
       return res.status(400).json({
@@ -320,7 +367,7 @@ async function getFollowerAccounts(req, res) {
 }
 
 /**
- * Update copy follower account settings
+ * Update copy follower account settings (legacy - keeping for backward compatibility)
  */
 async function updateFollowerAccount(req, res) {
   try {
@@ -405,6 +452,175 @@ async function updateFollowerAccount(req, res) {
     logger.error('Failed to update follower account', {
       userId: req.user?.id,
       followerId: req.params?.follower_id,
+      error: error.message
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update follower account',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Update copy follower account settings with strict validation
+ */
+async function updateFollowerAccountStrict(req, res) {
+  try {
+    const user = req.user || {};
+    const userId = user.sub || user.user_id || user.id;
+    const { id } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    // Verify account belongs to user
+    const followerAccount = await CopyFollowerAccount.findOne({
+      where: {
+        id: id,
+        user_id: userId,
+        status: 1
+      }
+    });
+
+    if (!followerAccount) {
+      return res.status(404).json({
+        success: false,
+        message: 'Follower account not found or does not belong to you'
+      });
+    }
+
+    const {
+      copy_sl_mode,
+      copy_tp_mode,
+      copy_sl_percent,
+      copy_sl_value,
+      copy_tp_percent,
+      copy_tp_value,
+      copy_status,
+      reason
+    } = req.body;
+
+    const updateFields = {};
+
+    // Validate and update copy_sl_mode
+    if (copy_sl_mode !== undefined) {
+      if (!['none', 'percentage', 'amount'].includes(copy_sl_mode)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid copy_sl_mode. Must be one of: none, percentage, amount'
+        });
+      }
+      
+      if (copy_sl_mode === 'percentage') {
+        if (!copy_sl_percent || parseFloat(copy_sl_percent) <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'copy_sl_percent is required and must be greater than 0 when copy_sl_mode is percentage'
+          });
+        }
+        updateFields.copy_sl_mode = copy_sl_mode;
+        updateFields.sl_percentage = parseFloat(copy_sl_percent);
+        updateFields.sl_amount = null;
+      } else if (copy_sl_mode === 'amount') {
+        if (!copy_sl_value || parseFloat(copy_sl_value) <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'copy_sl_value is required and must be greater than 0 when copy_sl_mode is amount'
+          });
+        }
+        updateFields.copy_sl_mode = copy_sl_mode;
+        updateFields.sl_amount = parseFloat(copy_sl_value);
+        updateFields.sl_percentage = null;
+      } else {
+        updateFields.copy_sl_mode = 'none';
+        updateFields.sl_percentage = null;
+        updateFields.sl_amount = null;
+      }
+    }
+
+    // Validate and update copy_tp_mode
+    if (copy_tp_mode !== undefined) {
+      if (!['none', 'percentage', 'amount'].includes(copy_tp_mode)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid copy_tp_mode. Must be one of: none, percentage, amount'
+        });
+      }
+      
+      if (copy_tp_mode === 'percentage') {
+        if (!copy_tp_percent || parseFloat(copy_tp_percent) <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'copy_tp_percent is required and must be greater than 0 when copy_tp_mode is percentage'
+          });
+        }
+        updateFields.copy_tp_mode = copy_tp_mode;
+        updateFields.tp_percentage = parseFloat(copy_tp_percent);
+        updateFields.tp_amount = null;
+      } else if (copy_tp_mode === 'amount') {
+        if (!copy_tp_value || parseFloat(copy_tp_value) <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'copy_tp_value is required and must be greater than 0 when copy_tp_mode is amount'
+          });
+        }
+        updateFields.copy_tp_mode = copy_tp_mode;
+        updateFields.tp_amount = parseFloat(copy_tp_value);
+        updateFields.tp_percentage = null;
+      } else {
+        updateFields.copy_tp_mode = 'none';
+        updateFields.tp_percentage = null;
+        updateFields.tp_amount = null;
+      }
+    }
+
+    // Update copy status
+    if (copy_status !== undefined) {
+      if (!['active', 'paused', 'stopped'].includes(copy_status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid copy_status. Must be one of: active, paused, stopped'
+        });
+      }
+      updateFields.copy_status = copy_status;
+    }
+
+    // Update reason
+    if (reason !== undefined) {
+      updateFields.pause_reason = reason;
+    }
+
+    // Ensure at least one field is being updated
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields provided for update'
+      });
+    }
+
+    await CopyFollowerAccount.update(updateFields, {
+      where: { id: id }
+    });
+
+    logger.info('Copy follower account updated (strict)', {
+      userId,
+      followerId: id,
+      updateFields
+    });
+
+    res.json({
+      success: true,
+      message: 'Follower account updated successfully',
+      updated_fields: Object.keys(updateFields)
+    });
+
+  } catch (error) {
+    logger.error('Failed to update follower account (strict)', {
+      userId: req.user?.id,
+      followerId: req.params?.id,
       error: error.message
     });
 
@@ -506,5 +722,6 @@ module.exports = {
   createFollowerAccount,
   getFollowerAccounts,
   updateFollowerAccount,
+  updateFollowerAccountStrict,
   stopFollowing
 };
