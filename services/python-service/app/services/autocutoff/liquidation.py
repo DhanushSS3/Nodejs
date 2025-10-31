@@ -317,7 +317,7 @@ class LiquidationEngine:
                     sending_orders = (ucfg.get("sending_orders") or "").strip().lower() if ucfg else ""
                 except Exception:
                     sending_orders = ""
-                if user_type == "live" and sending_orders == "barclays":
+                if user_type in ["live", "strategy_provider", "copy_follower"] and sending_orders == "barclays":
                     # Generate provider lifecycle IDs via Redis-backed counters (compatible with Node format)
                     close_id = generate_close_id()
                     payload["close_id"] = close_id
@@ -379,7 +379,7 @@ class LiquidationEngine:
 
                 # Send DB update ONLY for local execution (not provider flow)
                 # Provider flow will be handled by provider workers after execution reports
-                if not (user_type == "live" and sending_orders == "barclays"):
+                if not ((user_type in ["live", "strategy_provider", "copy_follower"]) and sending_orders == "barclays"):
                     try:
                         db_msg = {
                             "type": "ORDER_CLOSE_CONFIRMED",

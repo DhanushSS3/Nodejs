@@ -45,6 +45,19 @@ async def _get_user_email(user_type: str, user_id: str) -> Optional[str]:
     return None
 
 
+async def _get_user_cutoff_level(user_type: str, user_id: str) -> float:
+    """Get user's auto_cutoff_level setting, default to 50.0 if not found"""
+    try:
+        key = f"user:{{{user_type}:{user_id}}}:config"
+        data = await redis_cluster.hgetall(key)
+        cutoff_level = (data or {}).get("auto_cutoff_level")
+        if cutoff_level:
+            return float(cutoff_level)
+    except Exception as e:
+        logger.warning("AutoCutoffWatcher: Failed to get cutoff level for %s:%s: %s", user_type, user_id, e)
+    return 50.0  # Default cutoff level
+
+
 async def _clear_flags(user_type: str, user_id: str):
     try:
         pipe = redis_cluster.pipeline()
@@ -58,16 +71,22 @@ async def _clear_flags(user_type: str, user_id: str):
 
 async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, liq: LiquidationEngine):
     ml = await _get_margin_level(user_type, user_id)
-    # logger.info("AutoCutoffWatcher: checking user %s:%s margin_level=%.2f", user_type, user_id, ml)
+    cutoff_level = await _get_user_cutoff_level(user_type, user_id)
+    liquidation_threshold = 10.0  # Fixed liquidation threshold
     
-    if ml >= 50.0:
-        logger.debug("AutoCutoffWatcher: user %s:%s is safe (margin_level=%.2f)", user_type, user_id, ml)
+    logger.debug("AutoCutoffWatcher: checking user %s:%s margin_level=%.2f, cutoff_level=%.2f", 
+                user_type, user_id, ml, cutoff_level)
+    
+    if ml >= cutoff_level:
+        logger.debug("AutoCutoffWatcher: user %s:%s is safe (margin_level=%.2f >= cutoff_level=%.2f)", 
+                    user_type, user_id, ml, cutoff_level)
         await _clear_flags(user_type, user_id)
         return
 
     # Alert zone
-    if 10.0 <= ml < 50.0:
-        logger.warning("AutoCutoffWatcher: ALERT TRIGGERED for user %s:%s (margin_level=%.2f < 50.0)", user_type, user_id, ml)
+    if liquidation_threshold <= ml < cutoff_level:
+        logger.warning("AutoCutoffWatcher: ALERT TRIGGERED for user %s:%s (margin_level=%.2f < cutoff_level=%.2f)", 
+                      user_type, user_id, ml, cutoff_level)
         # rate-limit via Redis TTL flag with atomic check-and-set
         alert_key = f"autocutoff:alert_sent:{user_type}:{user_id}"
         try:
@@ -91,7 +110,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
         
         email = await _get_user_email(user_type, user_id)
         logger.info("AutoCutoffWatcher: sending alert email to %s for %s:%s", email, user_type, user_id)
-        ok = await notifier.send_alert(user_type=user_type, user_id=user_id, email=email, margin_level=ml, threshold=50.0)
+        ok = await notifier.send_alert(user_type=user_type, user_id=user_id, email=email, margin_level=ml, threshold=cutoff_level)
         if ok:
             logger.info("AutoCutoffWatcher: alert email sent successfully to %s for %s:%s", email, user_type, user_id)
         else:
@@ -104,8 +123,9 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
         return
 
     # Liquidation zone
-    if ml < 10.0:
-        logger.warning("AutoCutoffWatcher: LIQUIDATION TRIGGERED for user %s:%s (margin_level=%.2f < 10.0)", user_type, user_id, ml)
+    if ml < liquidation_threshold:
+        logger.warning("AutoCutoffWatcher: LIQUIDATION TRIGGERED for user %s:%s (margin_level=%.2f < liquidation_threshold=%.2f)", 
+                      user_type, user_id, ml, liquidation_threshold)
         liq_key = f"autocutoff:liquidating:{user_type}:{user_id}"
         try:
             got = await redis_cluster.set(liq_key, "1", nx=True)

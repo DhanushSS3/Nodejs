@@ -532,22 +532,36 @@ class CopyTradingService {
         throw new Error(`Cannot fetch live portfolio data for strategy provider ${masterOrder.order_user_id}: ${redisError.message}`);
       }
 
+      let masterEquity;
+      let equitySource;
+      
       if (!portfolioData || !portfolioData.equity) {
-        logger.error('No live equity data available in Redis portfolio', {
+        // Fallback to wallet balance when no equity data is available
+        // This happens when strategy provider has no open orders or portfolio calculation isn't running
+        logger.warn('No live equity data available in Redis portfolio, using wallet balance as fallback', {
           strategyProviderId: masterOrder.order_user_id,
           portfolioKey,
-          portfolioData: portfolioData ? Object.keys(portfolioData) : null
+          portfolioData: portfolioData ? Object.keys(portfolioData) : null,
+          walletBalance: strategyProvider.wallet_balance
         });
-        throw new Error(`No live equity data available for strategy provider ${masterOrder.order_user_id}. Portfolio calculation may not be running.`);
+        
+        masterEquity = parseFloat(strategyProvider.wallet_balance || 0);
+        equitySource = 'wallet_balance_fallback';
+        
+        if (masterEquity <= 0) {
+          throw new Error(`Strategy provider ${masterOrder.order_user_id} has no equity data and zero wallet balance. Cannot calculate lot size.`);
+        }
+      } else {
+        masterEquity = parseFloat(portfolioData.equity);
+        equitySource = 'redis_portfolio';
+        
+        logger.info('Using live equity from Redis portfolio', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          liveEquity: masterEquity,
+          portfolioFields: Object.keys(portfolioData)
+        });
       }
-
-      const masterEquity = parseFloat(portfolioData.equity);
-      logger.info('Using live equity from Redis portfolio', {
-        strategyProviderId: masterOrder.order_user_id,
-        portfolioKey,
-        liveEquity: masterEquity,
-        portfolioFields: Object.keys(portfolioData)
-      });
       
       // Get follower investment amount (their equity in copy trading)
       const followerInvestment = parseFloat(follower.investment_amount || 0);
@@ -558,7 +572,7 @@ class CopyTradingService {
           id: strategyProvider.id,
           wallet_balance: strategyProvider.wallet_balance,
           liveEquity: masterEquity,
-          equitySource: 'redis_live'
+          equitySource: equitySource
         },
         follower: {
           id: follower.id,
@@ -593,6 +607,9 @@ class CopyTradingService {
       if (finalLotSize > groupConstraints.maxLot) {
         finalLotSize = groupConstraints.maxLot;
       }
+
+
+      logger.info('Lot size calculation data',{ finalLotSize: finalLotSize , calculatedLotSize: calculatedLotSize} );
 
       return {
         masterEquity,
@@ -948,7 +965,7 @@ class CopyTradingService {
         calculated_lot_size: lotCalculation.calculatedLotSize,
         final_lot_size: lotCalculation.finalLotSize,
         
-        copy_status: 'skipped',
+        copy_status: 'failed',
         failure_reason: `Skipped: ${reason}`,
         
         status: 'SKIPPED',
@@ -1067,6 +1084,9 @@ class CopyTradingService {
     try {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       
+      // Generate close_id for copy follower order
+      const close_id = await idGenerator.generateOrderId();
+      
       const payload = {
         order_id: String(copiedOrder.order_id), // Ensure it's a string
         user_id: String(copiedOrder.order_user_id), // Ensure it's a string
@@ -1076,6 +1096,7 @@ class CopyTradingService {
         close_price: masterOrder.close_price || null, // Ensure it's not undefined
         status: 'CLOSED',                     // Required by Python schema
         order_status: 'CLOSED',               // Required by Python schema
+        close_id: String(close_id),           // Add close_id for copy follower order
         copy_trading: true
       };
 
@@ -1146,6 +1167,14 @@ class CopyTradingService {
               });
             }
           }
+
+          // Apply balance update and performance fee calculation
+          await this.applyCopyFollowerClosePayout({
+            copiedOrder,
+            masterOrder,
+            result,
+            close_id
+          });
           
         } catch (dbError) {
           logger.error('Failed to update copy follower order in database', {

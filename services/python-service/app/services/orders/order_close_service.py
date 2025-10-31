@@ -434,6 +434,10 @@ class OrderCloser:
             "contract_value": contract_value,
             "type": "order",
         }
+        
+        # Debug logging for provider close message
+        logger.info("[PROVIDER_CLOSE_DEBUG] order_id=%s close_id=%s payload_close_id=%s", 
+                   order_id, provider_close.get("close_id"), payload.get("close_id"))
         # Mark the order as status=CLOSED in Redis so dispatcher can route EXECUTED -> CLOSE worker
         try:
             order_data_key = f"order_data:{order_id}"

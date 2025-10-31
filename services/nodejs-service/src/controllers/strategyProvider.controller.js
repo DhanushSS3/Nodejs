@@ -668,7 +668,7 @@ async function switchToStrategyProvider(req, res) {
     // Populate Redis config for strategy provider (same as live users)
     try {
       const strategyProviderData = {
-        user_id: userId,
+        user_id: strategyProvider.id, // Use strategy provider account ID, not live user ID
         user_type: 'strategy_provider',
         group: strategyProvider.group || 'Standard',
         leverage: parseFloat(strategyProvider.leverage) || 100,
@@ -676,10 +676,13 @@ async function switchToStrategyProvider(req, res) {
         is_active: strategyProvider.is_active,
         sending_orders: strategyProvider.sending_orders || 'rock',
         wallet_balance: parseFloat(strategyProvider.wallet_balance) || 0,
+        auto_cutoff_level: parseFloat(strategyProvider.auto_cutoff_level) || 50.0,
+        original_user_id: userId, // Keep reference to original live user
         last_updated: new Date().toISOString()
       };
       
-      await redisUserCache.updateUser('strategy_provider', userId, strategyProviderData);
+      // CRITICAL FIX: Use strategy provider account ID as the Redis key, not live user ID
+      await redisUserCache.updateUser('strategy_provider', strategyProvider.id, strategyProviderData);
       logger.info('Strategy provider config populated in Redis', {
         userId,
         strategyProviderId: strategyProvider.id,
@@ -1085,17 +1088,53 @@ async function checkTradingEligibility(req, res) {
  * POST /api/strategy-providers/logout
  */
 async function logoutStrategyProvider(req, res) {
-  const { userId, sessionId } = req.user;
+  const { userId, sessionId, originalUserId, originalUserType } = req.user;
   const { refresh_token: refreshToken } = req.body;
 
   try {
-    // Invalidate the session and refresh token in Redis
+    // Invalidate the strategy provider session and refresh token in Redis
     const { deleteSession } = require('../utils/redisSession.util');
     await deleteSession(userId, sessionId, 'strategy_provider', refreshToken);
 
+    // Also invalidate the original live user session if it exists
+    if (originalUserId && originalUserType) {
+      try {
+        // Find and invalidate all sessions for the original user
+        const { redisCluster } = require('../../config/redis');
+        const sessionPattern = `session:${originalUserType}:${originalUserId}:*`;
+        
+        // Use SCAN to find all session keys for the original user
+        let cursor = '0';
+        do {
+          const result = await redisCluster.scan(cursor, 'MATCH', sessionPattern, 'COUNT', 100);
+          cursor = result[0];
+          const keys = result[1];
+          
+          if (keys && keys.length > 0) {
+            await redisCluster.del(...keys);
+            logger.info('Invalidated original user sessions', {
+              originalUserId,
+              originalUserType,
+              sessionCount: keys.length
+            });
+          }
+        } while (cursor !== '0');
+        
+      } catch (originalUserError) {
+        logger.warn('Failed to invalidate original user sessions', {
+          originalUserId,
+          originalUserType,
+          error: originalUserError.message
+        });
+        // Don't fail the logout if original user session cleanup fails
+      }
+    }
+
     logger.info('Strategy provider logged out successfully', {
       userId,
-      sessionId
+      sessionId,
+      originalUserId,
+      originalUserType
     });
 
     return res.status(200).json({ 

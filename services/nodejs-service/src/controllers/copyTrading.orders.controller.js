@@ -17,6 +17,7 @@ const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const lotValidationService = require('../services/lot.validation.service');
 const groupsCache = require('../services/groups.cache.service');
+const { applyOrderClosePayout } = require('../services/order.payout.service');
 
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
@@ -217,19 +218,31 @@ async function placeStrategyProviderOrder(req, res) {
     mark('after_db_insert');
 
     // Build payload for Python execution service
+    // IMPORTANT: Use strategy provider account ID for config lookup
+    // The Redis cache is now correctly populated with strategy_provider:{strategy_provider_account_id}
     const pyPayload = {
       symbol: parsed.symbol,
       order_type: parsed.order_type,
       order_price: parsed.order_price,
       order_quantity: parsed.order_quantity,
-      user_id: tokenStrategyProviderId.toString(),
+      user_id: tokenStrategyProviderId.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider', // Use strategy_provider user type
       order_id,
       stop_loss: req.body.stop_loss || null,
       take_profit: req.body.take_profit || null,
       status: 'OPEN',
-      order_status: 'OPEN'
+      order_status: 'OPEN',
+      strategy_provider_id: tokenStrategyProviderId.toString() // Add strategy provider ID for reference
     };
+    
+    logger.info('Strategy provider order payload', {
+      operationId,
+      order_id,
+      tokenUserId,
+      tokenStrategyProviderId,
+      user_id_for_config: tokenUserId.toString(),
+      strategy_provider_id: tokenStrategyProviderId.toString()
+    });
 
     if (req.body.idempotency_key) {
       pyPayload.idempotency_key = normalizeStr(req.body.idempotency_key);
@@ -513,6 +526,16 @@ async function closeStrategyProviderOrder(req, res) {
       return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
     }
 
+    // Get the strategy provider account ID from JWT token (same as place operation)
+    const tokenStrategyProviderId = user.strategy_provider_id || user.strategyProviderId;
+    
+    if (!tokenStrategyProviderId) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account ID not found in token' 
+      });
+    }
+
     const body = req.body || {};
     const order_id = body.order_id; // Get from request body (same as live users)
     const provided_close_price = parseFloat(body.close_price);
@@ -526,6 +549,13 @@ async function closeStrategyProviderOrder(req, res) {
       const ucfg = await redisCluster.hgetall(userCfgKey);
       const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
       isProviderFlow = (so === 'barclays');
+      
+      logger.info('Strategy provider execution flow determined', {
+        order_id,
+        user_id: tokenStrategyProviderId,
+        isProviderFlow,
+        operationId
+      });
     } catch (_) { 
       isProviderFlow = false; 
     }
@@ -535,16 +565,6 @@ async function closeStrategyProviderOrder(req, res) {
     }
     if (!Number.isNaN(provided_close_price) && !(provided_close_price > 0)) {
       return res.status(400).json({ success: false, message: 'close_price must be greater than 0 when provided' });
-    }
-
-    // Get the strategy provider account ID from JWT token (same as place operation)
-    const tokenStrategyProviderId = user.strategy_provider_id || user.strategyProviderId;
-    
-    if (!tokenStrategyProviderId) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Strategy provider account ID not found in token' 
-      });
     }
 
     // Find the order using the strategy provider account ID (consistent with place operation)
@@ -603,7 +623,7 @@ async function closeStrategyProviderOrder(req, res) {
       await redisCluster.hset(odKey, {
         order_id: String(order_id),
         user_type: 'strategy_provider',
-        user_id: String(tokenUserId),
+        user_id: String(tokenStrategyProviderId), // Use strategy provider account ID, not live user ID
         symbol: order.symbol,
         order_type: order.order_type,
         order_status: order.order_status,
@@ -616,7 +636,7 @@ async function closeStrategyProviderOrder(req, res) {
       
       logger.info('Order data stored in Redis for Python service', {
         order_id,
-        user_id: tokenUserId,
+        user_id: tokenStrategyProviderId, // Log strategy provider account ID for consistency
         isProviderFlow,
         operationId
       });
@@ -1602,17 +1622,44 @@ async function handleLocalFlowPostClose(result, order, userId, orderId, operatio
       });
     }
 
-    // 3. Update strategy provider net profit (same as live users)
-    if (typeof result.net_profit === 'number') {
-      await StrategyProviderAccount.increment(
-        { net_profit: result.net_profit },
-        { where: { id: order.order_user_id } } // Use the specific strategy provider account ID
-      );
-      
-      logger.info('Strategy provider net profit updated after local close', {
+    // 3. Apply order close payout (balance + net_profit + transactions) - same as live users
+    try {
+      const payoutKey = `close_payout_applied:${orderId}`;
+      const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+      if (nx) {
+        await applyOrderClosePayout({
+          userType: 'strategy_provider',
+          userId: order.order_user_id, // Use the specific strategy provider account ID
+          orderPk: order.id,
+          orderIdStr: orderId,
+          netProfit: result.net_profit || 0,
+          commission: result.total_commission || 0,
+          profitUsd: result.profit_usd || 0,
+          swap: result.swap || 0,
+          symbol: order.symbol,
+          orderType: order.order_type,
+        });
+        
+        logger.info('Strategy provider order close payout applied', {
+          order_id: orderId,
+          user_id: order.order_user_id,
+          net_profit: result.net_profit,
+          commission: result.total_commission,
+          swap: result.swap,
+          operationId
+        });
+      } else {
+        logger.info('Strategy provider order close payout already applied', {
+          order_id: orderId,
+          user_id: order.order_user_id,
+          operationId
+        });
+      }
+    } catch (payoutError) {
+      logger.error('Failed to apply strategy provider order close payout', {
         order_id: orderId,
-        user_id: userId,
-        net_profit: result.net_profit,
+        user_id: order.order_user_id,
+        error: payoutError.message,
         operationId
       });
     }

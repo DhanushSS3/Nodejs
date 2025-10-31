@@ -48,24 +48,22 @@ async function authenticateAdmin(req, res, next) {
   }
 }
 
-// Legacy JWT authentication (for backward compatibility)
-function authenticateJWT(req, res, next) {
+// JWT authentication with Redis session validation
+async function authenticateJWT(req, res, next) {
   const logger = require('../utils/logger');
   
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    logger.warn(`Authentication failed - Missing or invalid Authorization header for ${req.method} ${req.url}`);
-    return res.status(401).json({ success: false, message: 'Missing or invalid Authorization header' });
-  }
-  
-  const token = authHeader.split(' ')[1];
-  const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
-  
-  jwt.verify(token, JWT_SECRET, async (err, user) => {
-    if (err) {
-      logger.warn(`Authentication failed - Invalid or expired token for ${req.method} ${req.url}: ${err.message}`);
-      return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      logger.warn(`Authentication failed - Missing or invalid Authorization header for ${req.method} ${req.url}`);
+      return res.status(401).json({ success: false, message: 'Missing or invalid Authorization header' });
     }
+    
+    const token = authHeader.split(' ')[1];
+    const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
+    
+    // Verify JWT token
+    const user = jwt.verify(token, JWT_SECRET);
     
     // Check user is_active status from JWT payload
     if (!user.is_active) {
@@ -73,10 +71,35 @@ function authenticateJWT(req, res, next) {
       return res.status(401).json({ success: false, message: 'User account is inactive' });
     }
     
+    // Check if session is still valid in Redis (for logout functionality)
+    if (user.sessionId && user.user_type) {
+      const userId = user.sub || user.user_id || user.id;
+      const sessionKey = `session:${user.user_type}:${userId}:${user.sessionId}`;
+      
+      try {
+        const sessionExists = await redisCluster.exists(sessionKey);
+        if (!sessionExists) {
+          logger.warn(`Authentication failed - Session invalidated for user ${userId} (${user.user_type}) on ${req.method} ${req.url}`);
+          return res.status(401).json({ success: false, message: 'Session has been invalidated' });
+        }
+      } catch (redisError) {
+        logger.error(`Redis session check failed for user ${userId}: ${redisError.message}`);
+        // Continue without Redis check if Redis is down (graceful degradation)
+      }
+    }
+    
     logger.info(`Authentication successful for user ${user.sub || user.user_id || user.id} on ${req.method} ${req.url}`);
     req.user = user;
     next();
-  });
+    
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      logger.warn(`Authentication failed - Token expired for ${req.method} ${req.url}`);
+      return res.status(401).json({ success: false, message: 'Token has expired' });
+    }
+    logger.warn(`Authentication failed - Invalid token for ${req.method} ${req.url}: ${err.message}`);
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  }
 }
 
 // Permission-based authorization middleware

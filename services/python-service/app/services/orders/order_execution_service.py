@@ -180,7 +180,8 @@ class OrderExecutor:
             "group": group,
             "sending_orders": sending_orders,
             "sending_orders_raw": cfg.get("sending_orders"),
-            "config_keys": list(cfg.keys()) if cfg else []
+            "config_keys": list(cfg.keys()) if cfg else [],
+            "full_config": cfg  # Add full config for debugging
         })
 
         # 3) Determine strategy
@@ -202,16 +203,31 @@ class OrderExecutor:
                 flow = "local"
         elif user_type in ["strategy_provider", "copy_follower"]:
             # Copy trading accounts respect sending_orders field like live accounts
+            logger.info("Copy trading flow determination", {
+                "user_type": user_type,
+                "user_id": user_id,
+                "sending_orders": sending_orders,
+                "sending_orders_comparison": {
+                    "equals_rock": sending_orders == "rock",
+                    "equals_barclays": sending_orders == "barclays",
+                    "is_empty": sending_orders == "",
+                    "length": len(sending_orders)
+                }
+            })
+            
             if sending_orders == "rock":
                 strategy = LocalExecutionStrategy(payload)
                 flow = "local"
+                logger.info("Selected LOCAL flow for copy trading (rock)")
             elif sending_orders == "barclays":
                 strategy = ProviderExecutionStrategy(payload)
                 flow = "provider"
+                logger.info("Selected PROVIDER flow for copy trading (barclays)")
             else:
                 # Default to provider flow for copy trading if sending_orders not set
                 strategy = ProviderExecutionStrategy(payload)
                 flow = "provider"
+                logger.info("Selected DEFAULT PROVIDER flow for copy trading (empty/unknown sending_orders)")
         else:
             return {"ok": False, "reason": "unsupported_flow", "details": {"user_type": user_type, "sending_orders": sending_orders}}
 

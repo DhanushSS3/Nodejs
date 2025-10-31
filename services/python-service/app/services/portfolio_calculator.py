@@ -75,6 +75,9 @@ class PortfolioCalculatorListener:
         
         # Throttled calculation loop task
         self._calculation_task = None
+        
+        # Semaphore to limit concurrent Redis operations and prevent connection exhaustion
+        self._redis_semaphore = asyncio.Semaphore(20)  # Limit to 20 concurrent Redis operations
 
     async def start_listener(self):
         """Start the market price update listener and calculation loop"""
@@ -211,28 +214,50 @@ class PortfolioCalculatorListener:
         Fetch all open order hashes for a user from Redis: user_holdings:{{{user_type:user_id}}}:{order_id}
         Returns a list of order dicts.
         """
-        hash_tag = f"{user_type}:{user_id}"
+        # Ensure user_type and user_id are strings to prevent dict injection
+        user_type_str = str(user_type) if user_type is not None else ""
+        user_id_str = str(user_id) if user_id is not None else ""
+        hash_tag = f"{user_type_str}:{user_id_str}"
         pattern = f"user_holdings:{{{hash_tag}}}:*"
         try:
             # Prefer the indexed set if available to avoid cluster-wide SCAN
             index_key = f"user_orders_index:{{{hash_tag}}}"
-            indexed_ids = await redis_cluster.smembers(index_key)
+            async with self._redis_semaphore:  # Limit concurrent Redis operations
+                indexed_ids = await redis_cluster.smembers(index_key)
             order_keys = []
             if indexed_ids:
                 order_keys = [f"user_holdings:{{{hash_tag}}}:{oid}" for oid in indexed_ids]
             else:
                 # Fallback to SCAN; handle possible cluster-structured responses
-                cursor = 0
+                cursor = b"0"  # Use bytes for cursor to prevent dict injection
                 raw_keys = []
-                while True:
+                while cursor:
                     try:
-                        batch_result = await redis_cluster.scan(cursor=cursor, match=pattern, count=50)
+                        async with self._redis_semaphore:  # Limit concurrent Redis operations
+                            batch_result = await redis_cluster.scan(cursor=cursor, match=pattern, count=50)
                     except Exception as e:
                         self.logger.error(f"SCAN error for pattern {pattern}: {e}")
+                        self.logger.error(f"SCAN cursor type was: {type(cursor)}, value: {cursor}")
                         break
                     # batch_result may be (cursor, list) or dict mapping node->(cursor, list)
                     if isinstance(batch_result, tuple) and len(batch_result) == 2:
                         cursor, batch = batch_result
+                        # Ensure cursor is bytes - handle all possible types
+                        if isinstance(cursor, dict):
+                            # If cursor is a dict, we can't continue SCAN properly, so stop
+                            self.logger.warning(f"SCAN cursor is dict for pattern {pattern}, stopping scan: {cursor}")
+                            cursor = b"0"  # Stop scanning
+                        elif isinstance(cursor, str):
+                            cursor = cursor.encode('utf-8')
+                        elif isinstance(cursor, int):
+                            cursor = str(cursor).encode('utf-8')
+                        elif isinstance(cursor, bytes):
+                            pass  # Already bytes, keep as is
+                        else:
+                            # Unknown cursor type, convert to string then bytes
+                            self.logger.warning(f"Unknown cursor type {type(cursor)} for pattern {pattern}: {cursor}")
+                            cursor = str(cursor).encode('utf-8')
+                        
                         if isinstance(batch, dict):
                             for _, v in batch.items():
                                 if isinstance(v, tuple) and len(v) == 2:
@@ -244,15 +269,17 @@ class PortfolioCalculatorListener:
                             raw_keys.extend(list(batch))
                     elif isinstance(batch_result, dict):
                         # Map of node -> (cursor, keys)
+                        cursor = b"0"  # Stop after one pass for dict response
                         for _, v in batch_result.items():
                             if isinstance(v, tuple) and len(v) == 2:
                                 _, lst = v
                                 raw_keys.extend(lst or [])
-                        cursor = 0
                     else:
                         # Unknown structure; stop
-                        cursor = 0
-                    if cursor == 0:
+                        cursor = b"0"
+                    
+                    # Stop if cursor is 0 or "0"
+                    if cursor == b"0" or cursor == 0:
                         break
                 # Sanitize keys to strings
                 for k in raw_keys:
@@ -266,8 +293,24 @@ class PortfolioCalculatorListener:
 
             if not order_keys:
                 return []
-            # Pipeline hgetall for all orders using sanitized string keys
-            orders = await asyncio.gather(*(redis_cluster.hgetall(k) for k in order_keys))
+            # Use pipeline with batching and semaphore to avoid too many concurrent connections
+            try:
+                # Process in batches to avoid overwhelming Redis connections
+                batch_size = 50  # Limit batch size to prevent connection exhaustion
+                orders = []
+                
+                for i in range(0, len(order_keys), batch_size):
+                    batch_keys = order_keys[i:i + batch_size]
+                    async with self._redis_semaphore:  # Limit concurrent Redis operations
+                        pipe = redis_cluster.pipeline()
+                        for k in batch_keys:
+                            pipe.hgetall(k)
+                        batch_orders = await pipe.execute()
+                        orders.extend(batch_orders)
+                    
+            except Exception as e:
+                self.logger.error(f"Pipeline execution failed for {user_type_str}:{user_id_str}: {e}")
+                return []
             # Attach order_id and key; symbol is expected in fields; if missing, it will be validated later
             enriched = []
             for i, k in enumerate(order_keys):

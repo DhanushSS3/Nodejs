@@ -73,6 +73,11 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     tagged_key = f"user:{{{user_type}:{user_id}}}:config"
     legacy_key = f"user:{user_type}:{user_id}:config"
     
+    # Debug logging for key construction (only for strategy providers during transition)
+    # if user_type == "strategy_provider":
+    #     logger.info("fetch_user_config: Fetching config for %s:%s, tagged_key=%s, legacy_key=%s", 
+    #                 user_type, user_id, tagged_key, legacy_key)
+    
     # Check Redis cluster health before attempting operations
     try:
         cluster_info = await redis_cluster.cluster_info()
@@ -98,6 +103,8 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     used_legacy = False
     try:
         data = await redis_cluster.hgetall(tagged_key)
+        if user_type == "strategy_provider":
+            logger.info("fetch_user_config: Tagged key result for %s:%s: %s", user_type, user_id, data)
         # Only log if no data found (potential issue)
         if not data:
             _TIMING_LOG.info('{"component":"redis_tagged_empty","user_type":"%s","user_id":"%s","tagged_key":"%s"}',
@@ -111,6 +118,8 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     if not data:
         try:
             data = await redis_cluster.hgetall(legacy_key)
+            if user_type == "strategy_provider":
+                logger.info("fetch_user_config: Legacy key result for %s:%s: %s", user_type, user_id, data)
             if data:
                 used_legacy = True
                 # Only log legacy fallback when it actually happens (useful info)
@@ -301,10 +310,30 @@ async def fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]
             cursor = b"0"
             raw_keys: List[Any] = []
             while cursor:
-                batch_result = await redis_cluster.scan(cursor=cursor, match=pattern, count=100)
+                try:
+                    batch_result = await redis_cluster.scan(cursor=cursor, match=pattern, count=100)
+                except Exception as e:
+                    logger.error("fetch_user_orders: SCAN error for %s:%s pattern %s: %s", user_type, user_id, pattern, e)
+                    logger.error("fetch_user_orders: SCAN cursor type was: %s, value: %s", type(cursor), cursor)
+                    break
                 # batch_result may be (cursor, list) or dict mapping node->(cursor, list)
                 if isinstance(batch_result, tuple) and len(batch_result) == 2:
                     cursor, batch = batch_result
+                    # Ensure cursor is bytes - handle all possible types
+                    if isinstance(cursor, dict):
+                        # If cursor is a dict, we can't continue SCAN properly, so stop
+                        logger.warning("fetch_user_orders: SCAN cursor is dict for %s:%s, stopping scan: %s", user_type, user_id, cursor)
+                        cursor = b"0"  # Stop scanning
+                    elif isinstance(cursor, str):
+                        cursor = cursor.encode('utf-8')
+                    elif isinstance(cursor, int):
+                        cursor = str(cursor).encode('utf-8')
+                    elif isinstance(cursor, bytes):
+                        pass  # Already bytes, keep as is
+                    else:
+                        # Unknown cursor type, convert to string then bytes
+                        logger.warning("fetch_user_orders: Unknown cursor type %s for %s:%s: %s", type(cursor), user_type, user_id, cursor)
+                        cursor = str(cursor).encode('utf-8')
                     if isinstance(batch, dict):
                         for _, v in batch.items():
                             # v may be (cur, list) or list
