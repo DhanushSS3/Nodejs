@@ -17,7 +17,6 @@ const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const lotValidationService = require('../services/lot.validation.service');
 const groupsCache = require('../services/groups.cache.service');
-const { applyOrderClosePayout } = require('../services/order.payout.service');
 
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
@@ -1622,44 +1621,17 @@ async function handleLocalFlowPostClose(result, order, userId, orderId, operatio
       });
     }
 
-    // 3. Apply order close payout (balance + net_profit + transactions) - same as live users
-    try {
-      const payoutKey = `close_payout_applied:${orderId}`;
-      const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
-      if (nx) {
-        await applyOrderClosePayout({
-          userType: 'strategy_provider',
-          userId: order.order_user_id, // Use the specific strategy provider account ID
-          orderPk: order.id,
-          orderIdStr: orderId,
-          netProfit: result.net_profit || 0,
-          commission: result.total_commission || 0,
-          profitUsd: result.profit_usd || 0,
-          swap: result.swap || 0,
-          symbol: order.symbol,
-          orderType: order.order_type,
-        });
-        
-        logger.info('Strategy provider order close payout applied', {
-          order_id: orderId,
-          user_id: order.order_user_id,
-          net_profit: result.net_profit,
-          commission: result.total_commission,
-          swap: result.swap,
-          operationId
-        });
-      } else {
-        logger.info('Strategy provider order close payout already applied', {
-          order_id: orderId,
-          user_id: order.order_user_id,
-          operationId
-        });
-      }
-    } catch (payoutError) {
-      logger.error('Failed to apply strategy provider order close payout', {
+    // 3. Update strategy provider net profit (same as live users)
+    if (typeof result.net_profit === 'number') {
+      await StrategyProviderAccount.increment(
+        { net_profit: result.net_profit },
+        { where: { id: order.order_user_id } } // Use the specific strategy provider account ID
+      );
+      
+      logger.info('Strategy provider net profit updated after local close', {
         order_id: orderId,
-        user_id: order.order_user_id,
-        error: payoutError.message,
+        user_id: userId,
+        net_profit: result.net_profit,
         operationId
       });
     }
