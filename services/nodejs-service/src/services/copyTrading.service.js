@@ -1181,6 +1181,89 @@ class CopyTradingService {
               });
             }
           }
+
+          // Apply wallet payout for copy follower (same as strategy providers)
+          try {
+            const payoutKey = `close_payout_applied:${String(copiedOrder.order_id)}`;
+            const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+            if (nx) {
+              // Calculate adjusted net profit after performance fee (if applicable)
+              let adjustedNetProfit = Number(result.net_profit) || 0;
+              let performanceFeeResult = null;
+              
+              if (adjustedNetProfit > 0) {
+                try {
+                  const { calculateAndApplyPerformanceFee } = require('./performanceFee.service');
+                  performanceFeeResult = await calculateAndApplyPerformanceFee({
+                    copyFollowerOrderId: copiedOrder.order_id,
+                    copyFollowerUserId: parseInt(copiedOrder.order_user_id),
+                    strategyProviderId: masterOrder.order_user_id,
+                    orderNetProfit: adjustedNetProfit,
+                    symbol: copiedOrder.symbol,
+                    orderType: copiedOrder.order_type
+                  });
+                  
+                  if (performanceFeeResult && performanceFeeResult.performanceFeeCharged) {
+                    adjustedNetProfit = performanceFeeResult.adjustedNetProfit;
+                    logger.info('Performance fee applied for copy follower local close', {
+                      copiedOrderId: copiedOrder.order_id,
+                      originalNetProfit: result.net_profit,
+                      performanceFeeAmount: performanceFeeResult.performanceFeeAmount,
+                      adjustedNetProfit
+                    });
+                  }
+                } catch (performanceFeeError) {
+                  logger.error('Failed to apply performance fee for copy follower local close', {
+                    copiedOrderId: copiedOrder.order_id,
+                    error: performanceFeeError.message
+                  });
+                }
+              }
+
+              const { applyOrderClosePayout } = require('./order.payout.service');
+              await applyOrderClosePayout({
+                userType: 'copy_follower',
+                userId: parseInt(copiedOrder.order_user_id),
+                orderPk: copiedOrder?.id ?? null,
+                orderIdStr: String(copiedOrder.order_id),
+                netProfit: adjustedNetProfit,
+                commission: Number(result.total_commission) || 0,
+                profitUsd: Number(result.profit_usd) || 0,
+                swap: Number(result.swap) || 0,
+                symbol: copiedOrder.symbol,
+                orderType: copiedOrder.order_type,
+              });
+              
+              logger.info('Copy follower wallet payout applied after local close', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                adjustedNetProfit
+              });
+              
+              // Emit wallet balance update events
+              try {
+                const portfolioEvents = require('./events/portfolio.events');
+                portfolioEvents.emitUserUpdate('copy_follower', String(copiedOrder.order_user_id), { 
+                  type: 'wallet_balance_update', 
+                  order_id: copiedOrder.order_id 
+                });
+                
+                // If performance fee was applied, also emit update for strategy provider
+                if (performanceFeeResult && performanceFeeResult.performanceFeeCharged) {
+                  portfolioEvents.emitUserUpdate('strategy_provider', String(masterOrder.order_user_id), {
+                    type: 'wallet_balance_update',
+                    reason: 'performance_fee_earned',
+                    order_id: copiedOrder.order_id,
+                  });
+                }
+              } catch (_) {}
+            }
+          } catch (e) {
+            logger.warn('Failed to apply wallet payout on copy follower local close', { 
+              error: e.message, 
+              order_id: copiedOrder.order_id
+            });
+          }
           
         } catch (dbError) {
           logger.error('Failed to update copy follower order in database', {

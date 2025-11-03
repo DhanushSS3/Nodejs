@@ -14,6 +14,7 @@ const copyTradingService = require('../services/copyTrading.service');
 const copyTradingRedisService = require('../services/copyTradingRedis.service');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
+const { applyOrderClosePayout } = require('../services/order.payout.service');
 const { redisCluster } = require('../../config/redis');
 const lotValidationService = require('../services/lot.validation.service');
 const groupsCache = require('../services/groups.cache.service');
@@ -745,7 +746,23 @@ async function closeStrategyProviderOrder(req, res) {
     };
     if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
     if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
-    if (!Number.isNaN(provided_close_price) && provided_close_price > 0) pyPayload.close_price = provided_close_price;
+    // Only include close_price for provider flow; local flow should calculate from market data
+    if (isProviderFlow && !Number.isNaN(provided_close_price) && provided_close_price > 0) {
+      pyPayload.close_price = provided_close_price;
+      logger.info('Including close_price for provider flow', {
+        order_id,
+        isProviderFlow,
+        provided_close_price,
+        operationId
+      });
+    } else {
+      logger.info('Excluding close_price for local flow', {
+        order_id,
+        isProviderFlow,
+        provided_close_price,
+        operationId
+      });
+    }
     if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
@@ -798,14 +815,26 @@ async function closeStrategyProviderOrder(req, res) {
     });
 
     // Update order status (same pattern as live users)
+    // For provider flow: use frontend close_price, for local flow: use backend calculated close_price
+    const finalClosePrice = (flow === 'provider' && provided_close_price) ? provided_close_price : result.close_price;
+    
     await order.update({
       order_status: 'CLOSED',
-      close_price: provided_close_price || result.close_price,
+      close_price: finalClosePrice,
       net_profit: result.net_profit || 0,
       commission: result.total_commission || 0,
       swap: result.swap || 0,
       copy_distribution_status: 'pending', // Will be updated after copy trading
       copy_distribution_completed_at: null
+    });
+    
+    logger.info('Strategy provider order updated with close price', {
+      order_id,
+      flow,
+      provided_close_price,
+      result_close_price: result.close_price,
+      final_close_price: finalClosePrice,
+      operationId
     });
 
     // Handle flow-specific post-close operations (same pattern as live users)
@@ -1644,7 +1673,48 @@ async function handleLocalFlowPostClose(result, order, userId, orderId, operatio
       });
     }
 
-    // 3. Update strategy provider net profit (same as live users)
+    // 3. Apply wallet payout + user transactions (same as live users)
+    try {
+      const payoutKey = `close_payout_applied:${String(orderId)}`;
+      const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+      if (nx) {
+        await applyOrderClosePayout({
+          userType: 'strategy_provider',
+          userId: order.order_user_id, // Use the specific strategy provider account ID
+          orderPk: order?.id ?? null,
+          orderIdStr: String(orderId),
+          netProfit: Number(result.net_profit) || 0,
+          commission: Number(result.total_commission) || 0,
+          profitUsd: Number(result.profit_usd) || 0,
+          swap: Number(result.swap) || 0,
+          symbol: order.symbol,
+          orderType: order.order_type,
+        });
+        
+        logger.info('Strategy provider wallet payout applied after local close', {
+          order_id: orderId,
+          user_id: userId,
+          net_profit: result.net_profit,
+          operationId
+        });
+        
+        // Emit wallet balance update event
+        try {
+          portfolioEvents.emitUserUpdate('strategy_provider', userId.toString(), { 
+            type: 'wallet_balance_update', 
+            order_id: orderId 
+          });
+        } catch (_) {}
+      }
+    } catch (e) {
+      logger.warn('Failed to apply wallet payout on strategy provider local close', { 
+        error: e.message, 
+        order_id: orderId,
+        operationId
+      });
+    }
+
+    // 4. Update strategy provider net profit (same as live users)
     if (typeof result.net_profit === 'number') {
       await StrategyProviderAccount.increment(
         { net_profit: result.net_profit },
