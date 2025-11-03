@@ -1180,15 +1180,21 @@ async function addStopLossToOrder(req, res) {
     }
 
     // Generate stop loss ID (same as live users)
-    const stoploss_id = await idGenerator.generateOrderId();
-
-    // Persist lifecycle ID (same as live users)
+    const stoploss_id = await idGenerator.generateStopLossId();
+    
+    // Update SQL row with stoploss_id and status (same as live users)
     try {
-      if (stoploss_id) {
-        await orderLifecycleService.addLifecycleId(order_id, 'stoploss_id', stoploss_id);
-      }
+      await order.update({ stoploss_id, status });
+      
+      // Store in lifecycle service for complete ID history (same as live users)
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'stoploss_id', 
+        stoploss_id, 
+        `Stoploss added - price: ${stop_loss}`
+      );
     } catch (e) {
-      logger.warn('Failed to persist stoploss lifecycle id', { order_id, stoploss_id, error: e.message });
+      logger.warn('Failed to persist stoploss_id before send', { order_id, stoploss_id, error: e.message });
     }
 
     // Build payload to Python (same pattern as live users)
@@ -1370,16 +1376,22 @@ async function addTakeProfitToOrder(req, res) {
       // Continue with the operation if check fails to avoid blocking valid requests
     }
 
-    // Generate take profit ID
-    const takeprofit_id = await idGenerator.generateOrderId();
-
-    // Persist lifecycle ID
+    // Generate take profit ID (same as live users)
+    const takeprofit_id = await idGenerator.generateTakeProfitId();
+    
+    // Update SQL row with takeprofit_id and status (same as live users)
     try {
-      if (takeprofit_id) {
-        await orderLifecycleService.addLifecycleId(order_id, 'takeprofit_id', takeprofit_id);
-      }
+      await order.update({ takeprofit_id, status });
+      
+      // Store in lifecycle service for complete ID history (same as live users)
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'takeprofit_id', 
+        takeprofit_id, 
+        `Takeprofit added - price: ${take_profit}`
+      );
     } catch (e) {
-      logger.warn('Failed to persist takeprofit lifecycle id', { order_id, takeprofit_id, error: e.message });
+      logger.warn('Failed to persist takeprofit_id before send', { order_id, takeprofit_id, error: e.message });
     }
 
     // Build payload to Python
@@ -1470,7 +1482,7 @@ async function cancelStopLossFromOrder(req, res) {
 
     const body = req.body || {};
     const order_id = body.order_id; // Get from request body (same as live users)
-    const stoploss_id = body.stoploss_id || await idGenerator.generateOrderId();
+    const status = body.status || 'STOPLOSS-CANCEL';
 
     if (!order_id) {
       return res.status(400).json({ success: false, message: 'order_id is required' });
@@ -1510,13 +1522,28 @@ async function cancelStopLossFromOrder(req, res) {
       });
     }
 
-    // Persist lifecycle ID
+    // Resolve stoploss_id from SQL (same as live users)
+    let resolvedStoplossId = order.stoploss_id;
+    if (!resolvedStoplossId) {
+      // For provider flow, we need the actual stoploss_id
+      // For local flow, a placeholder is acceptable
+      resolvedStoplossId = `SL-${order_id}`;
+    }
+
+    // Generate cancel id and persist to SQL (same as live users)
+    const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
     try {
-      if (stoploss_id) {
-        await orderLifecycleService.addLifecycleId(order_id, 'stoploss_cancel_id', stoploss_id);
-      }
+      await order.update({ stoploss_cancel_id, status });
+      
+      // Store in lifecycle service for complete ID history (same as live users)
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'stoploss_cancel_id', 
+        stoploss_cancel_id, 
+        `Stoploss cancel requested - resolved_sl_id: ${resolvedStoplossId}`
+      );
     } catch (e) {
-      logger.warn('Failed to persist stoploss cancel lifecycle id', { order_id, stoploss_id, error: e.message });
+      logger.warn('Failed to persist stoploss_cancel_id before send', { order_id, stoploss_cancel_id, error: e.message });
     }
 
     // Build payload to Python
@@ -1527,9 +1554,10 @@ async function cancelStopLossFromOrder(req, res) {
       user_id: strategyAccount.id.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider',
       order_id,
-      status: 'STOPLOSS_CANCEL',
+      status: 'STOPLOSS-CANCEL',
       order_status: 'OPEN',
-      stoploss_id
+      stoploss_id: resolvedStoplossId,
+      stoploss_cancel_id
     };
     if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
@@ -1605,7 +1633,7 @@ async function cancelTakeProfitFromOrder(req, res) {
 
     const body = req.body || {};
     const order_id = body.order_id; // Get from request body (same as live users)
-    const takeprofit_id = body.takeprofit_id || await idGenerator.generateOrderId();
+    const status = body.status || 'TAKEPROFIT-CANCEL';
 
     if (!order_id) {
       return res.status(400).json({ success: false, message: 'order_id is required' });
@@ -1645,13 +1673,28 @@ async function cancelTakeProfitFromOrder(req, res) {
       });
     }
 
-    // Persist lifecycle ID
+    // Resolve takeprofit_id from SQL (same as live users)
+    let resolvedTakeprofitId = order.takeprofit_id;
+    if (!resolvedTakeprofitId) {
+      // For provider flow, we need the actual takeprofit_id
+      // For local flow, a placeholder is acceptable
+      resolvedTakeprofitId = `TP-${order_id}`;
+    }
+
+    // Generate cancel id and persist to SQL (same as live users)
+    const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
     try {
-      if (takeprofit_id) {
-        await orderLifecycleService.addLifecycleId(order_id, 'takeprofit_cancel_id', takeprofit_id);
-      }
+      await order.update({ takeprofit_cancel_id, status });
+      
+      // Store in lifecycle service for complete ID history (same as live users)
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'takeprofit_cancel_id', 
+        takeprofit_cancel_id, 
+        `Takeprofit cancel requested - resolved_tp_id: ${resolvedTakeprofitId}`
+      );
     } catch (e) {
-      logger.warn('Failed to persist takeprofit cancel lifecycle id', { order_id, takeprofit_id, error: e.message });
+      logger.warn('Failed to persist takeprofit_cancel_id before send', { order_id, takeprofit_cancel_id, error: e.message });
     }
 
     // Build payload to Python
@@ -1662,9 +1705,10 @@ async function cancelTakeProfitFromOrder(req, res) {
       user_id: strategyAccount.id.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider',
       order_id,
-      status: 'TAKEPROFIT_CANCEL',
+      status: 'TAKEPROFIT-CANCEL',
       order_status: 'OPEN',
-      takeprofit_id
+      takeprofit_id: resolvedTakeprofitId,
+      takeprofit_cancel_id
     };
     if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
