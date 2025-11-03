@@ -19,6 +19,8 @@ const portfolioEvents = require('../events/portfolio.events');
 const { applyOrderClosePayout } = require('../order.payout.service');
 // Copy trading service for strategy provider order distribution
 const copyTradingService = require('../copyTrading.service');
+// Performance fee service for copy followers
+const { calculateAndApplyPerformanceFee } = require('../performanceFee.service');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -339,13 +341,57 @@ async function applyDbUpdate(msg) {
         const symbolP = rowP?.symbol ?? undefined;
         const orderTypeP = rowP?.order_type ?? undefined;
 
+        // For copy followers, calculate performance fee before applying payout
+        let adjustedNetProfit = Number(net_profit) || 0;
+        let performanceFeeResult = null;
+        
+        if (String(user_type) === 'copy_follower' && adjustedNetProfit > 0) {
+          try {
+            // Get copy follower order to find strategy provider
+            const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
+            const copyFollowerOrder = await CopyFollowerOrder.findOne({
+              where: { order_id: String(order_id) }
+            });
+            
+            if (copyFollowerOrder && copyFollowerOrder.strategy_provider_id) {
+              performanceFeeResult = await calculateAndApplyPerformanceFee({
+                copyFollowerOrderId: String(order_id),
+                copyFollowerUserId: parseInt(String(user_id), 10),
+                strategyProviderId: copyFollowerOrder.strategy_provider_id,
+                orderNetProfit: adjustedNetProfit,
+                symbol: symbolP ? String(symbolP).toUpperCase() : undefined,
+                orderType: orderTypeP ? String(orderTypeP).toUpperCase() : undefined
+              });
+              
+              // Use adjusted net profit after performance fee deduction
+              if (performanceFeeResult.performanceFeeCharged) {
+                adjustedNetProfit = performanceFeeResult.adjustedNetProfit;
+                logger.info('Performance fee applied for copy follower order', {
+                  order_id: String(order_id),
+                  originalNetProfit: Number(net_profit) || 0,
+                  adjustedNetProfit,
+                  performanceFeeAmount: performanceFeeResult.performanceFeeAmount
+                });
+              }
+            }
+          } catch (performanceFeeError) {
+            logger.error('Failed to apply performance fee for copy follower', {
+              order_id: String(order_id),
+              user_id: String(user_id),
+              error: performanceFeeError.message
+            });
+            // Continue with original net profit if performance fee calculation fails
+          }
+        }
+
         // Apply payout for all user types (live, demo, strategy_provider, copy_follower)
+        // For copy followers, use adjusted net profit after performance fee
         await applyOrderClosePayout({
           userType: String(user_type),
           userId: parseInt(String(user_id), 10),
           orderPk,
           orderIdStr: String(order_id),
-          netProfit: Number(net_profit) || 0,
+          netProfit: adjustedNetProfit,
           commission: Number(commission) || 0,
           profitUsd: Number(msg.profit_usd) || 0,
           swap: Number(swap) || 0,
@@ -359,6 +405,15 @@ async function applyDbUpdate(msg) {
             type: 'wallet_balance_update',
             order_id: String(order_id),
           });
+          
+          // If performance fee was applied, also emit update for strategy provider
+          if (performanceFeeResult && performanceFeeResult.performanceFeeCharged) {
+            portfolioEvents.emitUserUpdate('strategy_provider', String(performanceFeeResult.strategyProviderId), {
+              type: 'wallet_balance_update',
+              reason: 'performance_fee_earned',
+              order_id: String(order_id),
+            });
+          }
         } catch (e) {
           logger.warn('Failed to emit WS after payout', { error: e.message, order_id: String(order_id) });
         }
@@ -398,6 +453,10 @@ async function applyDbUpdate(msg) {
     // Default for pending-cancel confirmations if publisher forgot to set order_status
     if (!order_status && String(type) === 'ORDER_PENDING_CANCEL') {
       updateFields.order_status = 'CANCELLED';
+    }
+    // Default for order rejection confirmations if publisher forgot to set order_status
+    if (!order_status && String(type) === 'ORDER_REJECTED') {
+      updateFields.order_status = 'REJECTED';
     }
     if (order_type) updateFields.order_type = normalizeOrderType(order_type);
     if (order_price != null) updateFields.order_price = String(order_price);
@@ -559,7 +618,7 @@ async function applyDbUpdate(msg) {
           // Maintain index membership based on order_status when provided
           if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
             const st = String(updateFields.order_status).toUpperCase();
-            if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED') {
+            if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED' || st === 'QUEUED') {
               pUser.srem(indexKey, String(order_id));
             } else if (st === 'OPEN' || st === 'PENDING') {
               // Ensure presence in index for OPEN and PENDING

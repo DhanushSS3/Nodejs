@@ -312,6 +312,7 @@ class PortfolioCalculatorListener:
                 self.logger.error(f"Pipeline execution failed for {user_type_str}:{user_id_str}: {e}")
                 return []
             # Attach order_id and key; symbol is expected in fields; if missing, it will be validated later
+            # Filter out QUEUED, REJECTED, CANCELLED, and CLOSED orders for portfolio calculations
             enriched = []
             for i, k in enumerate(order_keys):
                 try:
@@ -322,6 +323,17 @@ class PortfolioCalculatorListener:
                 od = orders[i] or {}
                 od['order_id'] = od.get('order_id') or order_id
                 od['order_key'] = key_str
+                
+                # Filter out orders that are not truly "open" for portfolio calculations
+                order_status = str(od.get('order_status', '')).upper()
+                execution_status = str(od.get('execution_status', '')).upper()
+                
+                # Skip QUEUED, REJECTED, CANCELLED, and CLOSED orders
+                if order_status in ('QUEUED', 'REJECTED', 'CANCELLED', 'CLOSED'):
+                    continue
+                if execution_status in ('QUEUED', 'REJECTED', 'CANCELLED', 'CLOSED'):
+                    continue
+                    
                 enriched.append(od)
             return enriched
         except Exception as e:
@@ -592,6 +604,21 @@ class PortfolioCalculatorListener:
             try:
                 order_id = order.get('order_id') or 'unknown'
                 symbol = order.get('symbol')
+
+                # Skip orders that are not truly "open" for PnL calculations
+                order_status = str(order.get('order_status', '')).upper()
+                execution_status = str(order.get('execution_status', '')).upper()
+                
+                if order_status in ('QUEUED', 'REJECTED', 'CANCELLED', 'CLOSED'):
+                    skipped += 1
+                    degraded_flags.add('orders_skipped')
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=order_status_{order_status.lower()}")
+                    continue
+                if execution_status in ('QUEUED', 'REJECTED', 'CANCELLED', 'CLOSED'):
+                    skipped += 1
+                    degraded_flags.add('orders_skipped')
+                    self.logger.warning(f"order_skip user={user_ctx} symbol={symbol} reason=execution_status_{execution_status.lower()}")
+                    continue
 
                 # Respect pre-validated skips
                 if order_id in skip_orders:

@@ -532,22 +532,36 @@ class CopyTradingService {
         throw new Error(`Cannot fetch live portfolio data for strategy provider ${masterOrder.order_user_id}: ${redisError.message}`);
       }
 
+      let masterEquity;
+      let equitySource;
+      
       if (!portfolioData || !portfolioData.equity) {
-        logger.error('No live equity data available in Redis portfolio', {
+        // Fallback: Use wallet balance when no portfolio data exists
+        // This happens when strategy provider has no open orders or portfolio calculation isn't running
+        logger.warn('No live equity data available in Redis portfolio, using wallet balance as fallback', {
           strategyProviderId: masterOrder.order_user_id,
           portfolioKey,
-          portfolioData: portfolioData ? Object.keys(portfolioData) : null
+          portfolioData: portfolioData ? Object.keys(portfolioData) : null,
+          walletBalance: strategyProvider.wallet_balance
         });
-        throw new Error(`No live equity data available for strategy provider ${masterOrder.order_user_id}. Portfolio calculation may not be running.`);
+        
+        masterEquity = parseFloat(strategyProvider.wallet_balance || 0);
+        equitySource = 'wallet_balance_fallback';
+        
+        if (masterEquity <= 0) {
+          throw new Error(`Strategy provider ${masterOrder.order_user_id} has no equity available (wallet balance: ${masterEquity})`);
+        }
+      } else {
+        masterEquity = parseFloat(portfolioData.equity);
+        equitySource = 'redis_portfolio';
+        
+        logger.info('Using live equity from Redis portfolio', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          liveEquity: masterEquity,
+          portfolioFields: Object.keys(portfolioData)
+        });
       }
-
-      const masterEquity = parseFloat(portfolioData.equity);
-      logger.info('Using live equity from Redis portfolio', {
-        strategyProviderId: masterOrder.order_user_id,
-        portfolioKey,
-        liveEquity: masterEquity,
-        portfolioFields: Object.keys(portfolioData)
-      });
       
       // Get follower investment amount (their equity in copy trading)
       const followerInvestment = parseFloat(follower.investment_amount || 0);
@@ -558,7 +572,7 @@ class CopyTradingService {
           id: strategyProvider.id,
           wallet_balance: strategyProvider.wallet_balance,
           liveEquity: masterEquity,
-          equitySource: 'redis_live'
+          equitySource: equitySource
         },
         follower: {
           id: follower.id,
@@ -865,11 +879,25 @@ class CopyTradingService {
 
       if (executionResult.success) {
         updateFields.copy_status = 'copied';
-        updateFields.order_status = 'OPEN';
+        
+        // Follow same pattern as live users and strategy providers
+        const flow = executionResult.data?.flow || 'local';
+        updateFields.order_status = flow === 'provider' ? 'QUEUED' : 'OPEN';
         updateFields.order_price = executionResult.executionPrice;
-        updateFields.margin = executionResult.margin;
-        updateFields.contract_value = executionResult.contractValue;
-        updateFields.commission = executionResult.commission;
+        
+        // For provider flow, only update basic fields (margin updated by worker on confirmation)
+        // For local flow, update all fields immediately
+        if (flow === 'local') {
+          updateFields.margin = executionResult.margin;
+          updateFields.contract_value = executionResult.contractValue;
+          updateFields.commission = executionResult.commission;
+        }
+        
+        logger.info('Copy follower order status set based on flow', {
+          followerOrderId: followerOrder.order_id,
+          flow,
+          orderStatus: updateFields.order_status
+        });
       } else {
         updateFields.copy_status = 'failed';
         updateFields.order_status = 'REJECTED';

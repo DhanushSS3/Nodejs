@@ -298,17 +298,40 @@ async function placeStrategyProviderOrder(req, res) {
     const pyData = pyResp.data?.data || pyResp.data || {};
     
     // Update order with execution results
-    await masterOrder.update({
-      order_status: 'OPEN',
+    // For provider flow, keep status as QUEUED until provider confirmation
+    // For local flow, set to OPEN immediately (same as live users)
+    const flow = pyData.flow || 'local';
+    const orderStatus = flow === 'provider' ? 'QUEUED' : 'OPEN';
+    
+    // For provider flow, only update price and reserve margin (like live users)
+    // For local flow, update all fields immediately
+    const updateFields = {
+      order_status: orderStatus,
       order_price: pyData.exec_price || parsed.order_price,
-      margin: pyData.margin_usd || 0,
-      contract_value: pyData.contract_value || 0,
-      commission: pyData.commission_entry || 0
+    };
+    
+    if (flow === 'local') {
+      // Local execution: update all fields immediately
+      updateFields.margin = pyData.margin_usd || 0;
+      updateFields.contract_value = pyData.contract_value || 0;
+      updateFields.commission = pyData.commission_entry || 0;
+    } else {
+      // Provider flow: margin is reserved/managed in Redis and finalized on provider confirmation
+      // Only update basic fields, margin will be updated by worker when provider confirms
+    }
+    
+    await masterOrder.update(updateFields);
+    
+    logger.info('Strategy provider order status set based on flow', {
+      order_id: masterOrder.order_id,
+      flow,
+      orderStatus,
+      updateFields,
+      operationId
     });
     mark('after_order_update');
 
     // Update strategy provider margin for local execution
-    const flow = pyData.flow || 'local';
     if (flow === 'local' && typeof pyData.used_margin_executed === 'number') {
       try {
         await updateUserUsedMargin({

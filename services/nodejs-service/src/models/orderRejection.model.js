@@ -24,7 +24,7 @@ const OrderRejection = sequelize.define('OrderRejection', {
     comment: 'User ID who owns the order'
   },
   user_type: {
-    type: DataTypes.ENUM('live', 'demo'),
+    type: DataTypes.ENUM('live', 'demo', 'strategy_provider', 'copy_follower'),
     allowNull: false,
     comment: 'Type of user account'
   },

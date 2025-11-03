@@ -443,7 +443,7 @@ class RejectWorker:
                 # Handle different rejection types
                 if rejection_type == 'ORDER_PLACEMENT':
                     # Order placement rejection - update Redis and release margin
-                    ctx = await _update_redis_for_order_placement_reject(payload)
+                    ctx = await _handle_placement_rejection(payload)
                     self._stats['placement_rejects'] += 1
                     
                     # Recompute used margin excluding this order
