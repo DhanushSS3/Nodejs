@@ -399,6 +399,9 @@ class Dispatcher:
                         return
                 elif redis_status == "OPEN" and ord_status == "EXECUTED":
                     target_queue = OPEN_QUEUE
+                elif redis_status == "QUEUED" and ord_status == "EXECUTED":
+                    # Provider flow order executed -> open the order
+                    target_queue = OPEN_QUEUE
                 elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "EXECUTED":
                     # Pending order executed at provider -> open the order
                     payload["pending_executed"] = True
