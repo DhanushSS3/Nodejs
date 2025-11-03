@@ -1133,6 +1133,52 @@ async function addStopLossToOrder(req, res) {
       });
     }
 
+    // Check if stoploss already exists - user must cancel existing one first
+    try {
+      // Check SQL row
+      if (order.stop_loss !== null && order.stop_loss !== undefined && parseFloat(order.stop_loss) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+
+      // Check Redis canonical order data
+      const canonicalData = await redisCluster.hgetall(`order_data:${order_id}`);
+      if (canonicalData && canonicalData.stop_loss && parseFloat(canonicalData.stop_loss) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+
+      // Check user holdings in Redis
+      const userTag = `strategy_provider:${tokenUserId}`;
+      const holdingsData = await redisCluster.hgetall(`user_holdings:{${userTag}}:${order_id}`);
+      if (holdingsData && holdingsData.stop_loss && parseFloat(holdingsData.stop_loss) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+
+      // Check order triggers in Redis
+      const triggersData = await redisCluster.hgetall(`order_triggers:${order_id}`);
+      if (triggersData && (triggersData.stop_loss || triggersData.stop_loss_compare || triggersData.stop_loss_user)) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to check existing stoploss', { order_id, error: error.message, operationId });
+      // Continue with the operation if check fails to avoid blocking valid requests
+    }
+
     // Generate stop loss ID (same as live users)
     const stoploss_id = await idGenerator.generateOrderId();
 
@@ -1146,10 +1192,11 @@ async function addStopLossToOrder(req, res) {
     }
 
     // Build payload to Python (same pattern as live users)
+    // IMPORTANT: Use strategy provider account ID for config lookup (same as order placement)
     const pyPayload = {
       symbol: order.symbol,
       order_type: order.order_type,
-      user_id: tokenUserId.toString(),
+      user_id: strategyAccount.id.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider',
       order_id,
       stop_loss,
@@ -1277,6 +1324,52 @@ async function addTakeProfitToOrder(req, res) {
       });
     }
 
+    // Check if takeprofit already exists - user must cancel existing one first
+    try {
+      // Check SQL row
+      if (order.take_profit !== null && order.take_profit !== undefined && parseFloat(order.take_profit) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+
+      // Check Redis canonical order data
+      const canonicalData = await redisCluster.hgetall(`order_data:${order_id}`);
+      if (canonicalData && canonicalData.take_profit && parseFloat(canonicalData.take_profit) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+
+      // Check user holdings in Redis
+      const userTag = `strategy_provider:${tokenUserId}`;
+      const holdingsData = await redisCluster.hgetall(`user_holdings:{${userTag}}:${order_id}`);
+      if (holdingsData && holdingsData.take_profit && parseFloat(holdingsData.take_profit) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+
+      // Check order triggers in Redis
+      const triggersData = await redisCluster.hgetall(`order_triggers:${order_id}`);
+      if (triggersData && (triggersData.take_profit || triggersData.take_profit_compare || triggersData.take_profit_user)) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to check existing takeprofit', { order_id, error: error.message, operationId });
+      // Continue with the operation if check fails to avoid blocking valid requests
+    }
+
     // Generate take profit ID
     const takeprofit_id = await idGenerator.generateOrderId();
 
@@ -1290,10 +1383,11 @@ async function addTakeProfitToOrder(req, res) {
     }
 
     // Build payload to Python
+    // IMPORTANT: Use strategy provider account ID for config lookup (same as order placement)
     const pyPayload = {
       symbol: order.symbol,
       order_type: order.order_type,
-      user_id: tokenUserId.toString(),
+      user_id: strategyAccount.id.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider',
       order_id,
       take_profit,
@@ -1426,10 +1520,11 @@ async function cancelStopLossFromOrder(req, res) {
     }
 
     // Build payload to Python
+    // IMPORTANT: Use strategy provider account ID for config lookup (same as order placement)
     const pyPayload = {
       symbol: order.symbol,
       order_type: order.order_type,
-      user_id: tokenUserId.toString(),
+      user_id: strategyAccount.id.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider',
       order_id,
       status: 'STOPLOSS_CANCEL',
@@ -1560,10 +1655,11 @@ async function cancelTakeProfitFromOrder(req, res) {
     }
 
     // Build payload to Python
+    // IMPORTANT: Use strategy provider account ID for config lookup (same as order placement)
     const pyPayload = {
       symbol: order.symbol,
       order_type: order.order_type,
-      user_id: tokenUserId.toString(),
+      user_id: strategyAccount.id.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider',
       order_id,
       status: 'TAKEPROFIT_CANCEL',

@@ -49,6 +49,31 @@ class TakeProfitService:
         if tp_raw is None or tp_raw <= 0:
             return {"ok": False, "reason": "invalid_take_profit"}
 
+        # Check if takeprofit already exists - user must cancel existing one first
+        try:
+            # Check order_data canonical
+            order_data = await redis_cluster.hgetall(f"order_data:{order_id}")
+            existing_tp = _safe_float(order_data.get("take_profit"))
+            if existing_tp is not None and existing_tp > 0:
+                return {"ok": False, "reason": "takeprofit_already_exists", "message": "Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one."}
+            
+            # Check user_holdings
+            hash_tag = f"{user_type}:{user_id}"
+            order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+            holdings_data = await redis_cluster.hgetall(order_key)
+            existing_tp_holdings = _safe_float(holdings_data.get("take_profit"))
+            if existing_tp_holdings is not None and existing_tp_holdings > 0:
+                return {"ok": False, "reason": "takeprofit_already_exists", "message": "Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one."}
+            
+            # Check order_triggers
+            triggers_data = await redis_cluster.hgetall(f"order_triggers:{order_id}")
+            if triggers_data and (triggers_data.get("take_profit") or triggers_data.get("take_profit_compare") or triggers_data.get("take_profit_user")):
+                return {"ok": False, "reason": "takeprofit_already_exists", "message": "Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one."}
+                
+        except Exception as e:
+            logger.warning("Failed to check existing takeprofit for order %s: %s", order_id, e)
+            # Continue with the operation if check fails to avoid blocking valid requests
+
         # Determine flow
         cfg = await fetch_user_config(user_type, user_id)
         group = cfg.get("group") or "Standard"

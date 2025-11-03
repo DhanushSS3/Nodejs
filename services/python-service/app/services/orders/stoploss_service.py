@@ -49,6 +49,31 @@ class StopLossService:
         if sl_raw is None or sl_raw <= 0:
             return {"ok": False, "reason": "invalid_stop_loss"}
 
+        # Check if stoploss already exists - user must cancel existing one first
+        try:
+            # Check order_data canonical
+            order_data = await redis_cluster.hgetall(f"order_data:{order_id}")
+            existing_sl = _safe_float(order_data.get("stop_loss"))
+            if existing_sl is not None and existing_sl > 0:
+                return {"ok": False, "reason": "stoploss_already_exists", "message": "Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one."}
+            
+            # Check user_holdings
+            hash_tag = f"{user_type}:{user_id}"
+            order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
+            holdings_data = await redis_cluster.hgetall(order_key)
+            existing_sl_holdings = _safe_float(holdings_data.get("stop_loss"))
+            if existing_sl_holdings is not None and existing_sl_holdings > 0:
+                return {"ok": False, "reason": "stoploss_already_exists", "message": "Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one."}
+            
+            # Check order_triggers
+            triggers_data = await redis_cluster.hgetall(f"order_triggers:{order_id}")
+            if triggers_data and (triggers_data.get("stop_loss") or triggers_data.get("stop_loss_compare") or triggers_data.get("stop_loss_user")):
+                return {"ok": False, "reason": "stoploss_already_exists", "message": "Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one."}
+                
+        except Exception as e:
+            logger.warning("Failed to check existing stoploss for order %s: %s", order_id, e)
+            # Continue with the operation if check fails to avoid blocking valid requests
+
         # Determine flow
         cfg = await fetch_user_config(user_type, user_id)
         group = cfg.get("group") or "Standard"

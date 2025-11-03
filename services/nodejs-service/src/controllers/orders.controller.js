@@ -1611,6 +1611,46 @@ async function addStopLoss(req, res) {
       return res.status(400).json({ success: false, message: 'For SELL, stop_loss must be greater than entry price' });
     }
 
+    // Check if stoploss already exists - user must cancel existing one first
+    let hasExistingSL = false;
+    // 1) Check SQL row
+    if (row && row.stop_loss != null && Number(row.stop_loss) > 0) {
+      hasExistingSL = true;
+    }
+    // 2) Check canonical Redis order_data
+    if (!hasExistingSL && canonical && canonical.stop_loss != null && Number(canonical.stop_loss) > 0) {
+      hasExistingSL = true;
+    }
+    // 3) Check user holdings (WS source of truth)
+    if (!hasExistingSL) {
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const hkey = `user_holdings:{${tag}}:${order_id}`;
+        const hold = await redisCluster.hgetall(hkey);
+        const slNum = hold && hold.stop_loss != null ? Number(hold.stop_loss) : NaN;
+        if (!Number.isNaN(slNum) && slNum > 0) hasExistingSL = true;
+      } catch (e) {
+        logger.warn('Failed to check user_holdings for existing SL', { error: e.message, order_id });
+      }
+    }
+    // 4) Check local trigger store
+    if (!hasExistingSL) {
+      try {
+        const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
+        if (trig && (trig.stop_loss || trig.stop_loss_compare || trig.stop_loss_user)) hasExistingSL = true;
+      } catch (e) {
+        logger.warn('Failed to check order_triggers for existing SL', { error: e.message, order_id });
+      }
+    }
+    
+    if (hasExistingSL) {
+      return res.status(409).json({ 
+        success: false, 
+        message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+        error_code: 'STOPLOSS_ALREADY_EXISTS'
+      });
+    }
+
     // Generate lifecycle id and persist to SQL for traceability
     const stoploss_id = await idGenerator.generateStopLossId();
     try {
@@ -1800,6 +1840,46 @@ async function addTakeProfit(req, res) {
     }
     if (order_type === 'SELL' && !(take_profit < entry_price_num)) {
       return res.status(400).json({ success: false, message: 'For SELL, take_profit must be less than entry price' });
+    }
+
+    // Check if takeprofit already exists - user must cancel existing one first
+    let hasExistingTP = false;
+    // 1) Check SQL row
+    if (row && row.take_profit != null && Number(row.take_profit) > 0) {
+      hasExistingTP = true;
+    }
+    // 2) Check canonical Redis order_data
+    if (!hasExistingTP && canonical && canonical.take_profit != null && Number(canonical.take_profit) > 0) {
+      hasExistingTP = true;
+    }
+    // 3) Check user holdings (WS source of truth)
+    if (!hasExistingTP) {
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const hkey = `user_holdings:{${tag}}:${order_id}`;
+        const hold = await redisCluster.hgetall(hkey);
+        const tpNum = hold && hold.take_profit != null ? Number(hold.take_profit) : NaN;
+        if (!Number.isNaN(tpNum) && tpNum > 0) hasExistingTP = true;
+      } catch (e) {
+        logger.warn('Failed to check user_holdings for existing TP', { error: e.message, order_id });
+      }
+    }
+    // 4) Check local trigger store
+    if (!hasExistingTP) {
+      try {
+        const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
+        if (trig && (trig.take_profit || trig.take_profit_compare || trig.take_profit_user)) hasExistingTP = true;
+      } catch (e) {
+        logger.warn('Failed to check order_triggers for existing TP', { error: e.message, order_id });
+      }
+    }
+    
+    if (hasExistingTP) {
+      return res.status(409).json({ 
+        success: false, 
+        message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+        error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+      });
     }
 
     const takeprofit_id = await idGenerator.generateTakeProfitId();
