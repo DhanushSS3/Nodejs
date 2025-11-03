@@ -387,6 +387,182 @@ router.get('/copy-follower/:copy_follower_account_id',
 
 /**
  * @swagger
+ * /api/copy-trading/orders/strategy-provider/take-profit/cancel:
+ *   post:
+ *     summary: Cancel take profit from strategy provider order
+ *     description: Removes take profit from strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
+ *     tags: [Copy Trading Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to cancel take profit from (required)
+ *                 example: "ord_20231021_001"
+ *               takeprofit_id:
+ *                 type: string
+ *                 description: Take profit ID (optional, will be generated if not provided)
+ *                 example: "tp_20231021_001"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
+ *     responses:
+ *       200:
+ *         description: Take profit cancelled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 takeprofit_cancel_id:
+ *                   type: string
+ *                   example: "tp_cancel_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "cancel_sp_takeprofit_1698012345_abc123"
+ *       400:
+ *         description: No take profit to cancel or invalid parameters
+ *       403:
+ *         description: Unauthorized access or invalid strategy provider role
+ *       404:
+ *         description: Order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/strategy-provider/take-profit/cancel',
+  (req, res, next) => {
+    console.log('=== ROUTE HIT: /strategy-provider/take-profit/cancel ===');
+    console.log('Method:', req.method);
+    console.log('URL:', req.originalUrl || req.url);
+    console.log('Body:', req.body);
+    next();
+  },
+  authenticateJWT,
+  [
+    body('order_id')
+      .notEmpty()
+      .withMessage('Order ID is required'),
+    body('takeprofit_id')
+      .optional()
+      .isString()
+      .withMessage('Take profit ID must be a string')
+  ],
+  validateRequest,
+  (req, res, next) => {
+    console.log('=== ABOUT TO CALL CONTROLLER ===');
+    next();
+  },
+  copyTradingOrdersController.cancelTakeProfitFromOrder
+);
+
+/**
+ * @swagger
+ * /api/copy-trading/orders/strategy-provider/stop-loss/cancel:
+ *   post:
+ *     summary: Cancel stop loss from strategy provider order
+ *     description: Removes stop loss from strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
+ *     tags: [Copy Trading Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_id
+ *             properties:
+ *               order_id:
+ *                 type: string
+ *                 description: Order ID to cancel stop loss from (required)
+ *                 example: "ord_20231021_001"
+ *               stoploss_id:
+ *                 type: string
+ *                 description: Stop loss ID (optional, will be generated if not provided)
+ *                 example: "sl_20231021_001"
+ *               idempotency_key:
+ *                 type: string
+ *                 description: Idempotency key for duplicate prevention (optional)
+ *                 example: "unique-key-123"
+ *     responses:
+ *       200:
+ *         description: Stop loss cancelled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Python service response data
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 stoploss_cancel_id:
+ *                   type: string
+ *                   example: "sl_cancel_20231021_001"
+ *                 operationId:
+ *                   type: string
+ *                   example: "cancel_sp_stoploss_1698012345_abc123"
+ *       400:
+ *         description: No stop loss to cancel or invalid parameters
+ *       403:
+ *         description: Unauthorized access or invalid strategy provider role
+ *       404:
+ *         description: Order not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/strategy-provider/stop-loss/cancel',
+  (req, res, next) => {
+    console.log('=== ROUTE HIT: /strategy-provider/stop-loss/cancel ===');
+    console.log('Method:', req.method);
+    console.log('URL:', req.originalUrl || req.url);
+    console.log('Body:', req.body);
+    next();
+  },
+  authenticateJWT,
+  [
+    body('order_id')
+      .notEmpty()
+      .withMessage('Order ID is required'),
+    body('stoploss_id')
+      .optional()
+      .isString()
+      .withMessage('Stop loss ID must be a string')
+  ],
+  validateRequest,
+  (req, res, next) => {
+    console.log('=== ABOUT TO CALL STOP LOSS CONTROLLER ===');
+    next();
+  },
+  copyTradingOrdersController.cancelStopLossFromOrder
+);
+
+/**
+ * @swagger
  * /api/copy-trading/orders/strategy-provider/{order_id}/cancel:
  *   post:
  *     summary: Cancel strategy provider order
@@ -592,169 +768,6 @@ router.post('/strategy-provider/take-profit/add',
   ],
   validateRequest,
   copyTradingOrdersController.addTakeProfitToOrder
-);
-
-/**
- * @swagger
- * /api/copy-trading/orders/strategy-provider/stop-loss/cancel:
- *   post:
- *     summary: Cancel stop loss from strategy provider order
- *     description: Removes stop loss from strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
- *     tags: [Copy Trading Orders]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - order_id
- *             properties:
- *               order_id:
- *                 type: string
- *                 description: Order ID to cancel stop loss from (required)
- *                 example: "ord_20231021_001"
- *               stoploss_id:
- *                 type: string
- *                 description: Stop loss ID (optional, will be generated if not provided)
- *                 example: "sl_20231021_001"
- *               idempotency_key:
- *                 type: string
- *                 description: Idempotency key for duplicate prevention (optional)
- *                 example: "unique-key-123"
- *     responses:
- *       200:
- *         description: Stop loss cancelled successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   description: Python service response data
- *                 order_id:
- *                   type: string
- *                   example: "ord_20231021_001"
- *                 stoploss_cancel_id:
- *                   type: string
- *                   example: "sl_cancel_20231021_001"
- *                 operationId:
- *                   type: string
- *                   example: "cancel_sp_stoploss_1698012345_abc123"
- *       400:
- *         description: No stop loss to cancel or invalid parameters
- *       403:
- *         description: Unauthorized access or invalid strategy provider role
- *       404:
- *         description: Order not found or access denied
- *       500:
- *         description: Internal server error
- */
-router.post('/strategy-provider/stop-loss/cancel',
-  authenticateJWT,
-  [
-    body('order_id')
-      .notEmpty()
-      .withMessage('Order ID is required'),
-    body('stoploss_id')
-      .optional()
-      .isString()
-      .withMessage('Stop loss ID must be a string')
-  ],
-  validateRequest,
-  copyTradingOrdersController.cancelStopLossFromOrder
-);
-
-/**
- * @swagger
- * /api/copy-trading/orders/strategy-provider/take-profit/cancel:
- *   post:
- *     summary: Cancel take profit from strategy provider order
- *     description: Removes take profit from strategy provider order with full lifecycle management. User authentication via JWT (strategy_provider role required). Follows exact same pattern as live user orders with operation tracking and lifecycle IDs.
- *     tags: [Copy Trading Orders]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - order_id
- *             properties:
- *               order_id:
- *                 type: string
- *                 description: Order ID to cancel take profit from (required)
- *                 example: "ord_20231021_001"
- *               takeprofit_id:
- *                 type: string
- *                 description: Take profit ID (optional, will be generated if not provided)
- *                 example: "tp_20231021_001"
- *               idempotency_key:
- *                 type: string
- *                 description: Idempotency key for duplicate prevention (optional)
- *                 example: "unique-key-123"
- *     responses:
- *       200:
- *         description: Take profit cancelled successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   description: Python service response data
- *                 order_id:
- *                   type: string
- *                   example: "ord_20231021_001"
- *                 takeprofit_cancel_id:
- *                   type: string
- *                   example: "tp_cancel_20231021_001"
- *                 operationId:
- *                   type: string
- *                   example: "cancel_sp_takeprofit_1698012345_abc123"
- *       400:
- *         description: No take profit to cancel or invalid parameters
- *       403:
- *         description: Unauthorized access or invalid strategy provider role
- *       404:
- *         description: Order not found or access denied
- *       500:
- *         description: Internal server error
- */
-router.post('/strategy-provider/take-profit/cancel',
-  (req, res, next) => {
-    console.log('=== ROUTE HIT: /strategy-provider/take-profit/cancel ===');
-    console.log('Method:', req.method);
-    console.log('URL:', req.originalUrl || req.url);
-    console.log('Body:', req.body);
-    next();
-  },
-  authenticateJWT,
-  body('order_id')
-    .notEmpty()
-    .withMessage('Order ID is required'),
-  body('takeprofit_id')
-    .optional()
-    .isString()
-    .withMessage('Take profit ID must be a string'),
-  validateRequest,
-  (req, res, next) => {
-    console.log('=== ABOUT TO CALL CONTROLLER ===');
-    next();
-  },
-  copyTradingOrdersController.cancelTakeProfitFromOrder
 );
 
 module.exports = router;

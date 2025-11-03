@@ -1597,7 +1597,8 @@ async function cancelStopLossFromOrder(req, res) {
 
     logger.info('Strategy provider stop loss cancelled successfully', {
       order_id,
-      stoploss_id,
+      stoploss_id: resolvedStoplossId,
+      stoploss_cancel_id,
       strategyProviderId: tokenUserId,
       operationId
     });
@@ -1606,7 +1607,7 @@ async function cancelStopLossFromOrder(req, res) {
       success: true,
       data: result,
       order_id,
-      stoploss_cancel_id: stoploss_id,
+      stoploss_cancel_id,
       operationId
     });
 
@@ -1679,29 +1680,31 @@ async function cancelTakeProfitFromOrder(req, res) {
       });
     }
 
-    // Find the order using the strategy provider account ID
-    const order = await StrategyProviderOrder.findOne({
+    // Find the order using the strategy provider account ID (new format)
+    let order = await StrategyProviderOrder.findOne({
       where: { 
         order_id,
         order_user_id: strategyAccount.id
       }
     });
+
+    // If not found, try with user ID (legacy format for backward compatibility)
+    if (!order) {
+      order = await StrategyProviderOrder.findOne({
+        where: { 
+          order_id,
+          order_user_id: tokenUserId
+        }
+      });
+    }
+
     console.log('DEBUG Cancel TP - Lookup params:', {
       order_id,
       strategyAccountId: strategyAccount.id,
       tokenUserId,
-      operationId
-    });
-
-    const anyOrder = await StrategyProviderOrder.findOne({
-      where: { order_id }
-    });
-
-    console.log('DEBUG Cancel TP - Order check:', {
+      operationId,
       orderFound: !!order,
-      anyOrderFound: !!anyOrder,
-      anyOrderUserId: anyOrder?.order_user_id,
-      anyOrderTakeProfit: anyOrder?.take_profit
+      orderUserId: order?.order_user_id
     });
 
     if (!order) {
@@ -1792,7 +1795,8 @@ async function cancelTakeProfitFromOrder(req, res) {
 
     logger.info('Strategy provider take profit cancelled successfully', {
       order_id,
-      takeprofit_id,
+      takeprofit_id: resolvedTakeprofitId,
+      takeprofit_cancel_id,
       strategyProviderId: tokenUserId,
       operationId
     });
@@ -1801,7 +1805,7 @@ async function cancelTakeProfitFromOrder(req, res) {
       success: true,
       data: result,
       order_id,
-      takeprofit_cancel_id: takeprofit_id,
+      takeprofit_cancel_id,
       operationId
     });
 
