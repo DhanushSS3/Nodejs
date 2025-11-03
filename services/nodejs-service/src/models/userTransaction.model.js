@@ -19,7 +19,7 @@ const UserTransaction = sequelize.define('UserTransaction', {
     comment: 'Reference to user (live_users or demo_users)',
   },
   user_type: {
-    type: DataTypes.ENUM('live', 'demo'),
+    type: DataTypes.ENUM('live', 'demo', 'strategy_provider', 'copy_follower'),
     allowNull: false,
     comment: 'Type of user account',
   },
@@ -36,7 +36,9 @@ const UserTransaction = sequelize.define('UserTransaction', {
       'loss',
       'commission',
       'swap',
-      'adjustment'
+      'adjustment',
+      'performance_fee',
+      'performance_fee_earned'
     ),
     allowNull: false,
     comment: 'Type of transaction',
