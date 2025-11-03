@@ -27,6 +27,18 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { validateRequest } = require('../middlewares/validation.middleware');
 const { body, param, query } = require('express-validator');
 
+// Debug middleware to log all requests to this router
+router.use((req, res, next) => {
+  console.log('=== COPY TRADING ORDERS ROUTER HIT ===');
+  console.log('Method:', req.method);
+  console.log('Original URL:', req.originalUrl);
+  console.log('Base URL:', req.baseUrl);
+  console.log('Path:', req.path);
+  console.log('Route path:', req.route?.path);
+  console.log('Body:', req.body);
+  next();
+});
+
 /**
  * @swagger
  * components:
@@ -722,17 +734,26 @@ router.post('/strategy-provider/stop-loss/cancel',
  *         description: Internal server error
  */
 router.post('/strategy-provider/take-profit/cancel',
+  (req, res, next) => {
+    console.log('=== ROUTE HIT: /strategy-provider/take-profit/cancel ===');
+    console.log('Method:', req.method);
+    console.log('URL:', req.originalUrl || req.url);
+    console.log('Body:', req.body);
+    next();
+  },
   authenticateJWT,
-  [
-    body('order_id')
-      .notEmpty()
-      .withMessage('Order ID is required'),
-    body('takeprofit_id')
-      .optional()
-      .isString()
-      .withMessage('Take profit ID must be a string')
-  ],
+  body('order_id')
+    .notEmpty()
+    .withMessage('Order ID is required'),
+  body('takeprofit_id')
+    .optional()
+    .isString()
+    .withMessage('Take profit ID must be a string'),
   validateRequest,
+  (req, res, next) => {
+    console.log('=== ABOUT TO CALL CONTROLLER ===');
+    next();
+  },
   copyTradingOrdersController.cancelTakeProfitFromOrder
 );
 

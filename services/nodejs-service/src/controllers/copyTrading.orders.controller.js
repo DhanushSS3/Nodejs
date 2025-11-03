@@ -16,6 +16,7 @@ const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
 const { applyOrderClosePayout } = require('../services/order.payout.service');
 const { redisCluster } = require('../../config/redis');
+const redisUserCache = require('../services/redis.user.cache.service');
 const lotValidationService = require('../services/lot.validation.service');
 const groupsCache = require('../services/groups.cache.service');
 
@@ -1522,11 +1523,30 @@ async function cancelStopLossFromOrder(req, res) {
       });
     }
 
-    // Resolve stoploss_id from SQL (same as live users)
+    // Determine sending flow to decide provider vs local behavior (same as live users)
+    let sendingOrders = 'barclays'; // Default for copy trading
+    try {
+      const userCfg = await redisUserCache.getUser('strategy_provider', strategyAccount.id);
+      if (userCfg && userCfg.sending_orders) {
+        sendingOrders = String(userCfg.sending_orders).toLowerCase();
+      }
+    } catch (e) {
+      logger.warn('Failed to fetch strategy provider config from cache', { error: e.message, user_id: strategyAccount.id });
+    }
+
+    // Resolve stoploss_id from SQL or Redis canonical (same as live users)
     let resolvedStoplossId = order.stoploss_id;
     if (!resolvedStoplossId) {
-      // For provider flow, we need the actual stoploss_id
-      // For local flow, a placeholder is acceptable
+      try {
+        const fromRedis = await redisCluster.hget(`order_data:${order_id}`, 'stoploss_id');
+        if (fromRedis) resolvedStoplossId = fromRedis;
+      } catch (_) {}
+    }
+    if (!resolvedStoplossId) {
+      if (sendingOrders === 'barclays') {
+        return res.status(409).json({ success: false, message: 'No stoploss_id found for provider cancel' });
+      }
+      // For local flow, a placeholder is acceptable (Python ignores it for local cancel flow)
       resolvedStoplossId = `SL-${order_id}`;
     }
 
@@ -1608,7 +1628,15 @@ async function cancelStopLossFromOrder(req, res) {
  * Cancel take profit from strategy provider order
  */
 async function cancelTakeProfitFromOrder(req, res) {
+  console.log('=== CANCEL TAKE PROFIT FUNCTION CALLED ===');
+  console.log('Request method:', req.method);
+  console.log('Request URL:', req.originalUrl || req.url);
+  console.log('Request body:', req.body);
+  console.log('Request headers:', req.headers);
+  
   const operationId = `cancel_sp_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  console.log('Generated operationId:', operationId);
+  
   try {
     // Structured request log (same as live users)
     orderReqLogger.logOrderRequest({
@@ -1658,11 +1686,28 @@ async function cancelTakeProfitFromOrder(req, res) {
         order_user_id: strategyAccount.id
       }
     });
+    console.log('DEBUG Cancel TP - Lookup params:', {
+      order_id,
+      strategyAccountId: strategyAccount.id,
+      tokenUserId,
+      operationId
+    });
+
+    const anyOrder = await StrategyProviderOrder.findOne({
+      where: { order_id }
+    });
+
+    console.log('DEBUG Cancel TP - Order check:', {
+      orderFound: !!order,
+      anyOrderFound: !!anyOrder,
+      anyOrderUserId: anyOrder?.order_user_id,
+      anyOrderTakeProfit: anyOrder?.take_profit
+    });
 
     if (!order) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Order not found or access denied' 
+        message: 'Order not found or access denied!' 
       });
     }
 
@@ -1673,11 +1718,30 @@ async function cancelTakeProfitFromOrder(req, res) {
       });
     }
 
-    // Resolve takeprofit_id from SQL (same as live users)
+    // Determine sending flow to decide provider vs local behavior (same as live users)
+    let sendingOrders = 'barclays'; // Default for copy trading
+    try {
+      const userCfg = await redisUserCache.getUser('strategy_provider', strategyAccount.id);
+      if (userCfg && userCfg.sending_orders) {
+        sendingOrders = String(userCfg.sending_orders).toLowerCase();
+      }
+    } catch (e) {
+      logger.warn('Failed to fetch strategy provider config from cache', { error: e.message, user_id: strategyAccount.id });
+    }
+
+    // Resolve takeprofit_id from SQL or Redis canonical (same as live users)
     let resolvedTakeprofitId = order.takeprofit_id;
     if (!resolvedTakeprofitId) {
-      // For provider flow, we need the actual takeprofit_id
-      // For local flow, a placeholder is acceptable
+      try {
+        const fromRedis = await redisCluster.hget(`order_data:${order_id}`, 'takeprofit_id');
+        if (fromRedis) resolvedTakeprofitId = fromRedis;
+      } catch (_) {}
+    }
+    if (!resolvedTakeprofitId) {
+      if (sendingOrders === 'barclays') {
+        return res.status(409).json({ success: false, message: 'No takeprofit_id found for provider cancel' });
+      }
+      // For local flow, a placeholder is acceptable (Python ignores it for local cancel flow)
       resolvedTakeprofitId = `TP-${order_id}`;
     }
 

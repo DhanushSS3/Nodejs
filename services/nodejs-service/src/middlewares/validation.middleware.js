@@ -7,9 +7,16 @@ const { validationResult } = require('express-validator');
  * @param {Function} next - Express next function
  */
 const validateRequest = (req, res, next) => {
+  console.log('=== VALIDATION MIDDLEWARE CALLED ===');
+  console.log('URL:', req.originalUrl || req.url);
+  console.log('Method:', req.method);
+  console.log('Body:', req.body);
+  
   const errors = validationResult(req);
+  console.log('Validation errors:', errors.array());
   
   if (!errors.isEmpty()) {
+    console.log('VALIDATION FAILED - returning 400');
     return res.status(400).json({
       success: false,
       message: 'Validation failed',
@@ -21,6 +28,7 @@ const validateRequest = (req, res, next) => {
     });
   }
   
+  console.log('VALIDATION SUCCESS - calling next()');
   next();
 };
 
