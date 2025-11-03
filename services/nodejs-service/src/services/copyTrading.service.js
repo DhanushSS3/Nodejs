@@ -1264,6 +1264,28 @@ class CopyTradingService {
               order_id: copiedOrder.order_id
             });
           }
+
+          // Update copy follower net profit (same as strategy providers)
+          if (typeof result.net_profit === 'number') {
+            try {
+              await CopyFollowerAccount.increment(
+                { net_profit: result.net_profit },
+                { where: { id: parseInt(copiedOrder.order_user_id) } }
+              );
+              
+              logger.info('Copy follower net profit updated after local close', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                net_profit: result.net_profit
+              });
+            } catch (netProfitError) {
+              logger.error('Failed to update copy follower net profit', {
+                copiedOrderId: copiedOrder.order_id,
+                user_id: copiedOrder.order_user_id,
+                error: netProfitError.message
+              });
+            }
+          }
           
         } catch (dbError) {
           logger.error('Failed to update copy follower order in database', {
