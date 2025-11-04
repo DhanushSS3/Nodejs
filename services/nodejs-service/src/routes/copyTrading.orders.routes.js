@@ -191,6 +191,132 @@ router.post('/strategy-provider',
 
 /**
  * @swagger
+ * /api/copy-trading/orders/strategy-provider/pending:
+ *   post:
+ *     summary: Place strategy provider pending order (master pending order)
+ *     description: Creates a new pending order for a strategy provider that will be replicated to all active followers
+ *     tags: [Copy Trading Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - symbol
+ *               - order_type
+ *               - order_price
+ *               - order_quantity
+ *             properties:
+ *               symbol:
+ *                 type: string
+ *                 description: Trading symbol (e.g., EURUSD)
+ *                 example: "EURUSD"
+ *               order_type:
+ *                 type: string
+ *                 enum: [BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP]
+ *                 description: Pending order type
+ *                 example: "BUY_LIMIT"
+ *               order_price:
+ *                 type: number
+ *                 description: Order trigger price
+ *                 example: 1.0950
+ *               order_quantity:
+ *                 type: number
+ *                 description: Order quantity/lot size
+ *                 example: 1.0
+ *               stop_loss:
+ *                 type: number
+ *                 description: Stop loss price (optional)
+ *                 example: 1.0900
+ *               take_profit:
+ *                 type: number
+ *                 description: Take profit price (optional)
+ *                 example: 1.1000
+ *     responses:
+ *       201:
+ *         description: Pending order placed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 order_id:
+ *                   type: string
+ *                   example: "ord_20231021_001"
+ *                 strategy_provider_id:
+ *                   type: integer
+ *                   example: 123
+ *                 symbol:
+ *                   type: string
+ *                   example: "EURUSD"
+ *                 order_type:
+ *                   type: string
+ *                   example: "BUY_LIMIT"
+ *                 order_status:
+ *                   type: string
+ *                   example: "PENDING"
+ *                 order_price:
+ *                   type: number
+ *                   example: 1.0950
+ *                 order_quantity:
+ *                   type: number
+ *                   example: 1.0
+ *                 compare_price:
+ *                   type: number
+ *                   example: 1.0945
+ *                 group:
+ *                   type: string
+ *                   example: "Standard"
+ *                 operationId:
+ *                   type: string
+ *                   example: "strategy_provider_pending_place_1698012345_abc123"
+ *       400:
+ *         description: Invalid request payload
+ *       403:
+ *         description: Unauthorized or insufficient permissions
+ *       404:
+ *         description: Strategy provider account not found
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/strategy-provider/pending',
+  authenticateJWT,
+  [
+    body('symbol')
+      .notEmpty()
+      .withMessage('Symbol is required')
+      .isLength({ min: 1, max: 20 })
+      .withMessage('Symbol must be 1-20 characters'),
+    body('order_type')
+      .isIn(['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'])
+      .withMessage('Order type must be BUY_LIMIT, SELL_LIMIT, BUY_STOP, or SELL_STOP'),
+    body('order_price')
+      .isFloat({ gt: 0 })
+      .withMessage('Order price must be a positive number'),
+    body('order_quantity')
+      .isFloat({ gt: 0 })
+      .withMessage('Order quantity must be a positive number'),
+    body('stop_loss')
+      .optional()
+      .isFloat({ gt: 0 })
+      .withMessage('Stop loss must be a positive number'),
+    body('take_profit')
+      .optional()
+      .isFloat({ gt: 0 })
+      .withMessage('Take profit must be a positive number')
+  ],
+  validateRequest,
+  copyTradingOrdersController.placeStrategyProviderPendingOrder
+);
+
+/**
+ * @swagger
  * /api/copy-trading/orders/strategy-provider/{strategy_provider_id}:
  *   get:
  *     summary: Get strategy provider orders

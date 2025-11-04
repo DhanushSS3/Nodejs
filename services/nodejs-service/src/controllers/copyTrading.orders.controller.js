@@ -895,6 +895,443 @@ async function closeStrategyProviderOrder(req, res) {
 }
 
 /**
+ * Validate strategy provider pending order payload
+ */
+function validateStrategyProviderPendingPayload(body) {
+  const errors = [];
+  const symbol = normalizeStr(body.symbol).toUpperCase();
+  const order_type = normalizeStr(body.order_type).toUpperCase(); // BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP
+  const order_price = toNumber(body.order_price);
+  const order_quantity = toNumber(body.order_quantity);
+  // Note: strategy_provider_id will come from JWT token, not request body
+
+  if (!symbol) errors.push('symbol');
+  if (!['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'].includes(order_type)) errors.push('order_type');
+  if (!(order_price > 0)) errors.push('order_price');
+  if (!(order_quantity > 0)) errors.push('order_quantity');
+
+  return { 
+    errors, 
+    parsed: { 
+      symbol, 
+      order_type, 
+      order_price, 
+      order_quantity
+    } 
+  };
+}
+
+/**
+ * Place strategy provider pending order (master pending order for copy trading)
+ */
+async function placeStrategyProviderPendingOrder(req, res) {
+  const operationId = `strategy_provider_pending_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
+  try {
+    const t0 = process.hrtime.bigint();
+    const marks = {};
+    const mark = (name) => { try { marks[name] = process.hrtime.bigint(); } catch (_) {} };
+    const msBetween = (a, b) => Number((b - a) / 1000000n);
+
+    // Log request
+    orderReqLogger.logOrderRequest({
+      endpoint: 'placeStrategyProviderPendingOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
+    // JWT validation for strategy provider
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const userStatus = user.status;
+    const tokenStrategyProviderId = user.strategy_provider_id || user.strategyProviderId;
+
+    // Check if user is a strategy provider and has strategy provider ID in token
+    if (role !== 'strategy_provider' && role !== 'trader') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only strategy providers can place master pending orders' 
+      });
+    }
+
+    if (!tokenStrategyProviderId) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Strategy provider ID not found in token. Please switch to a strategy provider account first.' 
+      });
+    }
+
+    if (userStatus !== undefined && String(userStatus) === '0') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'User status is not allowed to trade' 
+      });
+    }
+
+    // Validate payload
+    const { errors, parsed } = validateStrategyProviderPendingPayload(req.body || {});
+    if (errors.length) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid payload fields', 
+        fields: errors 
+      });
+    }
+    mark('after_validate');
+
+    // Get strategy provider group for lot validation
+    const strategyProviderGroup = 'Standard'; // Default group for strategy providers
+    
+    // Validate lot size against group constraints
+    const lotValidation = await lotValidationService.validateLotSize(strategyProviderGroup, parsed.symbol, parsed.order_quantity);
+    if (!lotValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: lotValidation.message,
+        lot_constraints: {
+          provided_lot: lotValidation.lotSize,
+          min_lot: lotValidation.minLot,
+          max_lot: lotValidation.maxLot,
+          user_group: strategyProviderGroup,
+          symbol: parsed.symbol
+        }
+      });
+    }
+
+    // Verify strategy provider account exists and belongs to user
+    const strategyProvider = await StrategyProviderAccount.findOne({
+      where: {
+        id: parseInt(tokenStrategyProviderId),
+        user_id: tokenUserId,
+        status: 1,
+        is_active: 1
+      }
+    });
+
+    if (!strategyProvider) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Strategy provider account not found or access denied' 
+      });
+    }
+
+    // Normalize for Redis keys and cross-service compatibility
+    const symbol = String(parsed.symbol).toUpperCase();
+    const orderType = String(parsed.order_type).toUpperCase();
+
+    // Fetch current market prices from Redis
+    let bid = null, ask = null;
+    try {
+      const arr = await redisCluster.hmget(`market:${symbol}`, 'bid', 'ask');
+      if (arr && arr.length >= 2) {
+        bid = arr[0] != null ? Number(arr[0]) : null;
+        ask = arr[1] != null ? Number(arr[1]) : null;
+      }
+    } catch (e) {
+      logger.error('Failed to read market price from Redis', { error: e.message, symbol: parsed.symbol });
+    }
+    
+    // Accepting orders even if bid/ask price is missing or stale for flexibility
+    if (!(bid > 0) || !(ask > 0)) {
+      return res.status(503).json({ success: false, message: 'Market price unavailable for symbol' });
+    }
+
+    // Compute half_spread from group cache
+    let half_spread = null;
+    try {
+      const gf = await groupsCache.getGroupFields(strategyProviderGroup, symbol, ['spread', 'spread_pip']);
+      if (gf && gf.spread != null && gf.spread_pip != null) {
+        const spread = Number(gf.spread);
+        const spread_pip = Number(gf.spread_pip);
+        if (Number.isFinite(spread) && Number.isFinite(spread_pip)) {
+          half_spread = (spread * spread_pip) / 2.0;
+        }
+      }
+    } catch (e) {
+      logger.warn('Failed to get group spread config for pending', { error: e.message, group: strategyProviderGroup, symbol: parsed.symbol });
+    }
+    if (!(half_spread >= 0)) {
+      return res.status(400).json({ success: false, message: 'Group spread configuration missing for symbol/group' });
+    }
+
+    // Pending monitoring is ask-based for all types: store compare = user_price - half_spread
+    // Trigger direction is handled by the worker (ask >= or <= compare) per type
+    const hs = Number.isFinite(Number(half_spread)) ? Number(half_spread) : 0;
+    const compare_price = Number((parsed.order_price - hs).toFixed(8));
+    // Defensive: We still block nonsensical placement if compare_price <= 0 (math/preparation error)
+    if (!(compare_price > 0)) {
+      return res.status(400).json({ success: false, message: 'Computed compare_price invalid (order price or config error)' });
+    }
+
+    // Determine if provider flow (before DB create) to set proper order_status
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{strategy_provider:${tokenStrategyProviderId}}:config`;
+      const ucfg = await redisCluster.hgetall(userCfgKey);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) {
+      isProviderFlow = false;
+    }
+
+    // Generate order_id and persist SQL row
+    const order_id = await idGenerator.generateOrderId();
+    mark('after_id_generated');
+
+    // Store lifecycle ID
+    try {
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'order_id', 
+        order_id, 
+        `Strategy Provider Pending Order - ${parsed.order_type} ${parsed.symbol} @ ${parsed.order_price}`
+      );
+    } catch (lifecycleErr) {
+      logger.warn('Failed to store order_id in lifecycle service', { 
+        order_id, 
+        error: lifecycleErr.message 
+      });
+    }
+
+    // Create strategy provider pending order in database
+    const masterOrder = await StrategyProviderOrder.create({
+      order_id,
+      order_user_id: parseInt(tokenStrategyProviderId),
+      symbol: parsed.symbol,
+      order_type: parsed.order_type,
+      order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+      order_price: parsed.order_price,
+      order_quantity: parsed.order_quantity,
+      stop_loss: req.body.stop_loss || null,
+      take_profit: req.body.take_profit || null,
+      is_master_order: true,
+      copy_distribution_status: 'pending',
+      status: 'PENDING',
+      placed_by: 'strategy_provider'
+    });
+    mark('after_db_insert');
+
+    // For provider flow, send to Python service to forward to provider
+    if (isProviderFlow) {
+      try {
+        const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+        
+        const pyPayload = {
+          order_id,
+          symbol: parsed.symbol,
+          order_type: parsed.order_type,
+          order_price: parsed.order_price,
+          order_quantity: parsed.order_quantity,
+          user_id: tokenStrategyProviderId.toString(),
+          user_type: 'strategy_provider'
+        };
+
+        await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/pending/place`,
+          pyPayload
+        );
+        
+        logger.info('Strategy provider pending order sent to provider', {
+          order_id,
+          strategyProviderId: tokenStrategyProviderId,
+          operationId
+        });
+      } catch (providerErr) {
+        logger.error('Failed to send strategy provider pending order to provider', {
+          order_id,
+          strategyProviderId: tokenStrategyProviderId,
+          error: providerErr.message,
+          operationId
+        });
+        
+        // Update order status to failed
+        await masterOrder.update({
+          order_status: 'REJECTED',
+          copy_distribution_status: 'failed'
+        });
+        
+        return res.status(503).json({
+          success: false,
+          order_id,
+          message: 'Failed to send order to provider',
+          operationId
+        });
+      }
+    } else {
+      // Local flow: Store pending order in Redis for monitoring (same as live users)
+      const zkey = `pending_index:{${symbol}}:${orderType}`;
+      const hkey = `pending_orders:${order_id}`;
+      try {
+        await redisCluster.zadd(zkey, compare_price, order_id);
+        await redisCluster.hset(hkey, {
+          symbol: symbol,
+          order_type: orderType,
+          user_type: 'strategy_provider',
+          user_id: tokenStrategyProviderId.toString(),
+          order_price_user: String(parsed.order_price),
+          order_price_compare: String(compare_price),
+          order_quantity: String(parsed.order_quantity),
+          status: 'PENDING',
+          created_at: Date.now().toString(),
+          group: strategyProviderGroup,
+        });
+        
+        // Ensure symbol is tracked for periodic scanning by the worker
+        await redisCluster.sadd('pending_active_symbols', symbol);
+      } catch (e) {
+        logger.error('Failed to write pending order to Redis', { error: e.message, order_id, zkey });
+        return res.status(500).json({ success: false, message: 'Cache error', operationId });
+      }
+    }
+
+    // Mirror minimal PENDING into user holdings and index for immediate WS visibility
+    try {
+      const hashTag = `strategy_provider:${tokenStrategyProviderId}`;
+      const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
+      const indexKey = `user_orders_index:{${hashTag}}`;
+      const pipe = redisCluster.pipeline();
+      pipe.sadd(indexKey, order_id);
+      pipe.hset(orderKey, {
+        order_id: String(order_id),
+        symbol: symbol,
+        order_type: orderType, // pending type (e.g., BUY_LIMIT)
+        order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+        status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+        execution_status: 'QUEUED',
+        order_price: String(parsed.order_price),
+        order_quantity: String(parsed.order_quantity),
+        group: strategyProviderGroup,
+        created_at: Date.now().toString(),
+      });
+      await pipe.exec();
+    } catch (e3) {
+      logger.warn('Failed to mirror pending into user holdings/index', { error: e3.message, order_id });
+    }
+    
+    // Also write canonical order_data for downstream consumers
+    try {
+      const odKey = `order_data:${String(order_id)}`;
+      await redisCluster.hset(
+        odKey,
+        {
+        order_id: String(order_id),
+        user_type: 'strategy_provider',
+        user_id: String(tokenStrategyProviderId),
+        symbol: symbol,
+        order_type: orderType, // pending type
+        order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+        status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+        order_price: String(parsed.order_price),
+        order_quantity: String(parsed.order_quantity),
+        group: strategyProviderGroup,
+        compare_price: String(compare_price),
+        half_spread: String(hs),
+      });
+    } catch (e4) {
+      logger.warn('Failed to write canonical order_data for pending', { error: e4.message, order_id });
+    }
+    mark('after_redis_entries');
+
+    // Trigger copy trading replication to followers for pending orders
+    try {
+      const replicationResult = await copyTradingService.processStrategyProviderPendingOrder(masterOrder);
+      mark('after_replication');
+      
+      logger.info('Strategy provider pending order replication completed', {
+        order_id,
+        strategyProviderId: parseInt(tokenStrategyProviderId),
+        replicationResult
+      });
+    } catch (replicationErr) {
+      logger.error('Pending order replication failed', {
+        order_id,
+        strategyProviderId: parseInt(tokenStrategyProviderId),
+        error: replicationErr.message
+      });
+      // Don't fail the main order, just log the replication failure
+    }
+
+    // Publish market_price_updates for pending placement
+    try {
+      await redisCluster.publish('market_price_updates', symbol);
+      logger.info('Published market_price_updates for pending placement', { symbol, order_id });
+    } catch (e) {
+      logger.warn('Failed to publish market_price_updates after pending placement', { error: e.message, symbol, order_id });
+    }
+
+    // Notify WS layer
+    try {
+      portfolioEvents.emitUserUpdate('strategy_provider', tokenStrategyProviderId.toString(), {
+        type: 'order_update',
+        order_id,
+        update: { order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING' },
+      });
+    } catch (e) {
+      logger.warn('Failed to emit portfolio event for pending order', { error: e.message, order_id });
+    }
+
+    // Log timing
+    try {
+      const tEnd = process.hrtime.bigint();
+      const durations = {
+        total_ms: msBetween(t0, tEnd),
+        validate_ms: marks.after_validate ? msBetween(t0, marks.after_validate) : undefined,
+        id_generate_ms: marks.after_id_generated ? msBetween(marks.after_validate || t0, marks.after_id_generated) : undefined,
+        db_insert_ms: marks.after_db_insert ? msBetween(marks.after_id_generated || t0, marks.after_db_insert) : undefined,
+        redis_entries_ms: marks.after_redis_entries ? msBetween(marks.after_db_insert || t0, marks.after_redis_entries) : undefined,
+        replication_ms: marks.after_replication ? msBetween(marks.after_redis_entries || t0, marks.after_replication) : undefined,
+      };
+
+      await timingLogger.logTiming({
+        endpoint: 'placeStrategyProviderPendingOrder',
+        operationId,
+        order_id,
+        status: 'success',
+        durations_ms: durations,
+      });
+    } catch (_) {}
+
+    logger.transactionSuccess('strategy_provider_pending_place', { 
+      operationId, 
+      order_id
+    });
+
+    return res.status(201).json({
+      success: true,
+      order_id,
+      strategy_provider_id: parseInt(tokenStrategyProviderId),
+      symbol: parsed.symbol,
+      order_type: parsed.order_type,
+      order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+      order_price: parsed.order_price,
+      order_quantity: parsed.order_quantity,
+      compare_price,
+      group: strategyProviderGroup,
+      operationId
+    });
+
+  } catch (error) {
+    logger.error('Strategy provider pending order placement error', {
+      operationId,
+      error: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      operationId
+    });
+  }
+}
+
+/**
  * Get copy follower orders for a specific follower account
  */
 async function getCopyFollowerOrders(req, res) {
@@ -2003,6 +2440,7 @@ async function processCopyTradingDistribution(masterOrder, operationId) {
 
 module.exports = {
   placeStrategyProviderOrder,
+  placeStrategyProviderPendingOrder,
   getStrategyProviderOrders,
   closeStrategyProviderOrder,
   getCopyFollowerOrders,

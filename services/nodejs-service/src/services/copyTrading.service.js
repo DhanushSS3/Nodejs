@@ -120,6 +120,81 @@ class CopyTradingService {
   }
 
   /**
+   * Process strategy provider pending order and replicate to all active followers
+   * @param {Object} masterOrder - Strategy provider pending order
+   */
+  async processStrategyProviderPendingOrder(masterOrder) {
+    try {
+      logger.info('Processing strategy provider pending order for copy trading', {
+        orderId: masterOrder.order_id,
+        strategyProviderId: masterOrder.order_user_id,
+        symbol: masterOrder.symbol,
+        orderType: masterOrder.order_type
+      });
+
+      // Get all active followers for this strategy provider
+      const followers = await this.getActiveFollowers(masterOrder.order_user_id);
+      
+      if (followers.length === 0) {
+        logger.info('No active followers found for strategy provider pending order', {
+          strategyProviderId: masterOrder.order_user_id
+        });
+        return;
+      }
+
+      // Update master order distribution status
+      await StrategyProviderOrder.update({
+        copy_distribution_status: 'distributing',
+        copy_distribution_started_at: new Date(),
+        total_followers_copied: followers.length
+      }, {
+        where: { order_id: masterOrder.order_id }
+      });
+
+      // Process each follower for pending order
+      const copyResults = await Promise.allSettled(
+        followers.map(follower => this.replicatePendingOrderToFollower(masterOrder, follower))
+      );
+
+      // Count successful and failed copies
+      const successful = copyResults.filter(result => result.status === 'fulfilled').length;
+      const failed = copyResults.filter(result => result.status === 'rejected').length;
+
+      // Update master order with final results
+      await StrategyProviderOrder.update({
+        copy_distribution_status: 'completed',
+        copy_distribution_completed_at: new Date(),
+        successful_copies_count: successful,
+        failed_copies_count: failed
+      }, {
+        where: { order_id: masterOrder.order_id }
+      });
+
+      logger.info('Copy trading pending order distribution completed', {
+        orderId: masterOrder.order_id,
+        totalFollowers: followers.length,
+        successful,
+        failed
+      });
+
+    } catch (error) {
+      logger.error('Failed to process strategy provider pending order for copy trading', {
+        orderId: masterOrder?.order_id,
+        error: error.message
+      });
+      
+      // Update master order status to failed
+      if (masterOrder?.order_id) {
+        await StrategyProviderOrder.update({
+          copy_distribution_status: 'failed'
+        }, {
+          where: { order_id: masterOrder.order_id }
+        });
+      }
+    }
+  }
+
+  /**
    * Process strategy provider order and replicate to all active followers
    * @param {Object} masterOrder - Strategy provider order
    */
@@ -410,6 +485,113 @@ class CopyTradingService {
 
     } catch (error) {
       logger.error('Failed to replicate order to follower', {
+        masterOrderId: masterOrder.order_id,
+        followerId: follower.id,
+        error: error.message,
+        stack: error.stack
+      });
+
+      // Update follower account failed copies count
+      await CopyFollowerAccount.increment('failed_copies', {
+        where: { id: follower.id }
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Replicate master pending order to individual follower
+   * @param {Object} masterOrder - Strategy provider pending order
+   * @param {Object} follower - Follower account
+   */
+  async replicatePendingOrderToFollower(masterOrder, follower) {
+    try {
+      // Validate follower can receive orders
+      const canCopy = await this.validateFollowerForCopy(follower);
+      if (!canCopy.valid) {
+        throw new Error(canCopy.reason);
+      }
+
+      // Calculate lot size based on follower's equity/balance
+      const lotCalculation = await this.calculateFollowerLotSize(masterOrder, follower);
+      
+      // Check if calculated lot meets minimum requirements
+      if (lotCalculation.finalLotSize < lotCalculation.minLot) {
+        await this.createSkippedPendingOrder(masterOrder, follower, 'min_lot_size', lotCalculation);
+        return { status: 'skipped', reason: 'Below minimum lot size' };
+      }
+
+      // Generate follower order ID
+      const followerOrderId = await idGenerator.generateOrderId();
+
+      // Create follower pending order record
+      const followerOrder = await CopyFollowerOrder.create({
+        order_id: followerOrderId,
+        order_user_id: follower.id,
+        symbol: masterOrder.symbol,
+        order_type: masterOrder.order_type,
+        order_status: 'PENDING', // Pending orders start as PENDING
+        order_price: masterOrder.order_price,
+        order_quantity: lotCalculation.finalLotSize,
+        stop_loss: masterOrder.stop_loss,
+        take_profit: masterOrder.take_profit,
+        
+        // Copy trading specific fields
+        master_order_id: masterOrder.order_id,
+        strategy_provider_id: masterOrder.order_user_id,
+        copy_follower_account_id: follower.id,
+        
+        // Lot calculation audit trail
+        master_lot_size: masterOrder.order_quantity,
+        follower_investment_at_copy: follower.investment_amount,
+        master_equity_at_copy: lotCalculation.masterEquity,
+        lot_ratio: lotCalculation.ratio,
+        calculated_lot_size: lotCalculation.calculatedLotSize,
+        final_lot_size: lotCalculation.finalLotSize,
+        
+        // Copy settings
+        copy_status: 'pending',
+        original_stop_loss: masterOrder.stop_loss,
+        original_take_profit: masterOrder.take_profit,
+        
+        // Performance fee tracking
+        performance_fee_percentage: follower.strategyProvider?.performance_fee || 0,
+        
+        status: 'PENDING',
+        placed_by: 'copy_trading'
+      });
+
+      // Place pending order through Python service (same as live users)
+      logger.info('About to place follower pending order', {
+        followerOrderId: followerOrder.order_id,
+        followerId: follower.id,
+        masterOrderId: masterOrder.order_id
+      });
+      
+      const placementResult = await this.placeFollowerPendingOrder(followerOrder, follower);
+      
+      logger.info('Follower pending order placement result', {
+        followerOrderId: followerOrder.order_id,
+        success: placementResult.success,
+        error: placementResult.error,
+        placementResult: placementResult
+      });
+
+      // Update follower order with placement results
+      await this.updateFollowerOrderAfterPlacement(followerOrder, placementResult);
+
+      // Update follower account statistics
+      await this.updateFollowerAccountStats(follower, placementResult.success);
+
+      return { 
+        status: 'success', 
+        orderId: followerOrderId,
+        lotSize: lotCalculation.finalLotSize
+      };
+
+    } catch (error) {
+      logger.error('Failed to replicate pending order to follower', {
         masterOrderId: masterOrder.order_id,
         followerId: follower.id,
         error: error.message,
@@ -1478,6 +1660,93 @@ class CopyTradingService {
       throw error;
     }
   }
+
+
+  /**
+   * Update follower order after pending placement
+   * @param {Object} followerOrder - Follower order
+   * @param {Object} placementResult - Placement result
+   */
+  async updateFollowerOrderAfterPlacement(followerOrder, placementResult) {
+    try {
+      const updateFields = {
+        copy_timestamp: new Date()
+      };
+
+      if (placementResult.success) {
+        updateFields.copy_status = 'copied';
+        updateFields.order_status = 'PENDING';
+      } else {
+        updateFields.copy_status = 'failed';
+        updateFields.order_status = 'REJECTED';
+        updateFields.failure_reason = placementResult.error;
+      }
+
+      await CopyFollowerOrder.update(updateFields, {
+        where: { id: followerOrder.id }
+      });
+
+    } catch (error) {
+      logger.error('Failed to update follower order after pending placement', {
+        followerOrderId: followerOrder.order_id,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Create skipped pending order record for audit trail
+   * @param {Object} masterOrder - Master pending order
+   * @param {Object} follower - Follower account
+   * @param {string} reason - Skip reason
+   * @param {Object} lotCalculation - Lot calculation details
+   */
+  async createSkippedPendingOrder(masterOrder, follower, reason, lotCalculation) {
+    try {
+      const followerOrderId = await idGenerator.generateOrderId();
+
+      await CopyFollowerOrder.create({
+        order_id: followerOrderId,
+        order_user_id: follower.id,
+        symbol: masterOrder.symbol,
+        order_type: masterOrder.order_type,
+        order_status: 'SKIPPED',
+        order_price: masterOrder.order_price,
+        order_quantity: lotCalculation.calculatedLotSize,
+        
+        // Copy trading specific fields
+        master_order_id: masterOrder.order_id,
+        strategy_provider_id: masterOrder.order_user_id,
+        copy_follower_account_id: follower.id,
+        
+        // Lot calculation audit trail
+        master_lot_size: masterOrder.order_quantity,
+        follower_investment_at_copy: follower.investment_amount,
+        master_equity_at_copy: lotCalculation.masterEquity,
+        lot_ratio: lotCalculation.ratio,
+        calculated_lot_size: lotCalculation.calculatedLotSize,
+        final_lot_size: lotCalculation.finalLotSize,
+        
+        copy_status: 'failed',
+        failure_reason: `Skipped: ${reason}`,
+        
+        status: 'SKIPPED',
+        placed_by: 'copy_trading'
+      });
+
+      // Update follower account skipped count
+      await CopyFollowerAccount.increment('failed_copies', {
+        where: { id: follower.id }
+      });
+
+    } catch (error) {
+      logger.error('Failed to create skipped pending order record', {
+        masterOrderId: masterOrder.order_id,
+        followerId: follower.id,
+        error: error.message
+      });
+    }
+  }
 }
 
-module.exports = new CopyTradingService();
+module.exports = CopyTradingService;

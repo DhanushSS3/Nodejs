@@ -37,6 +37,7 @@ from .services.portfolio_calculator import start_portfolio_listener
 from .services.autocutoff.watcher import start_autocutoff_watcher
 from .services.orders.provider_connection import get_provider_connection_manager
 from .services.pending.provider_pending_monitor import start_provider_pending_monitor
+from .services.pending.pending_monitor import start_pending_monitor
 
 # Configure logging with noise reduction
 logging.basicConfig(
@@ -106,10 +107,20 @@ async def lifespan(app: FastAPI):
         logger.error(f"⚠️ Failed to start provider connection manager: {e}")
 
     # Step 5: Start monitoring services
-    pending_monitor_task = None
+    # Start local pending monitor (for local flow pending orders)
+    local_pending_monitor_task = None
     try:
-        pending_monitor_task = asyncio.create_task(start_provider_pending_monitor())
-        background_tasks.append(("pending_monitor", pending_monitor_task))
+        local_pending_monitor_task = asyncio.create_task(start_pending_monitor())
+        background_tasks.append(("local_pending_monitor", local_pending_monitor_task))
+        logger.info("✅ Local pending monitor started")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to start local pending monitor: {e}")
+
+    # Start provider pending monitor (for provider flow pending orders)
+    provider_pending_monitor_task = None
+    try:
+        provider_pending_monitor_task = asyncio.create_task(start_provider_pending_monitor())
+        background_tasks.append(("provider_pending_monitor", provider_pending_monitor_task))
         logger.info("✅ Provider pending monitor started")
     except Exception as e:
         logger.error(f"⚠️ Failed to start provider pending monitor: {e}")
