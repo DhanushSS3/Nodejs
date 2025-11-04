@@ -40,7 +40,6 @@ const { body, param, query } = require('express-validator');
  *         - order_type
  *         - order_price
  *         - order_quantity
- *         - strategy_provider_id
  *       properties:
  *         symbol:
  *           type: string
@@ -61,8 +60,9 @@ const { body, param, query } = require('express-validator');
  *           example: 1.0
  *         strategy_provider_id:
  *           type: integer
- *           description: Strategy provider account ID
+ *           description: Strategy provider account ID (automatically extracted from JWT token)
  *           example: 123
+ *           readOnly: true
  *         stop_loss:
  *           type: number
  *           description: Stop loss price (optional)
@@ -159,9 +159,6 @@ router.post('/strategy-provider',
     body('order_quantity')
       .isFloat({ gt: 0 })
       .withMessage('Order quantity must be a positive number'),
-    body('strategy_provider_id')
-      .isInt({ gt: 0 })
-      .withMessage('Strategy provider ID must be a positive integer'),
     body('stop_loss')
       .optional()
       .isFloat({ gt: 0 })
