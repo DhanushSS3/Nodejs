@@ -791,6 +791,39 @@ async function applyDbUpdate(msg) {
   // Handle post-close operations (margin updates, copy trading, etc.)
   await handlePostCloseOperations(msg, row);
 
+  // Handle copy trading replication for strategy provider orders when they open
+  if (String(type) === 'ORDER_OPEN_CONFIRMED' && String(user_type) === 'strategy_provider') {
+    try {
+      const copyTradingService = require('../copyTrading.service');
+      
+      // Find the strategy provider order
+      const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
+      const masterOrder = await StrategyProviderOrder.findOne({
+        where: { order_id: String(order_id) }
+      });
+      
+      if (masterOrder) {
+        logger.info('Triggering copy trading replication for opened strategy provider order', {
+          order_id: String(order_id),
+          strategy_provider_id: String(user_id),
+          order_type: 'pending_execution'
+        });
+        
+        // Process copy trading replication using the instant order method
+        await copyTradingService.processStrategyProviderOrder(masterOrder);
+      } else {
+        logger.warn('Strategy provider order not found for copy trading replication', {
+          order_id: String(order_id)
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to process copy trading replication for opened order', {
+        order_id: String(order_id),
+        error: error.message
+      });
+    }
+  }
+
   // Update user's used margin in SQL, if provided
   const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
   if (mirrorUsedMargin != null) {

@@ -13,6 +13,15 @@ const portfolioEvents = require('./events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const axios = require('axios');
 
+// Create reusable axios instance for Python service calls
+const pythonServiceAxios = axios.create({
+  timeout: 15000,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub'
+  }
+});
+
 class CopyTradingService {
 
   /**
@@ -569,7 +578,7 @@ class CopyTradingService {
         masterOrderId: masterOrder.order_id
       });
       
-      const placementResult = await this.placeFollowerPendingOrder(followerOrder, follower);
+      const placementResult = await this.placeFollowerOrder(followerOrder, follower);
       
       logger.info('Follower pending order placement result', {
         followerOrderId: followerOrder.order_id,
@@ -1236,23 +1245,6 @@ class CopyTradingService {
   }
 
   /**
-   * Process order closure/modification for copy trading
-   * @param {Object} masterOrder - Updated master order
-   */
-  async processStrategyProviderOrderUpdate(masterOrder) {
-    try {
-      // Get all copied orders for this master order
-      const copiedOrders = await CopyFollowerOrder.findAll({
-        where: {
-          master_order_id: masterOrder.order_id,
-          copy_status: 'copied',
-          order_status: 'OPEN'
-        }
-      });
-
-      if (copiedOrders.length === 0) {
-        return;
-      }
 
       // Process each copied order based on master order status
       for (const copiedOrder of copiedOrders) {
@@ -1663,6 +1655,65 @@ class CopyTradingService {
 
 
   /**
+   * Place follower pending order through Python service
+   * @param {Object} followerOrder - Follower order
+   * @param {Object} follower - Follower account
+   * @returns {Object} Placement result
+   */
+  async placeFollowerOrder(followerOrder, follower) {
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    try {
+      // Create payload for Python service (same as strategy provider)
+      const payload = {
+        order_id: followerOrder.order_id,
+        user_id: follower.id.toString(),
+        user_type: 'copy_follower',
+        symbol: followerOrder.symbol,
+        order_type: followerOrder.order_type,
+        order_price: followerOrder.order_price,
+        order_quantity: followerOrder.order_quantity,
+        stop_loss: followerOrder.stop_loss || null,
+        take_profit: followerOrder.take_profit || null,
+        group: follower.group || 'Standard'
+      };
+
+      logger.info('Placing follower pending order through Python service', {
+        followerOrderId: followerOrder.order_id,
+        followerId: follower.id,
+        payload
+      });
+
+      const response = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/pending/place`,
+        payload
+      );
+
+      return {
+        success: true,
+        data: response.data,
+        flow: response.data?.flow || 'local'
+      };
+
+    } catch (error) {
+      logger.error('Failed to place follower pending order', {
+        followerOrderId: followerOrder.order_id,
+        followerId: follower.id,
+        error: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+
+      return {
+        success: false,
+        error: error.message,
+        flow: 'local'
+      };
+    }
+  }
+
+  /**
    * Update follower order after pending placement
    * @param {Object} followerOrder - Follower order
    * @param {Object} placementResult - Placement result
@@ -1747,6 +1798,229 @@ class CopyTradingService {
       });
     }
   }
+
+  /**
+   * Process order closure/modification for copy trading
+   * @param {Object} masterOrder - Updated master order
+   */
+  async processStrategyProviderOrderUpdate(masterOrder) {
+    try {
+      // Get all follower orders for this master order (including failed/pending copies)
+      const copiedOrders = await CopyFollowerOrder.findAll({
+        where: {
+          master_order_id: masterOrder.order_id,
+          copy_status: ['copied', 'pending', 'failed'], // Include all statuses that need cancellation
+          order_status: ['OPEN', 'PENDING', 'PENDING-QUEUED', 'REJECTED'] // Include rejected orders too
+        }
+      });
+
+      if (copiedOrders.length === 0) {
+        return;
+      }
+
+      // Process each copied order based on master order status
+      for (const copiedOrder of copiedOrders) {
+        if (masterOrder.order_status === 'CLOSED') {
+          await this.closeFollowerOrder(copiedOrder, masterOrder);
+        } else if (masterOrder.order_status === 'CANCELLED') {
+          await this.cancelFollowerOrder(copiedOrder, masterOrder);
+        }
+      }
+
+    } catch (error) {
+      logger.error('Failed to process strategy provider order update', {
+        masterOrderId: masterOrder.order_id,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Cancel follower order when master order is cancelled
+   * @param {Object} copiedOrder - Copied order
+   * @param {Object} masterOrder - Master order
+   */
+  async cancelFollowerOrder(copiedOrder, masterOrder) {
+    try {
+      // Determine flow type for follower
+      let isProviderFlow = false;
+      try {
+        const ucfg = await redisCluster.hgetall(`user:{copy_follower:${copiedOrder.order_user_id}}:config`);
+        const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+        isProviderFlow = (so === 'barclays');
+      } catch (_) { 
+        isProviderFlow = false; 
+      }
+
+      const symbol = copiedOrder.symbol;
+      const order_type = copiedOrder.order_type;
+      const user_id = copiedOrder.order_user_id.toString();
+      const user_type = 'copy_follower';
+      const order_id = copiedOrder.order_id;
+
+      if (!isProviderFlow) {
+        // LOCAL FLOW: Remove from Redis directly and update DB
+        try {
+          // Remove from pending monitoring if it's a pending order
+          if (['PENDING', 'PENDING-QUEUED'].includes(copiedOrder.order_status)) {
+            await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, order_id);
+            await redisCluster.del(`pending_orders:${order_id}`);
+          }
+        } catch (e) { 
+          logger.warn('Failed to remove from pending ZSET/HASH for follower', { error: e.message, order_id }); 
+        }
+
+        try {
+          const tag = `${user_type}:${user_id}`;
+          const idx = `user_orders_index:{${tag}}`;
+          const h = `user_holdings:{${tag}}:${order_id}`;
+          
+          // Use pipeline for same-slot keys
+          const p1 = redisCluster.pipeline();
+          p1.srem(idx, order_id);
+          p1.del(h);
+          await p1.exec();
+          
+          // Delete canonical separately
+          try { 
+            await redisCluster.del(`order_data:${order_id}`); 
+          } catch (eDel) {
+            logger.warn('Failed to delete order_data for follower pending cancel', { error: eDel.message, order_id });
+          }
+        } catch (e2) { 
+          logger.warn('Failed to remove holdings/index for follower pending cancel', { error: e2.message, order_id }); 
+        }
+
+        // Update copy follower order in DB
+        await CopyFollowerOrder.update({
+          order_status: 'CANCELLED',
+          copy_status: 'cancelled',
+          close_message: 'Master order cancelled'
+        }, {
+          where: { order_id }
+        });
+
+        // Emit WebSocket update
+        try {
+          portfolioEvents.emitUserUpdate(user_type, user_id, {
+            type: 'order_update',
+            order_id,
+            update: { order_status: 'CANCELLED' },
+            reason: 'master_order_cancelled'
+          });
+          portfolioEvents.emitUserUpdate(user_type, user_id, {
+            type: 'pending_cancelled',
+            order_id,
+            reason: 'master_order_cancelled'
+          });
+        } catch (_) {}
+
+        logger.info('Copy follower order cancelled (local flow)', {
+          copiedOrderId: order_id,
+          masterOrderId: masterOrder.order_id
+        });
+
+      } else {
+        // PROVIDER FLOW: Generate cancel_id and send to Python service
+        let cancel_id = null;
+        try { 
+          cancel_id = await idGenerator.generateCancelOrderId(); 
+        } catch (e) { 
+          logger.warn('Failed to generate cancel_id for follower', { error: e.message, order_id }); 
+        }
+        
+        if (!cancel_id) {
+          logger.error('Failed to generate cancel_id for follower order', { order_id });
+          return;
+        }
+
+        // Update order with cancel_id
+        await CopyFollowerOrder.update({
+          cancel_id,
+          order_status: 'PENDING-CANCEL',
+          copy_status: 'pending'
+        }, {
+          where: { order_id }
+        });
+
+        // Update Redis with cancel_id
+        try {
+          const tag = `${user_type}:${user_id}`;
+          const h = `user_holdings:{${tag}}:${order_id}`;
+          const od = `order_data:${order_id}`;
+          
+          // Store cancel_id in Redis
+          try { 
+            await redisCluster.hset(h, 'cancel_id', String(cancel_id)); 
+          } catch (e1) { 
+            logger.warn('HSET cancel_id failed on user_holdings for follower', { error: e1.message, order_id }); 
+          }
+          try { 
+            await redisCluster.hset(od, 'cancel_id', String(cancel_id)); 
+          } catch (e2) { 
+            logger.warn('HSET cancel_id failed on order_data for follower', { error: e2.message, order_id }); 
+          }
+          try { 
+            await redisCluster.hset(h, 'status', 'PENDING-CANCEL'); 
+          } catch (e3) { 
+            logger.warn('HSET status failed on user_holdings for follower', { error: e3.message, order_id }); 
+          }
+          try { 
+            await redisCluster.hset(od, 'status', 'PENDING-CANCEL'); 
+          } catch (e4) { 
+            logger.warn('HSET status failed on order_data for follower', { error: e4.message, order_id }); 
+          }
+        } catch (e) { 
+          logger.warn('Failed to mirror cancel status in Redis for follower', { error: e.message, order_id }); 
+        }
+
+        // Register cancel_id with lifecycle service
+        try {
+          const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+          pythonServiceAxios.post(
+            `${baseUrl}/api/orders/registry/lifecycle-id`,
+            { order_id, new_id: cancel_id, id_type: 'cancel_id' }
+          ).catch(() => {});
+        } catch (_) {}
+
+        // Send cancel request to Python service
+        try {
+          const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+          const pyPayload = { 
+            order_id, 
+            cancel_id, 
+            order_type, 
+            user_id, 
+            user_type, 
+            status: 'CANCELLED',
+            symbol 
+          };
+          
+          pythonServiceAxios.post(
+            `${baseUrl}/api/orders/pending/cancel`,
+            pyPayload
+          ).then(() => {
+            logger.info('Dispatched provider pending cancel for copy follower', { order_id, cancel_id, order_type });
+          }).catch((ePy) => { 
+            logger.error('Python pending cancel failed for copy follower', { error: ePy.message, order_id }); 
+          });
+        } catch (_) {}
+
+        logger.info('Copy follower order cancel submitted (provider flow)', {
+          copiedOrderId: order_id,
+          masterOrderId: masterOrder.order_id,
+          cancel_id
+        });
+      }
+
+    } catch (error) {
+      logger.error('Failed to cancel follower order', {
+        copiedOrderId: copiedOrder.order_id,
+        masterOrderId: masterOrder.order_id,
+        error: error.message
+      });
+    }
+  }
 }
 
-module.exports = CopyTradingService;
+module.exports = new CopyTradingService();

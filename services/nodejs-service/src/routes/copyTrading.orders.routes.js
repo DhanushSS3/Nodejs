@@ -27,17 +27,7 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { validateRequest } = require('../middlewares/validation.middleware');
 const { body, param, query } = require('express-validator');
 
-// Debug middleware to log all requests to this router
-router.use((req, res, next) => {
-  console.log('=== COPY TRADING ORDERS ROUTER HIT ===');
-  console.log('Method:', req.method);
-  console.log('Original URL:', req.originalUrl);
-  console.log('Base URL:', req.baseUrl);
-  console.log('Path:', req.path);
-  console.log('Route path:', req.route?.path);
-  console.log('Body:', req.body);
-  next();
-});
+// Removed debug middleware
 
 /**
  * @swagger
@@ -574,13 +564,6 @@ router.get('/copy-follower/:copy_follower_account_id',
  *         description: Internal server error
  */
 router.post('/strategy-provider/take-profit/cancel',
-  (req, res, next) => {
-    console.log('=== ROUTE HIT: /strategy-provider/take-profit/cancel ===');
-    console.log('Method:', req.method);
-    console.log('URL:', req.originalUrl || req.url);
-    console.log('Body:', req.body);
-    next();
-  },
   authenticateJWT,
   [
     body('order_id')
@@ -592,10 +575,6 @@ router.post('/strategy-provider/take-profit/cancel',
       .withMessage('Take profit ID must be a string')
   ],
   validateRequest,
-  (req, res, next) => {
-    console.log('=== ABOUT TO CALL CONTROLLER ===');
-    next();
-  },
   copyTradingOrdersController.cancelTakeProfitFromOrder
 );
 
@@ -662,13 +641,6 @@ router.post('/strategy-provider/take-profit/cancel',
  *         description: Internal server error
  */
 router.post('/strategy-provider/stop-loss/cancel',
-  (req, res, next) => {
-    console.log('=== ROUTE HIT: /strategy-provider/stop-loss/cancel ===');
-    console.log('Method:', req.method);
-    console.log('URL:', req.originalUrl || req.url);
-    console.log('Body:', req.body);
-    next();
-  },
   authenticateJWT,
   [
     body('order_id')
@@ -680,10 +652,6 @@ router.post('/strategy-provider/stop-loss/cancel',
       .withMessage('Stop loss ID must be a string')
   ],
   validateRequest,
-  (req, res, next) => {
-    console.log('=== ABOUT TO CALL STOP LOSS CONTROLLER ===');
-    next();
-  },
   copyTradingOrdersController.cancelStopLossFromOrder
 );
 

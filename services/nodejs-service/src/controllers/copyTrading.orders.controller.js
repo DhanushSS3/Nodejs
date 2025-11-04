@@ -1414,6 +1414,8 @@ async function getCopyFollowerOrders(req, res) {
  * Cancel strategy provider order
  */
 async function cancelStrategyProviderOrder(req, res) {
+  const operationId = `strategy_provider_pending_cancel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
   try {
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -1446,53 +1448,199 @@ async function cancelStrategyProviderOrder(req, res) {
       });
     }
 
-    if (!['PENDING', 'QUEUED'].includes(order.order_status)) {
+    if (!['PENDING', 'PENDING-QUEUED', 'QUEUED'].includes(order.order_status)) {
       return res.status(400).json({ 
         success: false, 
         message: 'Order cannot be cancelled in current status' 
       });
     }
 
-    // Cancel order through Python service
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    // Determine flow type (local vs provider)
+    let isProviderFlow = false;
+    try {
+      const ucfg = await redisCluster.hgetall(`user:{strategy_provider:${strategyAccount.id}}:config`);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) { 
+      isProviderFlow = false; 
+    }
+
+    const symbol = order.symbol;
+    const order_type = order.order_type;
+    const user_id = strategyAccount.id.toString();
+    const user_type = 'strategy_provider';
+
+    if (!isProviderFlow) {
+      // LOCAL FLOW: Remove from Redis directly and update DB
+      try {
+        // Remove from pending monitoring
+        await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, order_id);
+        await redisCluster.del(`pending_orders:${order_id}`);
+      } catch (e) { 
+        logger.warn('Failed to remove from pending ZSET/HASH', { error: e.message, order_id }); 
+      }
+
+      try {
+        const tag = `${user_type}:${user_id}`;
+        const idx = `user_orders_index:{${tag}}`;
+        const h = `user_holdings:{${tag}}:${order_id}`;
+        
+        // Use pipeline for same-slot keys
+        const p1 = redisCluster.pipeline();
+        p1.srem(idx, order_id);
+        p1.del(h);
+        await p1.exec();
+        
+        // Delete canonical separately
+        try { 
+          await redisCluster.del(`order_data:${order_id}`); 
+        } catch (eDel) {
+          logger.warn('Failed to delete order_data for pending cancel', { error: eDel.message, order_id });
+        }
+      } catch (e2) { 
+        logger.warn('Failed to remove holdings/index for pending cancel', { error: e2.message, order_id }); 
+      }
+
+      // Update strategy provider order in DB
+      await order.update({
+        order_status: 'CANCELLED',
+        copy_distribution_status: 'failed',
+        close_message: 'User cancelled pending order'
+      });
+
+      // Cancel follower orders (local flow)
+      await copyTradingService.processStrategyProviderOrderUpdate(order);
+
+      // Emit WebSocket update
+      try {
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'order_update',
+          order_id,
+          update: { order_status: 'CANCELLED' },
+          reason: 'local_pending_cancel'
+        });
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'pending_cancelled',
+          order_id,
+          reason: 'local_pending_cancel'
+        });
+      } catch (_) {}
+
+      return res.status(200).json({
+        success: true,
+        order_id,
+        order_status: 'CANCELLED',
+        message: 'Order cancelled successfully'
+      });
+    }
+
+    // PROVIDER FLOW: Generate cancel_id and send to Python service
+    let cancel_id = null;
+    try { 
+      cancel_id = await idGenerator.generateCancelOrderId(); 
+    } catch (e) { 
+      logger.warn('Failed to generate cancel_id', { error: e.message, order_id }); 
+    }
     
-    const pyPayload = {
-      order_id,
-      user_id: order.order_user_id.toString(),
-      user_type: 'strategy_provider',
-      symbol: order.symbol,
-      order_type: order.order_type
-    };
+    if (!cancel_id) {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to generate cancel id' 
+      });
+    }
 
-    await pythonServiceAxios.post(
-      `${baseUrl}/api/orders/pending/cancel`,
-      pyPayload
-    );
-
-    // Update order status
+    // Update order with cancel_id
     await order.update({
-      order_status: 'CANCELLED',
-      copy_distribution_status: 'cancelled'
+      cancel_id,
+      order_status: 'PENDING-CANCEL',
+      copy_distribution_status: 'distributing'
     });
 
-    // Handle follower order cancellations
+    // Update Redis with cancel_id
+    try {
+      const tag = `${user_type}:${user_id}`;
+      const h = `user_holdings:{${tag}}:${order_id}`;
+      const od = `order_data:${order_id}`;
+      
+      // Store cancel_id in Redis
+      try { 
+        await redisCluster.hset(h, 'cancel_id', String(cancel_id)); 
+      } catch (e1) { 
+        logger.warn('HSET cancel_id failed on user_holdings', { error: e1.message, order_id }); 
+      }
+      try { 
+        await redisCluster.hset(od, 'cancel_id', String(cancel_id)); 
+      } catch (e2) { 
+        logger.warn('HSET cancel_id failed on order_data', { error: e2.message, order_id }); 
+      }
+      try { 
+        await redisCluster.hset(h, 'status', 'PENDING-CANCEL'); 
+      } catch (e3) { 
+        logger.warn('HSET status failed on user_holdings', { error: e3.message, order_id }); 
+      }
+      try { 
+        await redisCluster.hset(od, 'status', 'PENDING-CANCEL'); 
+      } catch (e4) { 
+        logger.warn('HSET status failed on order_data', { error: e4.message, order_id }); 
+      }
+    } catch (e) { 
+      logger.warn('Failed to mirror cancel status in Redis', { error: e.message, order_id }); 
+    }
+
+    // Register cancel_id with lifecycle service
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      pythonServiceAxios.post(
+        `${baseUrl}/api/orders/registry/lifecycle-id`,
+        { order_id, new_id: cancel_id, id_type: 'cancel_id' }
+      ).catch(() => {});
+    } catch (_) {}
+
+    // Send cancel request to Python service
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      const pyPayload = { 
+        order_id, 
+        cancel_id, 
+        order_type, 
+        user_id, 
+        user_type, 
+        status: 'CANCELLED',
+        symbol 
+      };
+      
+      pythonServiceAxios.post(
+        `${baseUrl}/api/orders/pending/cancel`,
+        pyPayload
+      ).then(() => {
+        logger.info('Dispatched provider pending cancel for strategy provider', { order_id, cancel_id, order_type });
+      }).catch((ePy) => { 
+        logger.error('Python pending cancel failed for strategy provider', { error: ePy.message, order_id }); 
+      });
+    } catch (_) {}
+
+    // Cancel follower orders (provider flow - will be handled by worker after confirmation)
     await copyTradingService.processStrategyProviderOrderUpdate(order);
 
-    return res.status(200).json({
+    return res.status(202).json({
       success: true,
       order_id,
-      message: 'Order cancelled successfully'
+      order_status: 'PENDING-CANCEL',
+      cancel_id,
+      message: 'Cancel request submitted successfully'
     });
 
   } catch (error) {
     logger.error('Cancel strategy provider order error', {
       error: error.message,
-      order_id: req.params.order_id
+      order_id: req.params.order_id,
+      operationId
     });
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      operationId
     });
   }
 }
