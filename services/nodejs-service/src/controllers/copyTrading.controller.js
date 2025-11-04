@@ -718,10 +718,162 @@ async function stopFollowing(req, res) {
   }
 }
 
+/**
+ * Get user's copy trading overview - who they're following and total investments
+ */
+async function getCopyTradingOverview(req, res) {
+  try {
+    const user = req.user || {};
+    const userId = user.sub || user.user_id || user.id;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    logger.info('Getting copy trading overview for user', { userId });
+
+    // Get all copy follower accounts for this user with strategy provider details
+    const copyFollowerAccounts = await CopyFollowerAccount.findAll({
+      where: {
+        user_id: userId,
+        status: 1 // Active accounts only
+      },
+      include: [{
+        model: StrategyProviderAccount,
+        as: 'strategyProvider',
+        attributes: ['id', 'strategy_name', 'account_number', 'user_id'],
+        required: false // Changed to false to avoid issues if association fails
+      }],
+      attributes: [
+        'id',
+        'strategy_provider_id',
+        'account_name', 
+        'account_number',
+        'investment_amount',
+        'initial_investment',
+        'wallet_balance',
+        'net_profit',
+        'current_equity_ratio',
+        'copy_status',
+        'created_at'
+      ],
+      order: [['created_at', 'DESC']]
+    });
+
+    // Calculate totals
+    let totalCurrentInvestment = 0;
+    let totalInitialInvestment = 0;
+    let totalWalletBalance = 0;
+    let totalNetProfit = 0;
+
+    // Format strategy provider details
+    const followingStrategies = [];
+    
+    for (const account of copyFollowerAccounts) {
+      const currentInvestment = parseFloat(account.investment_amount || 0);
+      const initialInvestment = parseFloat(account.initial_investment || 0);
+      const walletBalance = parseFloat(account.wallet_balance || 0);
+      const netProfit = parseFloat(account.net_profit || 0);
+
+      // Add to totals
+      totalCurrentInvestment += currentInvestment;
+      totalInitialInvestment += initialInvestment;
+      totalWalletBalance += walletBalance;
+      totalNetProfit += netProfit;
+
+      // Get strategy provider details (fallback if association didn't work)
+      let strategyProviderDetails = null;
+      if (account.strategyProvider) {
+        strategyProviderDetails = {
+          id: account.strategyProvider.id,
+          strategy_name: account.strategyProvider.strategy_name,
+          account_number: account.strategyProvider.account_number
+        };
+      } else if (account.strategy_provider_id) {
+        // Fallback: fetch strategy provider details manually
+        try {
+          const strategyProvider = await StrategyProviderAccount.findByPk(account.strategy_provider_id, {
+            attributes: ['id', 'strategy_name', 'account_number']
+          });
+          if (strategyProvider) {
+            strategyProviderDetails = {
+              id: strategyProvider.id,
+              strategy_name: strategyProvider.strategy_name,
+              account_number: strategyProvider.account_number
+            };
+          }
+        } catch (err) {
+          logger.warn('Failed to fetch strategy provider details', {
+            strategy_provider_id: account.strategy_provider_id,
+            error: err.message
+          });
+        }
+      }
+
+      followingStrategies.push({
+        copy_follower_account_id: account.id,
+        copy_follower_account_name: account.account_name,
+        copy_follower_account_number: account.account_number,
+        strategy_provider_id: account.strategy_provider_id,
+        strategy_name: strategyProviderDetails?.strategy_name || 'Unknown Strategy',
+        strategy_provider_account_number: strategyProviderDetails?.account_number || 'Unknown Account',
+        user_investment_amount: currentInvestment,
+        initial_investment_amount: initialInvestment,
+        current_wallet_balance: walletBalance,
+        net_profit: netProfit,
+        current_equity_ratio: parseFloat(account.current_equity_ratio || 1.0),
+        copy_status: account.copy_status,
+        created_at: account.created_at
+      });
+    }
+
+    // Get count of active strategies being followed
+    const activeStrategiesCount = followingStrategies.filter(s => s.copy_status === 'active').length;
+
+    const overview = {
+      user_id: userId,
+      total_strategies_following: followingStrategies.length,
+      active_strategies_count: activeStrategiesCount,
+      total_current_investment: totalCurrentInvestment,
+      total_initial_investment: totalInitialInvestment,
+      total_wallet_balance: totalWalletBalance,
+      total_net_profit: totalNetProfit,
+      total_return_percentage: totalInitialInvestment > 0 ? 
+        ((totalWalletBalance + totalNetProfit - totalInitialInvestment) / totalInitialInvestment * 100) : 0,
+      following_strategies: followingStrategies
+    };
+
+    logger.info('Copy trading overview retrieved successfully', {
+      userId,
+      strategiesCount: followingStrategies.length,
+      totalInvestment: totalCurrentInvestment
+    });
+
+    res.json({
+      success: true,
+      data: overview
+    });
+
+  } catch (error) {
+    logger.error('Failed to get copy trading overview', {
+      userId: req.user?.id,
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get copy trading overview',
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   createFollowerAccount,
   getFollowerAccounts,
   updateFollowerAccount,
   updateFollowerAccountStrict,
-  stopFollowing
+  stopFollowing,
+  getCopyTradingOverview
 };

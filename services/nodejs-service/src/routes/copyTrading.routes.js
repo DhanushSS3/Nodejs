@@ -38,4 +38,10 @@ router.delete('/accounts/:follower_id',
   copyTradingController.stopFollowing
 );
 
+// Get user's copy trading overview (who they're following and total investments)
+router.get('/overview', 
+  authenticateJWT,
+  copyTradingController.getCopyTradingOverview
+);
+
 module.exports = router;
