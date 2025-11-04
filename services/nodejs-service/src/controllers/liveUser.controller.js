@@ -1,4 +1,5 @@
 const LiveUser = require('../models/liveUser.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const { generateAccountNumber } = require('../services/accountNumber.service');
 const { hashPassword, generateViewPassword, hashViewPassword, compareViewPassword } = require('../services/password.service');
 const LiveUserAuthService = require('../services/liveUser.auth.service');
@@ -549,11 +550,72 @@ async function regenerateViewPassword(req, res) {
 }
 
 /**
- * Get authenticated live user information
+ * Get authenticated user information (live user or strategy provider)
  * GET /api/live-users/me
  */
 async function getUserInfo(req, res) {
   try {
+    // Check if this is a strategy provider context
+    if (req.user.account_type === 'strategy_provider' && req.user.strategy_provider_id) {
+      // Fetch strategy provider account details
+      const strategyProvider = await StrategyProviderAccount.findByPk(req.user.strategy_provider_id, {
+        attributes: [
+          'id', 'strategy_name', 'account_number', 'group', 'leverage',
+          'wallet_balance', 'margin', 'net_profit', 'status', 'is_active',
+          'performance_fee', 'total_followers', 'total_return_percentage',
+          'three_month_return', 'max_drawdown', 'profile_image_url',
+          'description', 'created_at'
+        ],
+        include: [
+          {
+            model: LiveUser,
+            as: 'owner',
+            attributes: ['email', 'phone_number', 'city', 'state', 'country']
+          }
+        ]
+      });
+
+      if (!strategyProvider) {
+        return res.status(404).json({
+          success: false,
+          message: 'Strategy provider account not found'
+        });
+      }
+
+      // Construct strategy provider response
+      const userInfo = {
+        id: strategyProvider.id,
+        name: strategyProvider.strategy_name,
+        email: strategyProvider.owner?.email || null,
+        phone_number: strategyProvider.owner?.phone_number || null,
+        user_type: 'strategy_provider',
+        account_type: 'strategy_provider',
+        is_strategy_provider: 1,
+        wallet_balance: parseFloat(strategyProvider.wallet_balance) || 0,
+        leverage: strategyProvider.leverage,
+        margin: parseFloat(strategyProvider.margin) || 0,
+        net_profit: parseFloat(strategyProvider.net_profit) || 0,
+        account_number: strategyProvider.account_number,
+        group: strategyProvider.group,
+        city: strategyProvider.owner?.city || null,
+        state: strategyProvider.owner?.state || null,
+        country: strategyProvider.owner?.country || null,
+        performance_fee: parseFloat(strategyProvider.performance_fee) || 0,
+        total_followers: strategyProvider.total_followers || 0,
+        total_return_percentage: parseFloat(strategyProvider.total_return_percentage) || 0,
+        three_month_return: parseFloat(strategyProvider.three_month_return) || 0,
+        max_drawdown: parseFloat(strategyProvider.max_drawdown) || 0,
+        profile_image_url: strategyProvider.profile_image_url,
+        description: strategyProvider.description,
+        status: strategyProvider.status,
+        is_active: strategyProvider.is_active,
+        created_at: strategyProvider.created_at
+      };
+
+      return res.status(200).json(userInfo);
+    }
+
+    // Handle regular live user context
     const userId = req.user.sub || req.user.user_id || req.user.id;
 
     const user = await LiveUser.findByPk(userId, {
@@ -568,20 +630,21 @@ async function getUserInfo(req, res) {
     });
 
     if (!user) {
-      // Error case remains the same for clarity
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    // Construct the plain user object
+    // Construct live user response
     const userInfo = {
       id: user.id,
       name: user.name,
       email: user.email,
       phone_number: user.phone_number,
       user_type: user.user_type,
+      account_type: 'live',
+      is_strategy_provider: 0,
       wallet_balance: parseFloat(user.wallet_balance) || 0,
       leverage: user.leverage,
       margin: parseFloat(user.margin) || 0,
@@ -600,7 +663,6 @@ async function getUserInfo(req, res) {
       created_at: user.created_at
     };
 
-    // Return the user object directly
     return res.status(200).json(userInfo);
 
   } catch (error) {

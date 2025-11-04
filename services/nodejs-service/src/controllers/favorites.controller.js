@@ -8,11 +8,22 @@ function normalizeSymbol(sym) {
 }
 
 function getAuthUser(req) {
-  // JWT payload fields observed in project: sub, user_id, user_type, account_type, is_active
+  // JWT payload fields observed in project: sub, user_id, user_type, account_type, is_active, strategy_provider_id
   const user = req.user || {};
+  const isActive = !!user.is_active;
+  
+  // Handle strategy provider context
+  if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
+    return {
+      userId: user.strategy_provider_id, // Use strategy provider ID for favorites
+      userType: 'strategy_provider',
+      isActive
+    };
+  }
+  
+  // Handle regular live/demo users
   const userId = user.sub || user.user_id || user.id;
   const userType = (user.user_type || user.account_type || 'live').toString().toLowerCase();
-  const isActive = !!user.is_active;
   return { userId, userType, isActive };
 }
 
