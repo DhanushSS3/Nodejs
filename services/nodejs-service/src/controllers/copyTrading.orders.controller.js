@@ -1461,6 +1461,13 @@ async function cancelStrategyProviderOrder(req, res) {
       const ucfg = await redisCluster.hgetall(`user:{strategy_provider:${strategyAccount.id}}:config`);
       const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
       isProviderFlow = (so === 'barclays');
+      
+      logger.info('Strategy provider flow detection', {
+        strategyProviderId: strategyAccount.id,
+        sending_orders: so,
+        isProviderFlow,
+        order_id
+      });
     } catch (_) { 
       isProviderFlow = false; 
     }
@@ -1509,6 +1516,10 @@ async function cancelStrategyProviderOrder(req, res) {
       });
 
       // Cancel follower orders (local flow)
+      logger.info('Triggering follower order cancellations', {
+        masterOrderId: order_id,
+        masterOrderStatus: order.order_status
+      });
       await copyTradingService.processStrategyProviderOrderUpdate(order);
 
       // Emit WebSocket update
@@ -1620,6 +1631,11 @@ async function cancelStrategyProviderOrder(req, res) {
     } catch (_) {}
 
     // Cancel follower orders (provider flow - will be handled by worker after confirmation)
+    logger.info('Triggering follower order cancellations (provider flow)', {
+      masterOrderId: order_id,
+      masterOrderStatus: order.order_status,
+      cancel_id
+    });
     await copyTradingService.processStrategyProviderOrderUpdate(order);
 
     return res.status(202).json({

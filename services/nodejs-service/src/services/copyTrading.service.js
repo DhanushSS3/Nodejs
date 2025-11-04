@@ -1661,48 +1661,171 @@ class CopyTradingService {
    * @returns {Object} Placement result
    */
   async placeFollowerOrder(followerOrder, follower) {
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
     try {
-      // Create payload for Python service (same as strategy provider)
-      const payload = {
-        order_id: followerOrder.order_id,
-        user_id: follower.id.toString(),
-        user_type: 'copy_follower',
-        symbol: followerOrder.symbol,
-        order_type: followerOrder.order_type,
-        order_price: followerOrder.order_price,
-        order_quantity: followerOrder.order_quantity,
-        stop_loss: followerOrder.stop_loss || null,
-        take_profit: followerOrder.take_profit || null,
-        group: follower.group || 'Standard'
-      };
+      // Determine effective flow (inherit from strategy provider)
+      let isProviderFlow = false;
+      let strategySo = null;
+      let followerSo = null;
+      
+      try {
+        // Get strategy provider's flow from master order
+        const strategyProviderConfig = await redisCluster.hgetall(`user:{strategy_provider:${followerOrder.strategy_provider_id}}:config`);
+        strategySo = (strategyProviderConfig && strategyProviderConfig.sending_orders) ? 
+          String(strategyProviderConfig.sending_orders).trim().toLowerCase() : null;
+        
+        // Get follower's own config as fallback
+        const followerConfig = await redisCluster.hgetall(`user:{copy_follower:${follower.id}}:config`);
+        followerSo = (followerConfig && followerConfig.sending_orders) ? 
+          String(followerConfig.sending_orders).trim().toLowerCase() : null;
+        
+        // Inherit from strategy provider, fallback to follower's own setting
+        const effectiveSo = strategySo || followerSo;
+        isProviderFlow = (effectiveSo === 'barclays');
+        
+        logger.info('Copy follower placement flow inheritance', {
+          followerOrderId: followerOrder.order_id,
+          strategyProviderId: followerOrder.strategy_provider_id,
+          strategyProviderSendingOrders: strategySo,
+          followerSendingOrders: followerSo,
+          effectiveSendingOrders: effectiveSo,
+          isProviderFlow
+        });
+      } catch (e) {
+        logger.warn('Failed to determine follower flow, defaulting to local', { error: e.message });
+        isProviderFlow = false;
+      }
 
-      logger.info('Placing follower pending order through Python service', {
-        followerOrderId: followerOrder.order_id,
-        followerId: follower.id,
-        payload
-      });
+      if (isProviderFlow) {
+        // PROVIDER FLOW: Send to Python service
+        const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+        
+        const payload = {
+          order_id: followerOrder.order_id,
+          user_id: follower.id.toString(),
+          user_type: 'copy_follower',
+          symbol: followerOrder.symbol,
+          order_type: followerOrder.order_type,
+          order_price: followerOrder.order_price,
+          order_quantity: followerOrder.order_quantity,
+          stop_loss: followerOrder.stop_loss || null,
+          take_profit: followerOrder.take_profit || null,
+          group: follower.group || 'Standard'
+        };
 
-      const response = await pythonServiceAxios.post(
-        `${baseUrl}/api/orders/pending/place`,
-        payload
-      );
+        logger.info('Placing follower pending order through Python service (provider flow)', {
+          followerOrderId: followerOrder.order_id,
+          followerId: follower.id,
+          payload
+        });
 
-      return {
-        success: true,
-        data: response.data,
-        flow: response.data?.flow || 'local'
-      };
+        const response = await pythonServiceAxios.post(
+          `${baseUrl}/api/orders/pending/place`,
+          payload
+        );
+
+        return {
+          success: true,
+          data: response.data,
+          flow: 'provider'
+        };
+
+      } else {
+        // LOCAL FLOW: Store directly in Redis (same as strategy provider)
+        logger.info('Placing follower pending order locally (local flow)', {
+          followerOrderId: followerOrder.order_id,
+          followerId: follower.id,
+          symbol: followerOrder.symbol,
+          order_type: followerOrder.order_type
+        });
+
+        const symbol = followerOrder.symbol;
+        const orderType = followerOrder.order_type;
+        const order_id = followerOrder.order_id;
+        const user_id = follower.id.toString();
+        
+        // Calculate compare price for sorting (same logic as strategy provider)
+        let compare_price = parseFloat(followerOrder.order_price);
+        if (orderType === 'BUY_STOP' || orderType === 'SELL_LIMIT') {
+          compare_price = -compare_price; // Reverse for these order types
+        }
+
+        // Store pending order in Redis for monitoring (same as strategy provider)
+        const zkey = `pending_index:{${symbol}}:${orderType}`;
+        const hkey = `pending_orders:${order_id}`;
+        
+        await redisCluster.zadd(zkey, compare_price, order_id);
+        await redisCluster.hset(hkey, {
+          symbol: symbol,
+          order_type: orderType,
+          user_type: 'copy_follower',
+          user_id: user_id,
+          order_price_user: String(followerOrder.order_price),
+          order_price_compare: String(compare_price),
+          order_quantity: String(followerOrder.order_quantity),
+          status: 'PENDING',
+          created_at: Date.now().toString(),
+          group: follower.group || 'Standard',
+        });
+        
+        // Ensure symbol is tracked for periodic scanning by the worker
+        await redisCluster.sadd('pending_active_symbols', symbol);
+
+        // Also store in user holdings and index (same as strategy provider)
+        const tag = `copy_follower:${user_id}`;
+        const userIdx = `user_orders_index:{${tag}}`;
+        const userHolding = `user_holdings:{${tag}}:${order_id}`;
+        const orderData = `order_data:${order_id}`;
+        
+        const pipe = redisCluster.pipeline();
+        pipe.sadd(userIdx, order_id);
+        pipe.hset(userHolding, {
+          order_id: String(order_id),
+          symbol: symbol,
+          order_type: orderType,
+          order_status: 'PENDING',
+          status: 'PENDING',
+          execution_status: 'QUEUED',
+          order_price: String(followerOrder.order_price),
+          order_quantity: String(followerOrder.order_quantity),
+          group: follower.group || 'Standard',
+          created_at: Date.now().toString(),
+        });
+        pipe.hset(orderData, {
+          order_id: String(order_id),
+          user_type: 'copy_follower',
+          user_id: user_id,
+          symbol: symbol,
+          order_type: orderType,
+          order_status: 'PENDING',
+          status: 'PENDING',
+          execution_status: 'QUEUED',
+          order_price: String(followerOrder.order_price),
+          order_quantity: String(followerOrder.order_quantity),
+          group: follower.group || 'Standard',
+          created_at: Date.now().toString(),
+        });
+        await pipe.exec();
+
+        logger.info('Copy follower pending order stored locally', {
+          followerOrderId: order_id,
+          followerId: follower.id,
+          zkey,
+          hkey
+        });
+
+        return {
+          success: true,
+          data: { flow: 'local' },
+          flow: 'local'
+        };
+      }
 
     } catch (error) {
       logger.error('Failed to place follower pending order', {
         followerOrderId: followerOrder.order_id,
         followerId: follower.id,
         error: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data
+        stack: error.stack
       });
 
       return {
@@ -1814,7 +1937,22 @@ class CopyTradingService {
         }
       });
 
+      logger.info('Found follower orders for master order update', {
+        masterOrderId: masterOrder.order_id,
+        masterOrderStatus: masterOrder.order_status,
+        followerOrderCount: copiedOrders.length,
+        followerOrders: copiedOrders.map(o => ({
+          order_id: o.order_id,
+          copy_status: o.copy_status,
+          order_status: o.order_status
+        }))
+      });
+
       if (copiedOrders.length === 0) {
+        logger.warn('No follower orders found for master order update', {
+          masterOrderId: masterOrder.order_id,
+          masterOrderStatus: masterOrder.order_status
+        });
         return;
       }
 
@@ -1842,21 +1980,84 @@ class CopyTradingService {
    */
   async cancelFollowerOrder(copiedOrder, masterOrder) {
     try {
-      // Determine flow type for follower
-      let isProviderFlow = false;
-      try {
-        const ucfg = await redisCluster.hgetall(`user:{copy_follower:${copiedOrder.order_user_id}}:config`);
-        const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
-        isProviderFlow = (so === 'barclays');
-      } catch (_) { 
-        isProviderFlow = false; 
-      }
-
       const symbol = copiedOrder.symbol;
       const order_type = copiedOrder.order_type;
       const user_id = copiedOrder.order_user_id.toString();
       const user_type = 'copy_follower';
       const order_id = copiedOrder.order_id;
+
+      logger.info('Cancelling follower order', {
+        followerOrderId: order_id,
+        masterOrderId: masterOrder.order_id,
+        copyStatus: copiedOrder.copy_status,
+        orderStatus: copiedOrder.order_status
+      });
+
+      // If the order failed to place or is still pending placement, just update DB
+      if (['failed', 'pending'].includes(copiedOrder.copy_status) || ['REJECTED', 'SKIPPED'].includes(copiedOrder.order_status)) {
+        logger.info('Follower order was not successfully placed, updating DB only', {
+          followerOrderId: order_id,
+          copyStatus: copiedOrder.copy_status,
+          orderStatus: copiedOrder.order_status
+        });
+
+        // Update copy follower order in DB
+        await CopyFollowerOrder.update({
+          order_status: 'CANCELLED',
+          copy_status: 'cancelled',
+          close_message: 'Master order cancelled'
+        }, {
+          where: { order_id }
+        });
+
+        // Emit WebSocket update
+        try {
+          portfolioEvents.emitUserUpdate(user_type, user_id, {
+            type: 'order_update',
+            order_id,
+            update: { order_status: 'CANCELLED' },
+            reason: 'master_order_cancelled'
+          });
+        } catch (_) {}
+
+        logger.info('Follower order cancelled (DB only)', {
+          followerOrderId: order_id,
+          masterOrderId: masterOrder.order_id
+        });
+        return;
+      }
+
+      // For successfully placed orders, determine flow type
+      // Copy followers should inherit flow from their strategy provider
+      let isProviderFlow = false;
+      try {
+        // First check strategy provider's flow
+        const strategyProviderConfig = await redisCluster.hgetall(`user:{strategy_provider:${masterOrder.order_user_id}}:config`);
+        const strategySo = (strategyProviderConfig && strategyProviderConfig.sending_orders) ? 
+          String(strategyProviderConfig.sending_orders).trim().toLowerCase() : null;
+        
+        // Check follower's own config as fallback
+        const followerConfig = await redisCluster.hgetall(`user:{copy_follower:${copiedOrder.order_user_id}}:config`);
+        const followerSo = (followerConfig && followerConfig.sending_orders) ? 
+          String(followerConfig.sending_orders).trim().toLowerCase() : null;
+        
+        // Inherit from strategy provider, fallback to follower's own setting
+        const effectiveSo = strategySo || followerSo;
+        isProviderFlow = (effectiveSo === 'barclays');
+        
+        logger.info('Copy follower flow detection', {
+          copyFollowerId: copiedOrder.order_user_id,
+          strategyProviderId: masterOrder.order_user_id,
+          strategyProviderSendingOrders: strategySo,
+          followerSendingOrders: followerSo,
+          effectiveSendingOrders: effectiveSo,
+          isProviderFlow,
+          followerOrderId: order_id,
+          masterOrderId: masterOrder.order_id
+        });
+      } catch (_) { 
+        isProviderFlow = false; 
+      }
 
       if (!isProviderFlow) {
         // LOCAL FLOW: Remove from Redis directly and update DB
