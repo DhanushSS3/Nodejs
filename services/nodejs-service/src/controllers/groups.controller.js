@@ -89,17 +89,34 @@ class GroupsController {
       // Check if this is user access (my-group route) or admin access
       if (req.route.path === '/my-group') {
         isUserAccess = true;
-        // Extract group from JWT for users
+        // Extract group from JWT for users (supports live users, strategy providers, and copy followers)
         const user = req.user;
         if (!user || !user.group) {
-          logger.warn('User group not found in JWT token');
+          logger.warn('User group not found in JWT token', { 
+            userId: user?.sub || user?.user_id || user?.id,
+            userType: user?.user_type || user?.account_type,
+            role: user?.role,
+            strategyProviderId: user?.strategy_provider_id
+          });
           return res.status(400).json({
             success: false,
             message: 'User group information not available'
           });
         }
         groupName = user.group;
-        logger.info(`User access: extracting group from JWT: "${groupName}"`);
+        
+        // Log user type for debugging
+        const userType = user.account_type || user.user_type || 'live';
+        const userId = user.sub || user.user_id || user.id;
+        const strategyProviderId = user.strategy_provider_id;
+        
+        logger.info(`User access: extracting group from JWT: "${groupName}"`, {
+          userId,
+          userType,
+          role: user.role,
+          strategyProviderId,
+          accountType: user.account_type
+        });
       } else {
         // Admin access - get group from URL parameter
         const { groupName: rawGroupName } = req.params;
@@ -317,10 +334,15 @@ class GroupsController {
     try {
       logger.info('=== CONTROLLER START: getHalfSpreads ===');
       
-      // Extract group from JWT
+      // Extract group from JWT (supports live users, strategy providers, and copy followers)
       const user = req.user;
       if (!user || !user.group) {
-        logger.warn('User group not found in JWT token');
+        logger.warn('User group not found in JWT token', { 
+          userId: user?.sub || user?.user_id || user?.id,
+          userType: user?.user_type || user?.account_type,
+          role: user?.role,
+          strategyProviderId: user?.strategy_provider_id
+        });
         return res.status(400).json({
           success: false,
           message: 'User group information not available'
@@ -328,7 +350,16 @@ class GroupsController {
       }
       
       const groupName = user.group;
-      logger.info(`User group from JWT: "${groupName}"`);
+      const userType = user.account_type || user.user_type || 'live';
+      const userId = user.sub || user.user_id || user.id;
+      
+      logger.info(`User group from JWT: "${groupName}"`, {
+        userId,
+        userType,
+        role: user.role,
+        strategyProviderId: user.strategy_provider_id,
+        accountType: user.account_type
+      });
       
       // Scan for keys matching groups:{groupName}:*
       const pattern = `groups:{${groupName}}:*`;

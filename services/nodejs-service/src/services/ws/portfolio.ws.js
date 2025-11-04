@@ -6,6 +6,9 @@ const LiveUser = require('../../models/liveUser.model');
 const DemoUser = require('../../models/demoUser.model');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
+const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
+const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
+const StrategyProviderAccount = require('../../models/strategyProviderAccount.model');
 const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
 
@@ -53,21 +56,59 @@ function toIsoTimeSafe(v) {
 }
 
 async function fetchAccountSummary(userType, userId) {
-  const Model = userType === 'live' ? LiveUser : DemoUser;
-  const row = await Model.findByPk(parseInt(userId, 10));
-  if (!row) return { balance: '0', margin: '0' };
-  return {
-    balance: (row.wallet_balance ?? 0).toString(),
-    margin: (row.margin ?? 0).toString(),
-  };
+  let Model, row;
+  
+  if (userType === 'strategy_provider') {
+    // For strategy providers, get data from StrategyProviderAccount model
+    Model = StrategyProviderAccount;
+    row = await Model.findByPk(parseInt(userId, 10));
+    if (!row) return { balance: '0', margin: '0' };
+    return {
+      balance: (row.wallet_balance ?? 0).toString(),
+      margin: (row.margin ?? 0).toString(),
+    };
+  } else if (userType === 'copy_follower') {
+    // For copy followers, get data from LiveUser model (they are live users)
+    Model = LiveUser;
+    row = await Model.findByPk(parseInt(userId, 10));
+    if (!row) return { balance: '0', margin: '0' };
+    return {
+      balance: (row.wallet_balance ?? 0).toString(),
+      margin: (row.margin ?? 0).toString(),
+    };
+  } else {
+    // For live/demo users
+    Model = userType === 'live' ? LiveUser : DemoUser;
+    row = await Model.findByPk(parseInt(userId, 10));
+    if (!row) return { balance: '0', margin: '0' };
+    return {
+      balance: (row.wallet_balance ?? 0).toString(),
+      margin: (row.margin ?? 0).toString(),
+    };
+  }
 }
 
 async function fetchOrdersFromDB(userType, userId) {
-  const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
-  const rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+  let OrderModel, rows;
+  
+  if (userType === 'strategy_provider') {
+    // For strategy providers, get orders from StrategyProviderOrder model
+    OrderModel = StrategyProviderOrder;
+    rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+  } else if (userType === 'copy_follower') {
+    // For copy followers, get orders from CopyFollowerOrder model
+    OrderModel = CopyFollowerOrder;
+    rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+  } else {
+    // For live/demo users
+    OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+    rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+  }
+  
   const open = [];
   const pending = [];
   const rejected = [];
+  
   for (const r of rows) {
     const base = {
       order_id: r.order_id,
@@ -86,6 +127,20 @@ async function fetchOrdersFromDB(userType, userId) {
       close_message: r.close_message,
       created_at: toIsoTimeSafe(r.created_at),
     };
+    
+    // Add copy trading specific fields for copy followers
+    if (userType === 'copy_follower') {
+      base.master_order_id = r.master_order_id;
+      base.copy_status = r.copy_status;
+      base.strategy_provider_id = r.strategy_provider_id;
+    }
+    
+    // Add copy trading specific fields for strategy providers
+    if (userType === 'strategy_provider') {
+      base.copy_distribution_status = r.copy_distribution_status;
+      base.is_master_order = r.is_master_order;
+    }
+    
     const status = String(r.order_status).toUpperCase();
     if (status === 'OPEN') open.push(base);
     else if (status === 'PENDING') pending.push(base);
@@ -181,8 +236,23 @@ function startPortfolioWSServer(server) {
       return;
     }
 
-    const userId = user.sub || user.user_id || user.id;
-    const userType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
+    // Determine user ID and type based on JWT structure
+    let userId, userType;
+    
+    if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
+      // Strategy provider: use strategy_provider_id as userId
+      userId = user.strategy_provider_id;
+      userType = 'strategy_provider';
+    } else if (user.role === 'copy_follower' || user.user_type === 'copy_follower') {
+      // Copy follower: use regular user ID but with copy_follower type
+      userId = user.sub || user.user_id || user.id;
+      userType = 'copy_follower';
+    } else {
+      // Live/Demo user: use regular user ID and account type
+      userId = user.sub || user.user_id || user.id;
+      userType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
+    }
+    
     const userKey = getUserKey(userType, userId);
 
     // Track connections for logging (no limits enforced)

@@ -1,25 +1,9 @@
 const axios = require('axios');
 const http = require('http');
 const https = require('https');
-const logger = require('../services/logger.service');
-const orderReqLogger = require('../services/order.request.logger');
-const timingLogger = require('../services/perf.timing.logger');
-const idGenerator = require('../services/idGenerator.service');
-const orderLifecycleService = require('../services/orderLifecycle.service');
-const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
-const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
-const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
-const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const logger = require('../utils/logger');
 const copyTradingService = require('../services/copyTrading.service');
-const copyTradingRedisService = require('../services/copyTradingRedis.service');
-const { updateUserUsedMargin } = require('../services/user.margin.service');
-const portfolioEvents = require('../services/events/portfolio.events');
-const { applyOrderClosePayout } = require('../services/order.payout.service');
 const { redisCluster } = require('../../config/redis');
-const redisUserCache = require('../services/redis.user.cache.service');
-const lotValidationService = require('../services/lot.validation.service');
-const groupsCache = require('../services/groups.cache.service');
-
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
   timeout: 15000,
@@ -40,6 +24,21 @@ const pythonServiceAxios = axios.create({
     maxFreeSockets: 10
   })
 });
+const idGenerator = require('../services/idGenerator.service');
+const portfolioEvents = require('../services/events/portfolio.events');
+const orderLifecycleService = require('../services/orderLifecycle.service');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const copyTradingRedisService = require('../services/copyTradingRedis.service');
+const { updateUserUsedMargin } = require('../services/user.margin.service');
+const { applyOrderClosePayout } = require('../services/order.payout.service');
+const redisUserCache = require('../services/redis.user.cache.service');
+const lotValidationService = require('../services/lot.validation.service');
+const groupsCache = require('../services/groups.cache.service');
+const orderReqLogger = require('../services/order.request.logger');
+
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;

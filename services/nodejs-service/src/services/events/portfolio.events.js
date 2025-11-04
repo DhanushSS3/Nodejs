@@ -18,7 +18,9 @@ class PortfolioEventBus extends EventEmitter {
   }
 
   makeUserKey(userType, userId) {
-    return `${String(userType).toLowerCase()}:${String(userId)}`;
+    // Normalize user type to handle strategy providers and copy followers
+    const normalizedUserType = String(userType).toLowerCase();
+    return `${normalizedUserType}:${String(userId)}`;
   }
 
   emitUserUpdate(userType, userId, payload = {}) {
