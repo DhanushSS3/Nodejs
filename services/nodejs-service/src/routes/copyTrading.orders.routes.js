@@ -708,13 +708,29 @@ router.post('/strategy-provider/:order_id/cancel',
     next();
   },
   debugMiddleware,
+  (req, res, next) => {
+    console.log('🔐 BEFORE AUTHENTICATION - Cancel');
+    next();
+  },
   authenticateJWT,
+  (req, res, next) => {
+    console.log('✅ AFTER AUTHENTICATION - Cancel', { user: req.user });
+    next();
+  },
   [
     param('order_id')
       .notEmpty()
       .withMessage('Order ID is required')
   ],
+  (req, res, next) => {
+    console.log('🔍 BEFORE VALIDATION - Cancel');
+    next();
+  },
   validateRequest,
+  (req, res, next) => {
+    console.log('✅ AFTER VALIDATION - Cancel, calling controller');
+    next();
+  },
   copyTradingOrdersController.cancelStrategyProviderOrder
 );
 
@@ -790,8 +806,20 @@ router.post('/strategy-provider/:order_id/cancel',
  *         description: Internal server error
  */
 router.post('/strategy-provider/stop-loss/add',
+  (req, res, next) => {
+    console.log('🚀 STOP LOSS ROUTE HIT - Debug middleware executing');
+    next();
+  },
   debugMiddleware,
+  (req, res, next) => {
+    console.log('🔐 BEFORE AUTHENTICATION - Stop Loss');
+    next();
+  },
   authenticateJWT,
+  (req, res, next) => {
+    console.log('✅ AFTER AUTHENTICATION - Stop Loss', { user: req.user });
+    next();
+  },
   [
     body('order_id')
       .notEmpty()
@@ -800,7 +828,15 @@ router.post('/strategy-provider/stop-loss/add',
       .isFloat({ gt: 0 })
       .withMessage('Stop loss must be a positive number')
   ],
+  (req, res, next) => {
+    console.log('🔍 BEFORE VALIDATION - Stop Loss');
+    next();
+  },
   validateRequest,
+  (req, res, next) => {
+    console.log('✅ AFTER VALIDATION - Stop Loss, calling controller');
+    next();
+  },
   copyTradingOrdersController.addStopLossToOrder
 );
 
@@ -881,7 +917,15 @@ router.post('/strategy-provider/take-profit/add',
     next();
   },
   debugMiddleware,
+  (req, res, next) => {
+    console.log('🔐 BEFORE AUTHENTICATION - Take Profit');
+    next();
+  },
   authenticateJWT,
+  (req, res, next) => {
+    console.log('✅ AFTER AUTHENTICATION - Take Profit', { user: req.user });
+    next();
+  },
   [
     body('order_id')
       .notEmpty()
@@ -890,7 +934,15 @@ router.post('/strategy-provider/take-profit/add',
       .isFloat({ gt: 0 })
       .withMessage('Take profit must be a positive number')
   ],
+  (req, res, next) => {
+    console.log('🔍 BEFORE VALIDATION - Take Profit');
+    next();
+  },
   validateRequest,
+  (req, res, next) => {
+    console.log('✅ AFTER VALIDATION - Take Profit, calling controller');
+    next();
+  },
   copyTradingOrdersController.addTakeProfitToOrder
 );
 
