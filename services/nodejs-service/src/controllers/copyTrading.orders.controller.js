@@ -1420,6 +1420,13 @@ async function cancelStrategyProviderOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const { order_id } = req.params;
 
+    console.log(`🔍 [CANCEL DEBUG] Starting cancel operation`, {
+      operationId,
+      tokenUserId,
+      order_id,
+      userObject: user,
+      params: req.params
+    });
     logger.info(`🔍 [CANCEL DEBUG] Starting cancel operation`, {
       operationId,
       tokenUserId,
@@ -1960,6 +1967,13 @@ async function addTakeProfitToOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const role = user.role;
     
+    console.log(`🔍 [TAKEPROFIT DEBUG] Starting add take profit operation`, {
+      operationId,
+      tokenUserId,
+      role,
+      userObject: user,
+      body: req.body
+    });
     logger.info(`🔍 [TAKEPROFIT DEBUG] Starting add take profit operation`, {
       operationId,
       tokenUserId,

@@ -30,6 +30,15 @@ const logger = require('../utils/logger');
 
 // Debug middleware to track request flow
 const debugMiddleware = (req, res, next) => {
+  console.log(`🔍 [ROUTE DEBUG] ${req.method} ${req.originalUrl}`, {
+    params: req.params,
+    body: req.body,
+    query: req.query,
+    headers: {
+      authorization: req.headers.authorization ? 'Bearer [PRESENT]' : 'NOT_PRESENT',
+      'content-type': req.headers['content-type']
+    }
+  });
   logger.info(`🔍 [ROUTE DEBUG] ${req.method} ${req.originalUrl}`, {
     params: req.params,
     body: req.body,
@@ -694,6 +703,10 @@ router.post('/strategy-provider/stop-loss/cancel',
  *         description: Internal server error
  */
 router.post('/strategy-provider/:order_id/cancel',
+  (req, res, next) => {
+    console.log('🚀 CANCEL ROUTE HIT - Debug middleware executing');
+    next();
+  },
   debugMiddleware,
   authenticateJWT,
   [
@@ -863,6 +876,10 @@ router.post('/strategy-provider/stop-loss/add',
  *         description: Internal server error
  */
 router.post('/strategy-provider/take-profit/add',
+  (req, res, next) => {
+    console.log('🚀 TAKE PROFIT ROUTE HIT - Debug middleware executing');
+    next();
+  },
   debugMiddleware,
   authenticateJWT,
   [
