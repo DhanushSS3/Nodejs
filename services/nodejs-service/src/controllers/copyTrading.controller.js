@@ -745,8 +745,22 @@ async function stopFollowing(req, res) {
     const userId = user.sub || user.user_id || user.id;
     const { follower_id } = req.params;
     
+    logger.info('Stop following request received', { 
+      userId, 
+      follower_id, 
+      hasBody: !!req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : []
+    });
+    
     if (!userId) {
       return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    if (!follower_id || isNaN(parseInt(follower_id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid follower account ID' 
+      });
     }
 
     const followerAccount = await CopyFollowerAccount.findOne({
@@ -782,14 +796,18 @@ async function stopFollowing(req, res) {
     }
 
     // Update follower account to stopped status - set all required fields
+    logger.info('Updating follower account to stopped status', { follower_id, userId });
+    
     await CopyFollowerAccount.update({
       status: 0,           // Set status to 0
       is_active: 0,        // Set is_active to 0  
       copy_status: 'stopped', // Set copy_status to 'stopped'
-      stop_reason: req.body.reason || 'Manually stopped by user'
+      stop_reason:  'Manually stopped by user'
     }, {
       where: { id: follower_id }
     });
+    
+    logger.info('Follower account updated successfully', { follower_id });
 
     // Update strategy provider follower count
     await StrategyProviderAccount.decrement({
