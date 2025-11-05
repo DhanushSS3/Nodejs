@@ -3,6 +3,7 @@ const http = require('http');
 const https = require('https');
 const logger = require('../utils/logger');
 const copyTradingService = require('../services/copyTrading.service');
+const StrategyProviderStatsService = require('../services/strategyProviderStats.service');
 const { redisCluster } = require('../../config/redis');
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
@@ -431,6 +432,23 @@ async function placeStrategyProviderOrder(req, res) {
     logger.transactionSuccess('strategy_provider_place', { 
       operationId, 
       order_id
+    });
+
+    // Increment total trades counter asynchronously (non-blocking)
+    setImmediate(async () => {
+      try {
+        await StrategyProviderStatsService.incrementTotalTrades(
+          tokenStrategyProviderId, 
+          order_id
+        );
+      } catch (statsError) {
+        logger.error('Failed to increment total trades counter', {
+          strategyProviderId: tokenStrategyProviderId,
+          orderId: order_id,
+          operationId,
+          error: statsError.message
+        });
+      }
     });
 
     return res.status(200).json({
@@ -885,6 +903,30 @@ async function closeStrategyProviderOrder(req, res) {
       operationId
     });
 
+    // Update strategy provider statistics asynchronously (non-blocking)
+    setImmediate(async () => {
+      try {
+        await StrategyProviderStatsService.updateStatisticsAfterOrderClose(
+          tokenStrategyProviderId, 
+          order_id
+        );
+        logger.info('Strategy provider statistics updated after order close', {
+          strategyProviderId: tokenStrategyProviderId,
+          orderId: order_id,
+          operationId
+        });
+      } catch (statsError) {
+        logger.error('Failed to update strategy provider statistics after order close', {
+          strategyProviderId: tokenStrategyProviderId,
+          orderId: order_id,
+          operationId,
+          error: statsError.message,
+          stack: statsError.stack
+        });
+        // Don't throw - statistics update failure should not affect order closure response
+      }
+    });
+
     return res.status(200).json({
       success: true,
       data: result,
@@ -1316,6 +1358,23 @@ async function placeStrategyProviderPendingOrder(req, res) {
     logger.transactionSuccess('strategy_provider_pending_place', { 
       operationId, 
       order_id
+    });
+
+    // Increment total trades counter asynchronously (non-blocking)
+    setImmediate(async () => {
+      try {
+        await StrategyProviderStatsService.incrementTotalTrades(
+          tokenStrategyProviderId, 
+          order_id
+        );
+      } catch (statsError) {
+        logger.error('Failed to increment total trades counter for pending order', {
+          strategyProviderId: tokenStrategyProviderId,
+          orderId: order_id,
+          operationId,
+          error: statsError.message
+        });
+      }
     });
 
     return res.status(201).json({
