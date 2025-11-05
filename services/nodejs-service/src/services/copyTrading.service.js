@@ -1776,9 +1776,11 @@ class CopyTradingService {
         const userHolding = `user_holdings:{${tag}}:${order_id}`;
         const orderData = `order_data:${order_id}`;
         
-        const pipe = redisCluster.pipeline();
-        pipe.sadd(userIdx, order_id);
-        pipe.hset(userHolding, {
+        // Split operations to avoid Redis cluster cross-slot issues
+        // First: user-specific operations (same slot due to same hash tag pattern)
+        const userPipe = redisCluster.pipeline();
+        userPipe.sadd(userIdx, order_id);
+        userPipe.hset(userHolding, {
           order_id: String(order_id),
           symbol: symbol,
           order_type: orderType,
@@ -1790,7 +1792,10 @@ class CopyTradingService {
           group: follower.group || 'Standard',
           created_at: Date.now().toString(),
         });
-        pipe.hset(orderData, {
+        await userPipe.exec();
+
+        // Second: order_data operation (separate to avoid cross-slot issues)
+        await redisCluster.hset(orderData, {
           order_id: String(order_id),
           user_type: 'copy_follower',
           user_id: user_id,
@@ -1804,7 +1809,6 @@ class CopyTradingService {
           group: follower.group || 'Standard',
           created_at: Date.now().toString(),
         });
-        await pipe.exec();
 
         logger.info('Copy follower pending order stored locally', {
           followerOrderId: order_id,
