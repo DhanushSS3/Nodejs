@@ -1420,12 +1420,32 @@ async function cancelStrategyProviderOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const { order_id } = req.params;
 
+    logger.info(`🔍 [CANCEL DEBUG] Starting cancel operation`, {
+      operationId,
+      tokenUserId,
+      order_id,
+      userObject: user,
+      params: req.params
+    });
+
     // First, find the strategy provider account for this user
     const strategyAccount = await StrategyProviderAccount.findOne({
       where: { user_id: tokenUserId }
     });
 
+    logger.info(`🔍 [CANCEL DEBUG] Strategy account lookup`, {
+      operationId,
+      tokenUserId,
+      strategyAccountFound: !!strategyAccount,
+      strategyAccountId: strategyAccount?.id,
+      strategyAccountData: strategyAccount?.toJSON()
+    });
+
     if (!strategyAccount) {
+      logger.warn(`❌ [CANCEL DEBUG] Strategy provider account not found`, {
+        operationId,
+        tokenUserId
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'Strategy provider account not found' 
@@ -1440,7 +1460,25 @@ async function cancelStrategyProviderOrder(req, res) {
       }
     });
 
+    logger.info(`🔍 [CANCEL DEBUG] Order lookup`, {
+      operationId,
+      order_id,
+      strategyAccountId: strategyAccount.id,
+      orderFound: !!order,
+      orderData: order?.toJSON(),
+      searchCriteria: {
+        order_id,
+        order_user_id: strategyAccount.id
+      }
+    });
+
     if (!order) {
+      logger.warn(`❌ [CANCEL DEBUG] Order not found or access denied`, {
+        operationId,
+        order_id,
+        strategyAccountId: strategyAccount.id,
+        tokenUserId
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'Order not found or access denied' 
@@ -1682,8 +1720,21 @@ async function addStopLossToOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const role = user.role;
     
+    logger.info(`🔍 [STOPLOSS DEBUG] Starting add stop loss operation`, {
+      operationId,
+      tokenUserId,
+      role,
+      userObject: user,
+      body: req.body
+    });
+    
     // Strategy provider role validation
     if (role && role !== 'strategy_provider') {
+      logger.warn(`❌ [STOPLOSS DEBUG] Invalid role`, {
+        operationId,
+        tokenUserId,
+        role
+      });
       return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
     }
 
@@ -1705,7 +1756,19 @@ async function addStopLossToOrder(req, res) {
       where: { user_id: tokenUserId }
     });
 
+    logger.info(`🔍 [STOPLOSS DEBUG] Strategy account lookup`, {
+      operationId,
+      tokenUserId,
+      strategyAccountFound: !!strategyAccount,
+      strategyAccountId: strategyAccount?.id,
+      strategyAccountData: strategyAccount?.toJSON()
+    });
+
     if (!strategyAccount) {
+      logger.warn(`❌ [STOPLOSS DEBUG] Strategy provider account not found`, {
+        operationId,
+        tokenUserId
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'Strategy provider account not found' 
@@ -1720,7 +1783,25 @@ async function addStopLossToOrder(req, res) {
       }
     });
 
+    logger.info(`🔍 [STOPLOSS DEBUG] Order lookup`, {
+      operationId,
+      order_id,
+      strategyAccountId: strategyAccount.id,
+      orderFound: !!order,
+      orderData: order?.toJSON(),
+      searchCriteria: {
+        order_id,
+        order_user_id: strategyAccount.id
+      }
+    });
+
     if (!order) {
+      logger.warn(`❌ [STOPLOSS DEBUG] Order not found or access denied`, {
+        operationId,
+        order_id,
+        strategyAccountId: strategyAccount.id,
+        tokenUserId
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'Order not found or access denied' 
@@ -1879,8 +1960,21 @@ async function addTakeProfitToOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const role = user.role;
     
+    logger.info(`🔍 [TAKEPROFIT DEBUG] Starting add take profit operation`, {
+      operationId,
+      tokenUserId,
+      role,
+      userObject: user,
+      body: req.body
+    });
+    
     // Strategy provider role validation
     if (role && role !== 'strategy_provider') {
+      logger.warn(`❌ [TAKEPROFIT DEBUG] Invalid role`, {
+        operationId,
+        tokenUserId,
+        role
+      });
       return res.status(403).json({ success: false, message: 'User role not allowed for strategy provider orders' });
     }
 
@@ -1902,7 +1996,19 @@ async function addTakeProfitToOrder(req, res) {
       where: { user_id: tokenUserId }
     });
 
+    logger.info(`🔍 [TAKEPROFIT DEBUG] Strategy account lookup`, {
+      operationId,
+      tokenUserId,
+      strategyAccountFound: !!strategyAccount,
+      strategyAccountId: strategyAccount?.id,
+      strategyAccountData: strategyAccount?.toJSON()
+    });
+
     if (!strategyAccount) {
+      logger.warn(`❌ [TAKEPROFIT DEBUG] Strategy provider account not found`, {
+        operationId,
+        tokenUserId
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'Strategy provider account not found' 
@@ -1917,7 +2023,25 @@ async function addTakeProfitToOrder(req, res) {
       }
     });
 
+    logger.info(`🔍 [TAKEPROFIT DEBUG] Order lookup`, {
+      operationId,
+      order_id,
+      strategyAccountId: strategyAccount.id,
+      orderFound: !!order,
+      orderData: order?.toJSON(),
+      searchCriteria: {
+        order_id,
+        order_user_id: strategyAccount.id
+      }
+    });
+
     if (!order) {
+      logger.warn(`❌ [TAKEPROFIT DEBUG] Order not found or access denied`, {
+        operationId,
+        order_id,
+        strategyAccountId: strategyAccount.id,
+        tokenUserId
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'Order not found or access denied' 

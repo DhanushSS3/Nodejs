@@ -26,8 +26,21 @@ const copyTradingOrdersController = require('../controllers/copyTrading.orders.c
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { validateRequest } = require('../middlewares/validation.middleware');
 const { body, param, query } = require('express-validator');
+const logger = require('../utils/logger');
 
-// Removed debug middleware
+// Debug middleware to track request flow
+const debugMiddleware = (req, res, next) => {
+  logger.info(`🔍 [ROUTE DEBUG] ${req.method} ${req.originalUrl}`, {
+    params: req.params,
+    body: req.body,
+    query: req.query,
+    headers: {
+      authorization: req.headers.authorization ? 'Bearer [PRESENT]' : 'NOT_PRESENT',
+      'content-type': req.headers['content-type']
+    }
+  });
+  next();
+};
 
 /**
  * @swagger
@@ -681,6 +694,7 @@ router.post('/strategy-provider/stop-loss/cancel',
  *         description: Internal server error
  */
 router.post('/strategy-provider/:order_id/cancel',
+  debugMiddleware,
   authenticateJWT,
   [
     param('order_id')
@@ -763,6 +777,7 @@ router.post('/strategy-provider/:order_id/cancel',
  *         description: Internal server error
  */
 router.post('/strategy-provider/stop-loss/add',
+  debugMiddleware,
   authenticateJWT,
   [
     body('order_id')
@@ -848,6 +863,7 @@ router.post('/strategy-provider/stop-loss/add',
  *         description: Internal server error
  */
 router.post('/strategy-provider/take-profit/add',
+  debugMiddleware,
   authenticateJWT,
   [
     body('order_id')
