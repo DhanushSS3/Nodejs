@@ -1420,13 +1420,6 @@ async function cancelStrategyProviderOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const { order_id } = req.params;
 
-    console.log(`🔍 [CANCEL DEBUG] Starting cancel operation`, {
-      operationId,
-      tokenUserId,
-      order_id,
-      userObject: user,
-      params: req.params
-    });
     logger.info(`🔍 [CANCEL DEBUG] Starting cancel operation`, {
       operationId,
       tokenUserId,
@@ -1438,12 +1431,6 @@ async function cancelStrategyProviderOrder(req, res) {
     // First, find the strategy provider account for this user
     // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
     const strategyProviderId = user.strategy_provider_id;
-    console.log(`🔍 [CANCEL DEBUG] Strategy provider ID lookup`, {
-      operationId,
-      tokenUserId,
-      strategyProviderId,
-      userStrategyProviderId: user.strategy_provider_id
-    });
     
     const strategyAccount = await StrategyProviderAccount.findOne({
       where: { id: strategyProviderId }
@@ -1718,10 +1705,8 @@ async function cancelStrategyProviderOrder(req, res) {
  * Add stop loss to strategy provider order
  */
 async function addStopLossToOrder(req, res) {
-  console.log('🎯 CONTROLLER ENTRY - addStopLossToOrder called');
   const operationId = `add_sp_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
-    console.log('🎯 CONTROLLER - Inside try block, operationId:', operationId);
     // Structured request log (same as live users)
     orderReqLogger.logOrderRequest({
       endpoint: 'addStopLossToOrder',
@@ -1738,16 +1723,6 @@ async function addStopLossToOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const role = user.role;
     
-    console.log(`🔍 [STOPLOSS DEBUG] Starting add stop loss operation`, {
-      operationId,
-      tokenUserId,
-      role,
-      userObject: user,
-      body: req.body,
-      userSub: user?.sub,
-      userUserId: user?.user_id,
-      userStrategyProviderId: user?.strategy_provider_id
-    });
     
     // Strategy provider role validation
     if (role && role !== 'strategy_provider') {
@@ -1775,12 +1750,6 @@ async function addStopLossToOrder(req, res) {
     // First, find the strategy provider account for this user
     // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
     const strategyProviderId = user.strategy_provider_id || tokenUserId;
-    console.log(`🔍 [STOPLOSS DEBUG] Strategy provider ID lookup`, {
-      operationId,
-      tokenUserId,
-      strategyProviderId,
-      userStrategyProviderId: user.strategy_provider_id
-    });
     
     const strategyAccount = await StrategyProviderAccount.findOne({
       where: { id: strategyProviderId }
@@ -1955,7 +1924,6 @@ async function addStopLossToOrder(req, res) {
     });
 
   } catch (error) {
-    console.log('❌ CONTROLLER ERROR - addStopLossToOrder:', error.message, error.stack);
     logger.error('Add stop loss error', {
       error: error.message,
       order_id: req.body?.order_id,
@@ -1992,13 +1960,6 @@ async function addTakeProfitToOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const role = user.role;
     
-    console.log(`🔍 [TAKEPROFIT DEBUG] Starting add take profit operation`, {
-      operationId,
-      tokenUserId,
-      role,
-      userObject: user,
-      body: req.body
-    });
     logger.info(`🔍 [TAKEPROFIT DEBUG] Starting add take profit operation`, {
       operationId,
       tokenUserId,
@@ -2033,12 +1994,6 @@ async function addTakeProfitToOrder(req, res) {
     // First, find the strategy provider account for this user
     // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
     const strategyProviderId = user.strategy_provider_id || tokenUserId;
-    console.log(`🔍 [TAKEPROFIT DEBUG] Strategy provider ID lookup`, {
-      operationId,
-      tokenUserId,
-      strategyProviderId,
-      userStrategyProviderId: user.strategy_provider_id
-    });
     
     const strategyAccount = await StrategyProviderAccount.findOne({
       where: { id: strategyProviderId }
@@ -2263,12 +2218,6 @@ async function cancelStopLossFromOrder(req, res) {
 
     // First, find the strategy provider account for this user
     const strategyProviderId = user.strategy_provider_id || tokenUserId;
-    console.log(`🔍 [CANCEL SL DEBUG] Strategy provider ID lookup`, {
-      operationId,
-      tokenUserId,
-      strategyProviderId,
-      userStrategyProviderId: user.strategy_provider_id
-    });
 
     const strategyAccount = await StrategyProviderAccount.findOne({
       where: { id: strategyProviderId }
@@ -2409,14 +2358,7 @@ async function cancelStopLossFromOrder(req, res) {
  * Cancel take profit from strategy provider order
  */
 async function cancelTakeProfitFromOrder(req, res) {
-  console.log('=== CANCEL TAKE PROFIT FUNCTION CALLED ===');
-  console.log('Request method:', req.method);
-  console.log('Request URL:', req.originalUrl || req.url);
-  console.log('Request body:', req.body);
-  console.log('Request headers:', req.headers);
-  
   const operationId = `cancel_sp_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  console.log('Generated operationId:', operationId);
   
   try {
     // Structured request log (same as live users)
@@ -2450,12 +2392,6 @@ async function cancelTakeProfitFromOrder(req, res) {
 
     // First, find the strategy provider account for this user
     const strategyProviderId = user.strategy_provider_id || tokenUserId;
-    console.log(`🔍 [CANCEL TP DEBUG] Strategy provider ID lookup`, {
-      operationId,
-      tokenUserId,
-      strategyProviderId,
-      userStrategyProviderId: user.strategy_provider_id
-    });
 
     const strategyAccount = await StrategyProviderAccount.findOne({
       where: { id: strategyProviderId }
@@ -2485,14 +2421,6 @@ async function cancelTakeProfitFromOrder(req, res) {
       });
     }
 
-    console.log('DEBUG Cancel TP - Lookup params:', {
-      order_id,
-      strategyAccountId: strategyAccount.id,
-      tokenUserId,
-      operationId,
-      orderFound: !!order,
-      orderUserId: order?.order_user_id
-    });
 
     if (!order) {
       return res.status(404).json({ 
