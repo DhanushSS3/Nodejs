@@ -12,7 +12,7 @@ const nodes = hosts.map(h => {
 const redisCluster = new Redis.Cluster(nodes, {
   // Redis options applied to each node connection
   redisOptions: {
-    password: process.env.REDIS_PASSWORD,
+    password: process.env.REDIS_PASSWORD || 'admin@livefxhub@123',
     connectTimeout: 10000,
     maxRetriesPerRequest: null, // Allow unlimited retries for initial connection
     retryDelayOnFailover: 100,
