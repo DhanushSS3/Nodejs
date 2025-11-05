@@ -5,7 +5,7 @@ const LiveUser = require('../models/liveUser.model');
 const UserTransaction = require('../models/userTransaction.model');
 const logger = require('../services/logger.service');
 const strategyProviderService = require('../services/strategyProvider.service');
-const { sequelize } = require('../config/db');
+const sequelize = require('../config/db');
 
 /**
  * Create a copy follower account to follow a strategy provider
@@ -244,10 +244,27 @@ async function createFollowerAccount(req, res) {
       copy_status: 'active'
     };
 
+    // Validate sequelize connection
+    if (!sequelize || typeof sequelize.transaction !== 'function') {
+      throw new Error('Database connection not available');
+    }
+
+    // Validate UserTransaction model
+    if (!UserTransaction || typeof UserTransaction.create !== 'function') {
+      throw new Error('UserTransaction model not properly loaded');
+    }
+
     // Execute all operations in a database transaction
-    const result = await sequelize.transaction(async (t) => {
-      // Create follower account
-      const followerAccount = await CopyFollowerAccount.create(followerData, { transaction: t });
+    let result;
+    try {
+      logger.info('Starting database transaction for copy follower account creation', { userId, strategy_provider_id });
+      
+      result = await sequelize.transaction(async (t) => {
+        logger.info('Transaction started successfully', { userId });
+        
+        // Create follower account
+        const followerAccount = await CopyFollowerAccount.create(followerData, { transaction: t });
+        logger.info('Follower account created', { followerId: followerAccount.id, userId });
 
       // Get current user balance for transaction record
       const currentUser = await LiveUser.findByPk(userId, { 
@@ -268,6 +285,7 @@ async function createFollowerAccount(req, res) {
       });
 
       // Create transaction record for withdrawal from main wallet
+      logger.info('Creating withdrawal transaction record', { userId, balanceBefore, balanceAfter });
       const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
       await UserTransaction.create({
         transaction_id: transactionId,
@@ -318,8 +336,17 @@ async function createFollowerAccount(req, res) {
         transaction: t
       });
 
-      return followerAccount;
-    });
+        return followerAccount;
+      });
+    } catch (transactionError) {
+      logger.error('Database transaction failed during copy follower account creation', {
+        userId,
+        error: transactionError.message,
+        stack: transactionError.stack,
+        body: req.body
+      });
+      throw transactionError;
+    }
 
     const followerAccount = result;
 
@@ -347,13 +374,31 @@ async function createFollowerAccount(req, res) {
     logger.error('Failed to create copy follower account', {
       userId: req.user?.id,
       error: error.message,
-      body: req.body
+      stack: error.stack,
+      body: req.body,
+      errorType: error.constructor.name
     });
 
-    res.status(500).json({
+    // Provide more specific error messages based on error type
+    let errorMessage = 'Failed to create follower account';
+    let statusCode = 500;
+
+    if (error.name === 'SequelizeValidationError') {
+      errorMessage = 'Validation error: ' + error.errors.map(e => e.message).join(', ');
+      statusCode = 400;
+    } else if (error.name === 'SequelizeUniqueConstraintError') {
+      errorMessage = 'Account name already exists or duplicate entry detected';
+      statusCode = 409;
+    } else if (error.name === 'SequelizeDatabaseError') {
+      errorMessage = 'Database error occurred while creating account';
+    } else if (error.message.includes('transaction')) {
+      errorMessage = 'Transaction error: Unable to process account creation';
+    }
+
+    res.status(statusCode).json({
       success: false,
-      message: 'Failed to create follower account',
-      error: error.message
+      message: errorMessage,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 }
