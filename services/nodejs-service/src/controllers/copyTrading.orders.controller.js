@@ -1436,8 +1436,17 @@ async function cancelStrategyProviderOrder(req, res) {
     });
 
     // First, find the strategy provider account for this user
+    // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
+    const strategyProviderId = user.strategy_provider_id || tokenUserId;
+    console.log(`🔍 [CANCEL DEBUG] Strategy provider ID lookup`, {
+      operationId,
+      tokenUserId,
+      strategyProviderId,
+      userStrategyProviderId: user.strategy_provider_id
+    });
+    
     const strategyAccount = await StrategyProviderAccount.findOne({
-      where: { user_id: tokenUserId }
+      where: { id: strategyProviderId }
     });
 
     logger.info(`🔍 [CANCEL DEBUG] Strategy account lookup`, {
@@ -1709,8 +1718,10 @@ async function cancelStrategyProviderOrder(req, res) {
  * Add stop loss to strategy provider order
  */
 async function addStopLossToOrder(req, res) {
+  console.log('🎯 CONTROLLER ENTRY - addStopLossToOrder called');
   const operationId = `add_sp_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
+    console.log('🎯 CONTROLLER - Inside try block, operationId:', operationId);
     // Structured request log (same as live users)
     orderReqLogger.logOrderRequest({
       endpoint: 'addStopLossToOrder',
@@ -1727,17 +1738,20 @@ async function addStopLossToOrder(req, res) {
     const tokenUserId = getTokenUserId(user);
     const role = user.role;
     
-    logger.info(`🔍 [STOPLOSS DEBUG] Starting add stop loss operation`, {
+    console.log(`🔍 [STOPLOSS DEBUG] Starting add stop loss operation`, {
       operationId,
       tokenUserId,
       role,
       userObject: user,
-      body: req.body
+      body: req.body,
+      userSub: user?.sub,
+      userUserId: user?.user_id,
+      userStrategyProviderId: user?.strategy_provider_id
     });
     
     // Strategy provider role validation
     if (role && role !== 'strategy_provider') {
-      logger.warn(`❌ [STOPLOSS DEBUG] Invalid role`, {
+      logger.warn(` [STOPLOSS DEBUG] Invalid role`, {
         operationId,
         tokenUserId,
         role
@@ -1759,8 +1773,17 @@ async function addStopLossToOrder(req, res) {
     }
 
     // First, find the strategy provider account for this user
+    // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
+    const strategyProviderId = user.strategy_provider_id || tokenUserId;
+    console.log(`🔍 [STOPLOSS DEBUG] Strategy provider ID lookup`, {
+      operationId,
+      tokenUserId,
+      strategyProviderId,
+      userStrategyProviderId: user.strategy_provider_id
+    });
+    
     const strategyAccount = await StrategyProviderAccount.findOne({
-      where: { user_id: tokenUserId }
+      where: { id: strategyProviderId }
     });
 
     logger.info(`🔍 [STOPLOSS DEBUG] Strategy account lookup`, {
@@ -1932,10 +1955,12 @@ async function addStopLossToOrder(req, res) {
     });
 
   } catch (error) {
+    console.log('❌ CONTROLLER ERROR - addStopLossToOrder:', error.message, error.stack);
     logger.error('Add stop loss error', {
       error: error.message,
       order_id: req.body?.order_id,
-      operationId
+      operationId,
+      stack: error.stack
     });
 
     return res.status(500).json({
@@ -2006,8 +2031,17 @@ async function addTakeProfitToOrder(req, res) {
     }
 
     // First, find the strategy provider account for this user
+    // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
+    const strategyProviderId = user.strategy_provider_id || tokenUserId;
+    console.log(`🔍 [TAKEPROFIT DEBUG] Strategy provider ID lookup`, {
+      operationId,
+      tokenUserId,
+      strategyProviderId,
+      userStrategyProviderId: user.strategy_provider_id
+    });
+    
     const strategyAccount = await StrategyProviderAccount.findOne({
-      where: { user_id: tokenUserId }
+      where: { id: strategyProviderId }
     });
 
     logger.info(`🔍 [TAKEPROFIT DEBUG] Strategy account lookup`, {
