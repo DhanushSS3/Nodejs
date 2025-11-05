@@ -763,7 +763,7 @@ async function stopFollowing(req, res) {
       });
     }
 
-    // Check for open orders - they will remain active but no new orders will be copied
+    // Check for open orders - block stopping if there are any open/pending orders
     const openOrdersCount = await CopyFollowerOrder.count({
       where: {
         copy_follower_account_id: follower_id,
@@ -771,13 +771,21 @@ async function stopFollowing(req, res) {
       }
     });
 
-    // Note: Open orders will remain active and continue to be managed
-    // Only new order replication will stop
+    // Block stopping if there are open orders
+    if (openOrdersCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error_code: 'OPEN_ORDERS_EXIST',
+        message: `Cannot stop following strategy while you have ${openOrdersCount} open order(s). Please close all orders before stopping.`,
+        open_orders_count: openOrdersCount
+      });
+    }
 
-    // Update follower account to stopped status
+    // Update follower account to stopped status - set all required fields
     await CopyFollowerAccount.update({
-      copy_status: 'stopped',
-      is_active: 0,
+      status: 0,           // Set status to 0
+      is_active: 0,        // Set is_active to 0  
+      copy_status: 'stopped', // Set copy_status to 'stopped'
       stop_reason: req.body.reason || 'Manually stopped by user'
     }, {
       where: { id: follower_id }
@@ -799,10 +807,9 @@ async function stopFollowing(req, res) {
 
     res.json({
       success: true,
-      message: openOrdersCount > 0 
-        ? `Successfully stopped following strategy. You have ${openOrdersCount} existing order(s) that will remain active until closed.`
-        : 'Successfully stopped following strategy',
-      existing_orders_count: openOrdersCount
+      message: 'Successfully stopped following strategy',
+      follower_account_id: follower_id,
+      updated_fields: ['status', 'is_active', 'copy_status']
     });
 
   } catch (error) {
