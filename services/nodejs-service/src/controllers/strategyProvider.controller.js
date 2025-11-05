@@ -629,7 +629,7 @@ async function switchToStrategyProvider(req, res) {
 
     // Generate access token (15 minutes expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '15m', 
+      expiresIn: '30m', 
       jwtid: sessionId 
     });
 
@@ -707,7 +707,7 @@ async function switchToStrategyProvider(req, res) {
       message: 'Successfully switched to strategy provider account',
       access_token: token,
       refresh_token: refreshToken,
-      expires_in: 1800, // 15 minutes in seconds
+      expires_in: 1800, // 30 minutes in seconds
       token_type: 'Bearer',
       session_id: sessionId,
       account: {
@@ -786,7 +786,7 @@ async function switchBackToLiveUser(req, res) {
 
     // Generate access token (15 minutes expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '15m', 
+      expiresIn: '30m', 
       jwtid: sessionId 
     });
 
@@ -831,7 +831,7 @@ async function switchBackToLiveUser(req, res) {
       message: 'Successfully switched back to live user account',
       access_token: token,
       refresh_token: refreshToken,
-      expires_in: 900, // 15 minutes in seconds
+      expires_in: 1800, // 30 minutes in seconds
       token_type: 'Bearer',
       session_id: sessionId,
       account: {
@@ -926,7 +926,7 @@ async function refreshStrategyProviderToken(req, res) {
     };
     
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '15m', 
+      expiresIn: '30m', 
       jwtid: sessionId 
     });
 
@@ -957,7 +957,7 @@ async function refreshStrategyProviderToken(req, res) {
       message: 'Token refreshed successfully',
       access_token: newAccessToken,
       refresh_token: newRefreshToken,
-      expires_in: 900,
+      expires_in: 1800,
       token_type: 'Bearer',
       session_id: sessionId
     });

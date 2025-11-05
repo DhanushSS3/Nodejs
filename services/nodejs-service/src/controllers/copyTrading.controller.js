@@ -2,8 +2,10 @@ const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
 const LiveUser = require('../models/liveUser.model');
+const UserTransaction = require('../models/userTransaction.model');
 const logger = require('../services/logger.service');
 const strategyProviderService = require('../services/strategyProvider.service');
+const { sequelize } = require('../config/db');
 
 /**
  * Create a copy follower account to follow a strategy provider
@@ -103,6 +105,15 @@ async function createFollowerAccount(req, res) {
       });
     }
 
+    // Check if user is trying to follow their own strategy (FIRST CHECK)
+    if (strategyProvider.user_id === userId) {
+      return res.status(400).json({
+        success: false,
+        error_code: 'SELF_FOLLOW_NOT_ALLOWED',
+        message: 'You cannot follow your own strategy account. Please select a different strategy provider to follow.'
+      });
+    }
+
     // Validate investment amount against strategy provider's minimum investment
     const minInvestment = parseFloat(strategyProvider.min_investment || 100);
     if (parseFloat(investment_amount) < minInvestment) {
@@ -120,22 +131,6 @@ async function createFollowerAccount(req, res) {
       return res.status(400).json({
         success: false,
         message: `Strategy provider does not meet minimum balance requirement of $${minStrategyBalance}. Current equity: $${strategyProviderEquity.toFixed(2)}`
-      });
-    }
-
-    // Check if user is trying to follow their own strategy
-    if (strategyProvider.user_id === userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot follow your own strategy'
-      });
-    }
-
-    // Validate investment amount meets strategy requirements
-    if (strategyProvider.min_investment && parseFloat(investment_amount) < parseFloat(strategyProvider.min_investment)) {
-      return res.status(400).json({
-        success: false,
-        message: `Minimum investment for this strategy is $${strategyProvider.min_investment}`
       });
     }
 
@@ -158,9 +153,10 @@ async function createFollowerAccount(req, res) {
     });
 
     if (existingFollower) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: 'You are already following this strategy'
+        error_code: 'ALREADY_FOLLOWING_STRATEGY',
+        message: 'You are already following this strategy. Each strategy can only be followed once per account.'
       });
     }
 
@@ -248,22 +244,84 @@ async function createFollowerAccount(req, res) {
       copy_status: 'active'
     };
 
-    const followerAccount = await CopyFollowerAccount.create(followerData);
+    // Execute all operations in a database transaction
+    const result = await sequelize.transaction(async (t) => {
+      // Create follower account
+      const followerAccount = await CopyFollowerAccount.create(followerData, { transaction: t });
 
-    // Deduct investment amount from user's main account balance
-    await LiveUser.decrement({
-      wallet_balance: investmentAmountFloat
-    }, {
-      where: { id: userId }
+      // Get current user balance for transaction record
+      const currentUser = await LiveUser.findByPk(userId, { 
+        attributes: ['wallet_balance'],
+        transaction: t,
+        lock: true // Lock the row to prevent concurrent modifications
+      });
+
+      const balanceBefore = parseFloat(currentUser.wallet_balance || 0);
+      const balanceAfter = balanceBefore - investmentAmountFloat;
+
+      // Deduct investment amount from user's main account balance
+      await LiveUser.update({
+        wallet_balance: balanceAfter
+      }, {
+        where: { id: userId },
+        transaction: t
+      });
+
+      // Create transaction record for withdrawal from main wallet
+      const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+      await UserTransaction.create({
+        transaction_id: transactionId,
+        user_id: userId,
+        user_type: 'live',
+        type: 'withdraw', // This is a withdrawal from main wallet
+        amount: -investmentAmountFloat, // Negative for debit
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        status: 'completed',
+        notes: `Investment transfer to copy follower account: ${followerAccount.account_name}`,
+        user_email: liveUser.email,
+        metadata: {
+          copy_follower_account_id: followerAccount.id,
+          strategy_provider_id: strategy_provider_id,
+          account_name: followerAccount.account_name,
+          transfer_type: 'copy_follower_investment'
+        }
+      }, { transaction: t });
+
+      // Create corresponding credit transaction for copy follower account
+      const creditTransactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+      await UserTransaction.create({
+        transaction_id: creditTransactionId,
+        user_id: followerAccount.id, // Use follower account ID as user_id for copy_follower type
+        user_type: 'copy_follower',
+        type: 'deposit',
+        amount: investmentAmountFloat, // Positive for credit
+        balance_before: 0,
+        balance_after: investmentAmountFloat,
+        status: 'completed',
+        notes: `Initial investment from main wallet`,
+        user_email: liveUser.email,
+        metadata: {
+          main_user_id: userId,
+          strategy_provider_id: strategy_provider_id,
+          account_name: followerAccount.account_name,
+          transfer_type: 'copy_follower_investment'
+        }
+      }, { transaction: t });
+
+      // Update strategy provider follower count and total investment
+      await StrategyProviderAccount.increment({
+        total_followers: 1,
+        total_investment: investmentAmountFloat
+      }, {
+        where: { id: strategy_provider_id },
+        transaction: t
+      });
+
+      return followerAccount;
     });
 
-    // Update strategy provider follower count and total investment
-    await StrategyProviderAccount.increment({
-      total_followers: 1,
-      total_investment: investmentAmountFloat
-    }, {
-      where: { id: strategy_provider_id }
-    });
+    const followerAccount = result;
 
     logger.info('Copy follower account created', {
       userId,

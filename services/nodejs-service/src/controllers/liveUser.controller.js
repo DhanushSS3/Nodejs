@@ -364,7 +364,7 @@ async function login(req, res, next) {
       message: 'Login successful',
       access_token: token,
       refresh_token: refreshToken,
-      expires_in: 900, // 15 minutes in seconds
+      expires_in: 1800, // 30 minutes in seconds
       token_type: 'Bearer',
       session_id: sessionId
     });
@@ -467,9 +467,9 @@ async function refreshToken(req, res) {
       sessionType = 'live';
     }
 
-    // Generate new access token with same expiry as live users (15 minutes)
+    // Generate new access token with 30 minutes expiry
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '15m', 
+      expiresIn: '30m', 
       jwtid: tokenData.sessionId 
     });
 
@@ -501,7 +501,7 @@ async function refreshToken(req, res) {
       message: 'Token refreshed successfully',
       access_token: newAccessToken,
       refresh_token: newRefreshToken,
-      expires_in: 900, // 15 minutes in seconds
+      expires_in: 1800, // 30 minutes in seconds
       token_type: 'Bearer',
       session_id: tokenData.sessionId
     });
