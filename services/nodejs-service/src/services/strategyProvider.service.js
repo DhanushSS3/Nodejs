@@ -540,17 +540,8 @@ class StrategyProviderService {
    * @returns {boolean} Can create more accounts
    */
   async canCreateMoreAccounts(userId) {
-    const count = await StrategyProviderAccount.count({
-      where: { 
-        user_id: userId,
-        status: 1,
-        is_active: 1
-      }
-    });
-    
-    // Allow up to 5 strategy provider accounts per user (configurable)
-    const maxAccounts = process.env.MAX_STRATEGY_ACCOUNTS_PER_USER || 5;
-    return count < maxAccounts;
+    // Removed limit - live users can create any number of strategy provider accounts
+    return true;
   }
 
   /**

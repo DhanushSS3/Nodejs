@@ -64,10 +64,8 @@ const CopyFollowerAccount = sequelize.define('CopyFollowerAccount', {
   // Investment & Copy Trading Settings
   investment_amount: { 
     type: DataTypes.DECIMAL(18, 6), 
-    allowNull: false,
-    validate: {
-      min: 100.00 // Must meet strategy provider's minimum
-    }
+    allowNull: false
+    // Validation is done dynamically in controller based on strategy provider's min_investment
   },
   initial_investment: { 
     type: DataTypes.DECIMAL(18, 6), 

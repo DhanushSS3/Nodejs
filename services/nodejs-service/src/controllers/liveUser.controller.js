@@ -404,34 +404,78 @@ async function refreshToken(req, res) {
       });
     }
 
-    // Get user data
-    const user = await LiveUser.findByPk(decoded.userId);
-    if (!user) {
-      await deleteRefreshToken(refreshToken);
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+    // Determine if this is a strategy provider or live user session
+    const isStrategyProvider = tokenData.account_type === 'strategy_provider';
+    let user, jwtPayload, sessionType;
+
+    if (isStrategyProvider) {
+      // Get strategy provider account data
+      const strategyAccount = await StrategyProviderAccount.findByPk(tokenData.strategy_provider_id);
+      if (!strategyAccount) {
+        await deleteRefreshToken(refreshToken);
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Strategy provider account not found' 
+        });
+      }
+
+      // Get the main user data
+      user = await LiveUser.findByPk(decoded.userId);
+      if (!user) {
+        await deleteRefreshToken(refreshToken);
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+
+      // Generate strategy provider JWT payload
+      jwtPayload = {
+        sub: user.id,
+        user_type: user.user_type,
+        account_type: 'strategy_provider',
+        strategy_provider_id: strategyAccount.id,
+        strategy_provider_account_number: strategyAccount.account_number,
+        group: strategyAccount.group,
+        leverage: strategyAccount.leverage,
+        sending_orders: strategyAccount.sending_orders,
+        status: strategyAccount.status,
+        is_active: strategyAccount.is_active,
+        session_id: tokenData.sessionId,
+        user_id: user.id,
+        role: 'strategy_provider',
+        followers: []
+      };
+      sessionType = 'strategy_provider';
+    } else {
+      // Get live user data
+      user = await LiveUser.findByPk(decoded.userId);
+      if (!user) {
+        await deleteRefreshToken(refreshToken);
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+
+      // Determine login type from stored session data (fallback to 'master' for existing sessions)
+      const storedRole = tokenData.role || 'trader';
+      const loginType = storedRole === 'viewer' ? 'view' : 'master';
+      
+      // Generate live user JWT payload using auth service
+      jwtPayload = LiveUserAuthService.generateJWTPayload(user, loginType, tokenData.sessionId);
+      sessionType = 'live';
     }
 
-    // Generate new access token
-    const sessionId = tokenData.sessionId; // Keep the same session
-    
-    // Determine login type from stored session data (fallback to 'master' for existing sessions)
-    const storedRole = tokenData.role || 'trader';
-    const loginType = storedRole === 'viewer' ? 'view' : 'master';
-    
-    // Generate JWT payload using auth service
-    const jwtPayload = LiveUserAuthService.generateJWTPayload(user, loginType, sessionId);
-    
+    // Generate new access token with same expiry as live users (15 minutes)
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '2m', 
-      jwtid: sessionId 
+      expiresIn: '15m', 
+      jwtid: tokenData.sessionId 
     });
 
-    // Generate new refresh token (rotate refresh token)
+    // Generate new refresh token (rotate refresh token) - same 7 days expiry for both
     const newRefreshToken = jwt.sign(
-      { userId: user.id, sessionId },
+      { userId: user.id, sessionId: tokenData.sessionId },
       JWT_SECRET + '_REFRESH',
       { expiresIn: '7d' }
     );
@@ -439,13 +483,13 @@ async function refreshToken(req, res) {
     // Update session in Redis with new access token
     await storeSession(
       user.id,
-      sessionId,
+      tokenData.sessionId,
       {
         ...jwtPayload,
         jwt: newAccessToken,
         refresh_token: newRefreshToken
       },
-      'live',
+      sessionType,
       newRefreshToken
     );
 
@@ -459,7 +503,7 @@ async function refreshToken(req, res) {
       refresh_token: newRefreshToken,
       expires_in: 900, // 15 minutes in seconds
       token_type: 'Bearer',
-      session_id: sessionId
+      session_id: tokenData.sessionId
     });
   } catch (error) {
     if (error.name === 'TokenExpiredError') {

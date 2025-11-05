@@ -87,15 +87,7 @@ async function createFollowerAccount(req, res) {
       }
     }
 
-    // Validate investment amount
-    if (parseFloat(investment_amount) < 100) {
-      return res.status(400).json({
-        success: false,
-        message: 'Minimum investment amount is $100'
-      });
-    }
-
-    // Get strategy provider and validate
+    // Get strategy provider and validate first
     const strategyProvider = await StrategyProviderAccount.findOne({
       where: {
         id: strategy_provider_id,
@@ -108,6 +100,15 @@ async function createFollowerAccount(req, res) {
       return res.status(404).json({
         success: false,
         message: 'Strategy provider not found or inactive'
+      });
+    }
+
+    // Validate investment amount against strategy provider's minimum investment
+    const minInvestment = parseFloat(strategyProvider.min_investment || 100);
+    if (parseFloat(investment_amount) < minInvestment) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum investment amount is $${minInvestment} for this strategy`
       });
     }
 
@@ -659,21 +660,16 @@ async function stopFollowing(req, res) {
       });
     }
 
-    // Check for open orders before allowing unfollowing
+    // Check for open orders - they will remain active but no new orders will be copied
     const openOrdersCount = await CopyFollowerOrder.count({
       where: {
-        order_user_id: follower_id,
+        copy_follower_account_id: follower_id,
         order_status: ['OPEN', 'PENDING', 'PARTIALLY_FILLED']
       }
     });
 
-    if (openOrdersCount > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot stop following strategy. You have ${openOrdersCount} open order(s). Please close all open positions before unfollowing.`,
-        open_orders_count: openOrdersCount
-      });
-    }
+    // Note: Open orders will remain active and continue to be managed
+    // Only new order replication will stop
 
     // Update follower account to stopped status
     await CopyFollowerAccount.update({
@@ -700,7 +696,10 @@ async function stopFollowing(req, res) {
 
     res.json({
       success: true,
-      message: 'Successfully stopped following strategy'
+      message: openOrdersCount > 0 
+        ? `Successfully stopped following strategy. You have ${openOrdersCount} existing order(s) that will remain active until closed.`
+        : 'Successfully stopped following strategy',
+      existing_orders_count: openOrdersCount
     });
 
   } catch (error) {
