@@ -38,6 +38,35 @@ class PortfolioEventBus extends EventEmitter {
     }
   }
 
+  // Specific method for copy follower account updates
+  emitCopyFollowerAccountUpdate(copyFollowerAccountId, payload = {}) {
+    const evt = { 
+      userType: 'copy_follower', 
+      userId: copyFollowerAccountId, 
+      copyFollowerAccountId,
+      ...payload 
+    };
+    const key = this.makeUserKey('copy_follower', copyFollowerAccountId);
+    
+    // Emit locally (same-process listeners)
+    this.emit(`user:${key}`, evt);
+    
+    // Publish cross-process via Redis Pub/Sub
+    try {
+      const msg = JSON.stringify({ 
+        _src: INSTANCE_ID, 
+        type: 'copy_follower_account_update', 
+        ...evt 
+      });
+      redisCluster.publish('portfolio_events', msg).catch(() => {});
+    } catch (e) {
+      logger && logger.warn ? logger.warn('PortfolioEventBus copy follower publish failed', { 
+        error: e.message, 
+        copyFollowerAccountId 
+      }) : null;
+    }
+  }
+
   onUserUpdate(userType, userId, handler) {
     const key = this.makeUserKey(userType, userId);
     const eventName = `user:${key}`;

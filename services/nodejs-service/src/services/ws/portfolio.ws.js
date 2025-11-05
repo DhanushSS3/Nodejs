@@ -68,9 +68,9 @@ async function fetchAccountSummary(userType, userId) {
       margin: (row.margin ?? 0).toString(),
     };
   } else if (userType === 'copy_follower') {
-    // For copy followers, get data from LiveUser model (they are live users)
-    Model = LiveUser;
-    row = await Model.findByPk(parseInt(userId, 10));
+    // For copy followers, get data from CopyFollowerAccount model using account ID
+    const CopyFollowerAccount = require('../../models/copyFollowerAccount.model');
+    row = await CopyFollowerAccount.findByPk(parseInt(userId, 10));
     if (!row) return { balance: '0', margin: '0' };
     return {
       balance: (row.wallet_balance ?? 0).toString(),
@@ -96,9 +96,9 @@ async function fetchOrdersFromDB(userType, userId) {
     OrderModel = StrategyProviderOrder;
     rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
   } else if (userType === 'copy_follower') {
-    // For copy followers, get orders from CopyFollowerOrder model
+    // For copy followers, get orders from CopyFollowerOrder model using copy_follower_account_id
     OrderModel = CopyFollowerOrder;
-    rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+    rows = await OrderModel.findAll({ where: { copy_follower_account_id: parseInt(userId, 10) } });
   } else {
     // For live/demo users
     OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
@@ -152,7 +152,8 @@ async function fetchOrdersFromDB(userType, userId) {
 }
 
 async function fetchOpenOrdersFromRedis(userType, userId) {
-  const tag = `${userType}:${userId}`;
+  // For copy followers, use copy_follower:account_id format for Redis keys
+  const tag = userType === 'copy_follower' ? `copy_follower:${userId}` : `${userType}:${userId}`;
   const indexKey = `user_orders_index:{${tag}}`;
   let ids;
   try {
@@ -223,6 +224,7 @@ function startPortfolioWSServer(server) {
   wss.on('connection', async (ws, req) => {
     const params = url.parse(req.url, true);
     const token = params.query.token;
+    const copyFollowerAccountId = params.query.copy_follower_account_id;
 
     let user;
     try {
@@ -236,17 +238,46 @@ function startPortfolioWSServer(server) {
       return;
     }
 
-    // Determine user ID and type based on JWT structure
-    let userId, userType;
+    // Determine user ID and type based on JWT structure and parameters
+    let userId, userType, copyFollowerAccount = null;
     
-    if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
+    if (copyFollowerAccountId) {
+      // Copy follower account connection - validate ownership
+      const mainUserId = user.sub || user.user_id || user.id;
+      
+      try {
+        const CopyFollowerAccount = require('../../models/copyFollowerAccount.model');
+        copyFollowerAccount = await CopyFollowerAccount.findOne({
+          where: {
+            id: parseInt(copyFollowerAccountId, 10),
+            user_id: mainUserId,
+            status: 1,
+            is_active: 1
+          }
+        });
+        
+        if (!copyFollowerAccount) {
+          ws.close(4403, 'Copy follower account not found or access denied');
+          return;
+        }
+        
+        userId = copyFollowerAccount.id; // Use copy follower account ID as userId
+        userType = 'copy_follower';
+        
+      } catch (error) {
+        logger.error('Copy follower account validation failed', { 
+          error: error.message, 
+          copyFollowerAccountId,
+          mainUserId 
+        });
+        ws.close(4500, 'Internal server error during account validation');
+        return;
+      }
+      
+    } else if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
       // Strategy provider: use strategy_provider_id as userId
       userId = user.strategy_provider_id;
       userType = 'strategy_provider';
-    } else if (user.role === 'copy_follower' || user.user_type === 'copy_follower') {
-      // Copy follower: use regular user ID but with copy_follower type
-      userId = user.sub || user.user_id || user.id;
-      userType = 'copy_follower';
     } else {
       // Live/Demo user: use regular user ID and account type
       userId = user.sub || user.user_id || user.id;

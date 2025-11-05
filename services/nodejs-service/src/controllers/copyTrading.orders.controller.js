@@ -26,6 +26,23 @@ const pythonServiceAxios = axios.create({
 });
 const idGenerator = require('../services/idGenerator.service');
 const portfolioEvents = require('../services/events/portfolio.events');
+
+// Helper function to emit copy follower account events
+function emitCopyFollowerEvent(copyFollowerAccountId, eventType, payload = {}) {
+  try {
+    portfolioEvents.emitCopyFollowerAccountUpdate(copyFollowerAccountId, {
+      type: eventType,
+      ...payload
+    });
+  } catch (error) {
+    logger.warn('Failed to emit copy follower event', {
+      error: error.message,
+      copyFollowerAccountId,
+      eventType,
+      payload
+    });
+  }
+}
 const orderLifecycleService = require('../services/orderLifecycle.service');
 const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
