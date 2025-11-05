@@ -1437,7 +1437,7 @@ async function cancelStrategyProviderOrder(req, res) {
 
     // First, find the strategy provider account for this user
     // Use strategy_provider_id from JWT token if available, otherwise fall back to user_id
-    const strategyProviderId = user.strategy_provider_id || tokenUserId;
+    const strategyProviderId = user.strategy_provider_id;
     console.log(`🔍 [CANCEL DEBUG] Strategy provider ID lookup`, {
       operationId,
       tokenUserId,
@@ -2262,8 +2262,16 @@ async function cancelStopLossFromOrder(req, res) {
     }
 
     // First, find the strategy provider account for this user
+    const strategyProviderId = user.strategy_provider_id || tokenUserId;
+    console.log(`🔍 [CANCEL SL DEBUG] Strategy provider ID lookup`, {
+      operationId,
+      tokenUserId,
+      strategyProviderId,
+      userStrategyProviderId: user.strategy_provider_id
+    });
+
     const strategyAccount = await StrategyProviderAccount.findOne({
-      where: { user_id: tokenUserId }
+      where: { id: strategyProviderId }
     });
 
     if (!strategyAccount) {
@@ -2441,8 +2449,16 @@ async function cancelTakeProfitFromOrder(req, res) {
     }
 
     // First, find the strategy provider account for this user
+    const strategyProviderId = user.strategy_provider_id || tokenUserId;
+    console.log(`🔍 [CANCEL TP DEBUG] Strategy provider ID lookup`, {
+      operationId,
+      tokenUserId,
+      strategyProviderId,
+      userStrategyProviderId: user.strategy_provider_id
+    });
+
     const strategyAccount = await StrategyProviderAccount.findOne({
-      where: { user_id: tokenUserId }
+      where: { id: strategyProviderId }
     });
 
     if (!strategyAccount) {
@@ -2452,7 +2468,6 @@ async function cancelTakeProfitFromOrder(req, res) {
       });
     }
 
-    // Find the order using the strategy provider account ID (new format)
     let order = await StrategyProviderOrder.findOne({
       where: { 
         order_id,
@@ -2465,7 +2480,7 @@ async function cancelTakeProfitFromOrder(req, res) {
       order = await StrategyProviderOrder.findOne({
         where: { 
           order_id,
-          order_user_id: tokenUserId
+          order_user_id: strategyProviderId  // ✅ Correct!
         }
       });
     }
