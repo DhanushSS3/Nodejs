@@ -32,7 +32,7 @@ class StrategyProviderStatsService {
       // Get all closed orders for this strategy provider
       const closedOrders = await StrategyProviderOrder.findAll({
         where: {
-          strategy_provider_id: strategyProviderId,
+          order_user_id: strategyProviderId,
           order_status: 'CLOSED'
         },
         attributes: ['id', 'net_profit', 'createdAt', 'updatedAt'],
@@ -252,13 +252,31 @@ class StrategyProviderStatsService {
         placedOrderId
       });
 
-      await StrategyProviderAccount.increment('total_trades', {
+      // Get current strategy provider to check if first_trade_date needs to be set
+      const strategyProvider = await StrategyProviderAccount.findByPk(strategyProviderId);
+      if (!strategyProvider) {
+        throw new Error(`Strategy provider account not found: ${strategyProviderId}`);
+      }
+
+      const updateFields = { total_trades: strategyProvider.total_trades + 1 };
+      
+      // Set first_trade_date only if not already set (first trade)
+      if (!strategyProvider.first_trade_date) {
+        updateFields.first_trade_date = new Date();
+        logger.info('Setting first_trade_date for strategy provider', {
+          strategyProviderId,
+          placedOrderId
+        });
+      }
+
+      await StrategyProviderAccount.update(updateFields, {
         where: { id: strategyProviderId }
       });
 
       logger.info('Total trades counter incremented successfully', {
         strategyProviderId,
-        placedOrderId
+        placedOrderId,
+        updatedFields: Object.keys(updateFields)
       });
 
     } catch (error) {

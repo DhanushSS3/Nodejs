@@ -21,6 +21,8 @@ const { applyOrderClosePayout } = require('../order.payout.service');
 const copyTradingService = require('../copyTrading.service');
 // Performance fee service for copy followers
 const { calculateAndApplyPerformanceFee } = require('../performanceFee.service');
+// Strategy provider statistics service
+const StrategyProviderStatsService = require('../strategyProviderStats.service');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -923,9 +925,9 @@ async function handlePostCloseOperations(payload, row) {
       }
     }
 
-    // 3. Update closed_trades field for strategy providers
+    // 3. Update comprehensive statistics for strategy providers
     if (user_type === 'strategy_provider') {
-      await updateStrategyProviderClosedTrades(user_id);
+      await updateStrategyProviderStatistics(user_id, order_id);
     }
 
     // 4. Handle copy trading distribution for strategy providers (NEW)
@@ -944,33 +946,53 @@ async function handlePostCloseOperations(payload, row) {
 }
 
 /**
- * Update closed_trades field for strategy provider account
+ * Update comprehensive statistics for strategy provider account
  * @param {string} userId - Strategy provider user ID
+ * @param {string} orderId - ID of the closed order
  */
-async function updateStrategyProviderClosedTrades(userId) {
+async function updateStrategyProviderStatistics(userId, orderId) {
   try {
-    // Count total closed trades for this strategy provider
-    const closedTradesCount = await StrategyProviderOrder.count({
-      where: {
-        order_user_id: parseInt(userId, 10),
-        order_status: 'CLOSED'
+    // Find strategy provider account by user_id
+    const strategyProvider = await StrategyProviderAccount.findOne({
+      where: { user_id: parseInt(userId, 10) }
+    });
+
+    if (!strategyProvider) {
+      logger.warn('Strategy provider account not found for statistics update', {
+        userId,
+        orderId
+      });
+      return;
+    }
+
+    // Update comprehensive statistics using the dedicated service
+    // This is done asynchronously to avoid blocking the DB consumer
+    setImmediate(async () => {
+      try {
+        await StrategyProviderStatsService.updateStatisticsAfterOrderClose(
+          strategyProvider.id,
+          orderId
+        );
+        
+        logger.info('Strategy provider statistics updated from DB consumer', {
+          userId,
+          strategyProviderId: strategyProvider.id,
+          orderId
+        });
+      } catch (statsError) {
+        logger.error('Failed to update strategy provider statistics from DB consumer', {
+          userId,
+          strategyProviderId: strategyProvider.id,
+          orderId,
+          error: statsError.message
+        });
       }
     });
 
-    // Update the strategy provider account with the closed trades count
-    await StrategyProviderAccount.update(
-      { closed_trades: closedTradesCount },
-      { where: { user_id: parseInt(userId, 10) } }
-    );
-
-    logger.info('Updated strategy provider closed_trades field', {
-      userId,
-      closedTradesCount
-    });
-
   } catch (error) {
-    logger.error('Failed to update strategy provider closed_trades', {
+    logger.error('Failed to initiate strategy provider statistics update', {
       userId,
+      orderId,
       error: error.message
     });
   }
