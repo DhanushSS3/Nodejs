@@ -16,6 +16,7 @@ const StrategyProviderAccount = require('./strategyProviderAccount.model');
 const CopyFollowerAccount = require('./copyFollowerAccount.model');
 const StrategyProviderOrder = require('./strategyProviderOrder.model');
 const CopyFollowerOrder = require('./copyFollowerOrder.model');
+const UserStrategyProviderFavorite = require('./userStrategyProviderFavorite.model');
 const { defineAssociations } = require('./associations');
 require('./copyTrading.associations');
 
@@ -45,4 +46,5 @@ module.exports = {
   CopyFollowerAccount,
   StrategyProviderOrder,
   CopyFollowerOrder,
+  UserStrategyProviderFavorite,
 };
