@@ -5,7 +5,20 @@ const UserTransaction = require('../models/userTransaction.model');
 function getAuthUser(req) {
   const user = req.user || {};
   const userId = user.sub || user.user_id || user.id;
-  const userType = (user.user_type || user.account_type || 'live').toString().toLowerCase();
+  let userType = (user.user_type || user.account_type || 'live').toString().toLowerCase();
+  
+  // Handle strategy provider accounts
+  if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
+    userType = 'strategy_provider';
+    // For strategy providers, use the strategy_provider_id as userId
+    return {
+      userId: user.strategy_provider_id,
+      userType: 'strategy_provider',
+      isActive: !!user.is_active,
+      originalUserId: userId // Keep reference to original user ID
+    };
+  }
+  
   const isActive = !!user.is_active;
   return { userId, userType, isActive };
 }
@@ -32,13 +45,13 @@ async function getUserTransactions(req, res) {
 
     const { limit, offset } = parsePaging(req.query || {});
 
-    // Only allow withdraw and deposit types
-    const allowedTypes = ['deposit', 'withdraw'];
+    // Only allow transfer, deposit, and withdraw types (focusing on wallet movements)
+    const allowedTypes = ['transfer', 'deposit', 'withdraw'];
     const typeParam = (req.query?.type || '').toString().toLowerCase().trim();
     let typeFilter;
     if (typeParam) {
       if (!allowedTypes.includes(typeParam)) {
-        return res.status(400).json({ success: false, message: 'Invalid type. Allowed: deposit, withdraw' });
+        return res.status(400).json({ success: false, message: 'Invalid type. Allowed: transfer, deposit, withdraw' });
       }
       typeFilter = typeParam;
     } else {

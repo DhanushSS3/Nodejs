@@ -284,25 +284,26 @@ async function createFollowerAccount(req, res) {
         transaction: t
       });
 
-      // Create transaction record for withdrawal from main wallet
-      logger.info('Creating withdrawal transaction record', { userId, balanceBefore, balanceAfter });
+      // Create transaction record for transfer from main wallet
+      logger.info('Creating transfer transaction record for main wallet', { userId, balanceBefore, balanceAfter });
       const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
       await UserTransaction.create({
         transaction_id: transactionId,
         user_id: userId,
         user_type: 'live',
-        type: 'withdraw', // This is a withdrawal from main wallet
+        type: 'transfer', // Changed from 'withdraw' to 'transfer'
         amount: -investmentAmountFloat, // Negative for debit
         balance_before: balanceBefore,
         balance_after: balanceAfter,
         status: 'completed',
-        notes: `Investment transfer to copy follower account: ${followerAccount.account_name}`,
+        notes: `Transfer to copy follower account: ${followerAccount.account_name}`,
         user_email: liveUser.email,
         metadata: {
           copy_follower_account_id: followerAccount.id,
           strategy_provider_id: strategy_provider_id,
           account_name: followerAccount.account_name,
-          transfer_type: 'copy_follower_investment'
+          transfer_type: 'copy_follower_investment',
+          transfer_direction: 'outgoing'
         }
       }, { transaction: t });
 
@@ -312,18 +313,19 @@ async function createFollowerAccount(req, res) {
         transaction_id: creditTransactionId,
         user_id: followerAccount.id, // Use follower account ID as user_id for copy_follower type
         user_type: 'copy_follower',
-        type: 'deposit',
+        type: 'transfer', // Changed from 'deposit' to 'transfer'
         amount: investmentAmountFloat, // Positive for credit
         balance_before: 0,
         balance_after: investmentAmountFloat,
         status: 'completed',
-        notes: `Initial investment from main wallet`,
+        notes: `Transfer from main wallet for copy trading investment`,
         user_email: liveUser.email,
         metadata: {
           main_user_id: userId,
           strategy_provider_id: strategy_provider_id,
           account_name: followerAccount.account_name,
-          transfer_type: 'copy_follower_investment'
+          transfer_type: 'copy_follower_investment',
+          transfer_direction: 'incoming'
         }
       }, { transaction: t });
 

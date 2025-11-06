@@ -32,6 +32,7 @@ const UserTransaction = sequelize.define('UserTransaction', {
     type: DataTypes.ENUM(
       'deposit',
       'withdraw', 
+      'transfer',
       'profit',
       'loss',
       'commission',

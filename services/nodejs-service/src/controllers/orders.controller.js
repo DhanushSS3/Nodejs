@@ -8,6 +8,7 @@ const idGenerator = require('../services/idGenerator.service');
 const orderLifecycleService = require('../services/orderLifecycle.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
 const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
@@ -2569,9 +2570,20 @@ async function getClosedOrders(req, res) {
     if (userStatus !== undefined && String(userStatus) === '0') {
       return res.status(403).json({ success: false, message: 'User status is not allowed' });
     }
-    // Resolve account type from JWT
+    // Resolve account type from JWT and determine order model
     const userType = String(user.account_type || user.user_type || 'live').toLowerCase();
-    const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+    let OrderModel;
+    let queryUserId = parseInt(tokenUserId, 10);
+    
+    if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
+      // For strategy providers, use StrategyProviderOrder model and strategy_provider_id
+      OrderModel = StrategyProviderOrder;
+      queryUserId = parseInt(user.strategy_provider_id, 10);
+    } else if (userType === 'live') {
+      OrderModel = LiveUserOrder;
+    } else {
+      OrderModel = DemoUserOrder;
+    }
 
     // Pagination
     const page = Math.max(1, parseInt(req.query.page || req.body?.page || '1', 10));
@@ -2580,7 +2592,7 @@ async function getClosedOrders(req, res) {
     const offset = (page - 1) * pageSize;
 
     const { count, rows } = await OrderModel.findAndCountAll({
-      where: { order_user_id: parseInt(tokenUserId, 10), order_status: 'CLOSED' },
+      where: { order_user_id: queryUserId, order_status: 'CLOSED' },
       order: [['updated_at', 'DESC']],
       offset,
       limit: pageSize,
