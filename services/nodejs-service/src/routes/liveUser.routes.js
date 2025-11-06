@@ -3,6 +3,7 @@ const { signup, regenerateViewPassword, getUserInfo } = require('../controllers/
 const { body, param, query } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
+const { handleFileUploadErrors } = require('../middlewares/fileUploadError.middleware');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 const FinancialSummaryController = require('../controllers/financial.summary.controller');
 
@@ -51,6 +52,7 @@ router.post('/signup',
     { name: 'address_proof_image', maxCount: 1 },
     { name: 'id_proof_image', maxCount: 1 }
   ]),
+  handleFileUploadErrors, // Handle file upload errors before validation
   [
     body('name').notEmpty(),
     body('phone_number').notEmpty(),

@@ -272,6 +272,7 @@ async function signup(req, res) {
       return ErrorResponse.serviceUnavailableError(req, res, 'Account generation service');
     }
 
+
     // Handle all other errors with generic response and detailed logging
     return ErrorResponse.serverError(req, res, error, 'live user signup');
   }
