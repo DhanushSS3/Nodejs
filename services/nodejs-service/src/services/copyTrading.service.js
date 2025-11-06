@@ -1318,7 +1318,7 @@ class CopyTradingService {
           
           // Add close result fields if available
           if (result.close_price != null) updateFields.close_price = String(result.close_price);
-          if (result.net_profit != null) updateFields.net_profit = String(result.net_profit);
+          // Note: net_profit will be updated later with adjusted value after performance fee calculation
           if (result.swap != null) updateFields.swap = String(result.swap);
           if (result.total_commission != null) updateFields.commission = String(result.total_commission);
           
@@ -1379,11 +1379,26 @@ class CopyTradingService {
                   
                   if (performanceFeeResult && performanceFeeResult.performanceFeeCharged) {
                     adjustedNetProfit = performanceFeeResult.adjustedNetProfit;
+                    
+                    // Update copy follower order with final net_profit after performance fee
+                    await CopyFollowerOrder.update({
+                      net_profit: String(adjustedNetProfit)
+                    }, {
+                      where: { order_id: copiedOrder.order_id }
+                    });
+                    
                     logger.info('Performance fee applied for copy follower local close', {
                       copiedOrderId: copiedOrder.order_id,
                       originalNetProfit: result.net_profit,
                       performanceFeeAmount: performanceFeeResult.performanceFeeAmount,
                       adjustedNetProfit
+                    });
+                  } else {
+                    // No performance fee, use original net profit
+                    await CopyFollowerOrder.update({
+                      net_profit: String(adjustedNetProfit)
+                    }, {
+                      where: { order_id: copiedOrder.order_id }
                     });
                   }
                 } catch (performanceFeeError) {

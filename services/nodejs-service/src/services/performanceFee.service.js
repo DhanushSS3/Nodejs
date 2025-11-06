@@ -117,7 +117,7 @@ async function calculateAndApplyPerformanceFee({
         transaction_id: followerTxnId,
         user_id: copyFollowerUserId,
         user_type: 'copy_follower',
-        order_id: null, // Performance fee is separate from order
+        order_id: copyFollowerOrderId, // Link to the copy follower order
         type: 'performance_fee',
         amount: -Math.abs(performanceFeeAmount),
         balance_before: followerBalanceBefore,
@@ -140,7 +140,7 @@ async function calculateAndApplyPerformanceFee({
         transaction_id: providerTxnId,
         user_id: strategyProviderId,
         user_type: 'strategy_provider',
-        order_id: null, // Performance fee is separate from order
+        order_id: copyFollowerOrderId, // Link to the copy follower order that generated the fee
         type: 'performance_fee_earned',
         amount: Math.abs(performanceFeeAmount),
         balance_before: providerBalanceBefore,
@@ -157,13 +157,34 @@ async function calculateAndApplyPerformanceFee({
         }
       }, { transaction: t });
 
+      // 4. Update copy follower order with performance fee details
+      const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      const currentDate = new Date();
+      
+      await CopyFollowerOrder.update({
+        performance_fee_percentage: performanceFeePercentage,
+        gross_profit: orderNetProfit,
+        performance_fee_amount: performanceFeeAmount,
+        net_profit_after_fees: adjustedNetProfit,
+        fee_status: 'paid',
+        fee_calculation_date: currentDate,
+        fee_payment_date: currentDate
+      }, {
+        where: { order_id: copyFollowerOrderId },
+        transaction: t
+      });
+
       return {
         followerBalanceBefore,
         followerBalanceAfter,
         providerBalanceBefore,
         providerBalanceAfter,
         followerTxnId,
-        providerTxnId
+        providerTxnId,
+        performanceFeePercentage,
+        grossProfit: orderNetProfit,
+        performanceFeeAmount,
+        netProfitAfterFees: adjustedNetProfit
       };
     });
 
