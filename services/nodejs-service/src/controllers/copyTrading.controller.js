@@ -861,11 +861,11 @@ async function getCopyTradingOverview(req, res) {
 
     logger.info('Getting copy trading overview for user', { userId });
 
-    // Get all copy follower accounts for this user with strategy provider details
+    // Get all copy follower accounts for this user with strategy provider details (including inactive)
     const copyFollowerAccounts = await CopyFollowerAccount.findAll({
       where: {
-        user_id: userId,
-        status: 1 // Active accounts only
+        user_id: userId
+        // Removed status filter to include inactive accounts
       },
       include: [{
         model: StrategyProviderAccount,
@@ -884,6 +884,8 @@ async function getCopyTradingOverview(req, res) {
         'net_profit',
         'current_equity_ratio',
         'copy_status',
+        'status',
+        'is_active',
         'created_at'
       ],
       order: [['created_at', 'DESC']]
@@ -952,6 +954,8 @@ async function getCopyTradingOverview(req, res) {
         net_profit: netProfit,
         current_equity_ratio: parseFloat(account.current_equity_ratio || 1.0),
         copy_status: account.copy_status,
+        account_status: account.status, // 1 = active, 0 = inactive
+        is_active: account.is_active, // 1 = active, 0 = inactive
         created_at: account.created_at
       });
     }

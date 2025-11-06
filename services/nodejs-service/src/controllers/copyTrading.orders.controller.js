@@ -1486,6 +1486,172 @@ async function getCopyFollowerOrders(req, res) {
 }
 
 /**
+ * Get closed orders for a specific copy follower account
+ * GET /api/copy-trading/accounts/:copy_follower_account_id/closed-orders
+ */
+async function getCopyFollowerClosedOrders(req, res) {
+  try {
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const { copy_follower_account_id } = req.params;
+
+    if (!tokenUserId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Authentication required' 
+      });
+    }
+
+    // Validate copy_follower_account_id parameter
+    const copyFollowerAccountId = parseInt(copy_follower_account_id);
+    if (!copyFollowerAccountId || copyFollowerAccountId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid copy_follower_account_id parameter'
+      });
+    }
+
+    // Verify copy follower account belongs to the authenticated user
+    const followerAccount = await CopyFollowerAccount.findOne({
+      where: {
+        id: copyFollowerAccountId,
+        user_id: tokenUserId
+        // Removed status and is_active filters to allow access to inactive accounts
+      },
+      attributes: ['id', 'account_name', 'account_number', 'status', 'is_active', 'strategy_provider_id'],
+      include: [{
+        model: StrategyProviderAccount,
+        as: 'strategyProvider',
+        attributes: ['id', 'strategy_name', 'account_number'],
+        required: false
+      }]
+    });
+
+    if (!followerAccount) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Copy follower account not found or access denied' 
+      });
+    }
+
+    // Pagination parameters
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const pageSize = Math.min(Math.max(1, parseInt(req.query.page_size || req.query.limit || '20', 10)), 100);
+    const offset = (page - 1) * pageSize;
+
+    // Get closed orders for this copy follower account
+    const { count, rows: orders } = await CopyFollowerOrder.findAndCountAll({
+      where: {
+        copy_follower_account_id: copyFollowerAccountId,
+        order_status: 'CLOSED'
+      },
+      order: [['updated_at', 'DESC']],
+      limit: pageSize,
+      offset: offset,
+      attributes: [
+        'id', 'order_id', 'master_order_id', 'symbol', 'order_type', 'order_status',
+        'order_price', 'order_quantity', 'close_price', 'net_profit', 'commission', 'swap',
+        'stop_loss', 'take_profit', 'contract_value', 'margin', 'close_message',
+        'copy_status', 'copy_timestamp', 'failure_reason',
+        'master_lot_size', 'final_lot_size', 'lot_ratio',
+        'performance_fee_amount', 'net_profit_after_fees', 'gross_profit',
+        'fee_status', 'fee_calculation_date', 'fee_payment_date',
+        'created_at', 'updated_at'
+      ]
+    });
+
+    // Format the response data
+    const formattedOrders = orders.map(order => ({
+      order_id: order.order_id,
+      master_order_id: order.master_order_id,
+      symbol: order.symbol?.toString?.().toUpperCase() || order.symbol,
+      order_type: order.order_type,
+      order_status: order.order_status,
+      order_price: parseFloat(order.order_price) || 0,
+      order_quantity: parseFloat(order.order_quantity) || 0,
+      close_price: parseFloat(order.close_price) || 0,
+      net_profit: parseFloat(order.net_profit) || 0,
+      commission: parseFloat(order.commission) || 0,
+      swap: parseFloat(order.swap) || 0,
+      stop_loss: order.stop_loss ? parseFloat(order.stop_loss) : null,
+      take_profit: order.take_profit ? parseFloat(order.take_profit) : null,
+      contract_value: parseFloat(order.contract_value) || 0,
+      margin: parseFloat(order.margin) || 0,
+      close_message: order.close_message,
+      copy_status: order.copy_status,
+      copy_timestamp: order.copy_timestamp,
+      failure_reason: order.failure_reason,
+      master_lot_size: parseFloat(order.master_lot_size) || 0,
+      final_lot_size: parseFloat(order.final_lot_size) || 0,
+      lot_ratio: parseFloat(order.lot_ratio) || 0,
+      performance_fee_amount: parseFloat(order.performance_fee_amount) || 0,
+      net_profit_after_fees: parseFloat(order.net_profit_after_fees) || 0,
+      gross_profit: parseFloat(order.gross_profit) || 0,
+      fee_status: order.fee_status,
+      fee_calculation_date: order.fee_calculation_date,
+      fee_payment_date: order.fee_payment_date,
+      created_at: order.created_at,
+      updated_at: order.updated_at
+    }));
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(count / pageSize);
+    const hasNextPage = page < totalPages;
+    const hasPreviousPage = page > 1;
+
+    logger.info('Copy follower closed orders retrieved successfully', {
+      userId: tokenUserId,
+      copyFollowerAccountId,
+      ordersCount: orders.length,
+      totalOrders: count,
+      page,
+      pageSize
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Closed orders retrieved successfully',
+      data: {
+        copy_follower_account: {
+          id: followerAccount.id,
+          account_name: followerAccount.account_name,
+          account_number: followerAccount.account_number,
+          status: followerAccount.status,
+          is_active: followerAccount.is_active,
+          strategy_provider: followerAccount.strategyProvider ? {
+            id: followerAccount.strategyProvider.id,
+            strategy_name: followerAccount.strategyProvider.strategy_name,
+            account_number: followerAccount.strategyProvider.account_number
+          } : null
+        },
+        orders: formattedOrders,
+        pagination: {
+          current_page: page,
+          page_size: pageSize,
+          total_orders: count,
+          total_pages: totalPages,
+          has_next_page: hasNextPage,
+          has_previous_page: hasPreviousPage
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get copy follower closed orders error', {
+      error: error.message,
+      stack: error.stack,
+      copy_follower_account_id: req.params.copy_follower_account_id,
+      userId: req.user?.sub || req.user?.user_id || req.user?.id
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while retrieving closed orders'
+    });
+  }
+}
+
+/**
  * Cancel strategy provider order
  */
 async function cancelStrategyProviderOrder(req, res) {
@@ -2798,6 +2964,7 @@ module.exports = {
   getStrategyProviderOrders,
   closeStrategyProviderOrder,
   getCopyFollowerOrders,
+  getCopyFollowerClosedOrders,
   cancelStrategyProviderOrder,
   addStopLossToOrder,
   addTakeProfitToOrder,

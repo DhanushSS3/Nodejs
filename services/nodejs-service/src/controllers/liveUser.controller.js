@@ -1,5 +1,6 @@
 const LiveUser = require('../models/liveUser.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const { generateAccountNumber } = require('../services/accountNumber.service');
 const { hashPassword, generateViewPassword, hashViewPassword, compareViewPassword } = require('../services/password.service');
 const LiveUserAuthService = require('../services/liveUser.auth.service');
@@ -681,6 +682,29 @@ async function getUserInfo(req, res) {
       });
     }
 
+    // Get copy follower accounts information (including inactive accounts)
+    const copyFollowerAccounts = await CopyFollowerAccount.findAll({
+      where: { user_id: userId },
+      attributes: ['wallet_balance']
+    });
+
+    // Get strategy provider accounts information (including inactive accounts)
+    const strategyProviderAccounts = await StrategyProviderAccount.findAll({
+      where: { user_id: userId },
+      attributes: ['wallet_balance']
+    });
+
+    // Calculate totals
+    const totalCopyFollowerAccounts = copyFollowerAccounts.length;
+    const totalCopyFollowerBalance = copyFollowerAccounts.reduce((sum, account) => {
+      return sum + (parseFloat(account.wallet_balance) || 0);
+    }, 0);
+
+    const totalStrategyProviderAccounts = strategyProviderAccounts.length;
+    const totalStrategyProviderBalance = strategyProviderAccounts.reduce((sum, account) => {
+      return sum + (parseFloat(account.wallet_balance) || 0);
+    }, 0);
+
     // Construct live user response
     const userInfo = {
       id: user.id,
@@ -705,7 +729,13 @@ async function getUserInfo(req, res) {
       bank_account_number: user.bank_account_number,
       referral_code: user.referral_code,
       is_self_trading: user.is_self_trading,
-      created_at: user.created_at
+      created_at: user.created_at,
+      // Copy trading information
+      total_copy_follower_accounts: totalCopyFollowerAccounts,
+      total_copy_follower_balance: totalCopyFollowerBalance,
+      // Strategy provider information
+      total_strategy_provider_accounts: totalStrategyProviderAccounts,
+      total_strategy_provider_balance: totalStrategyProviderBalance
     };
 
     return res.status(200).json(userInfo);

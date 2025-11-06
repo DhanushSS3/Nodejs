@@ -500,6 +500,207 @@ router.get('/copy-follower/:copy_follower_account_id',
 
 /**
  * @swagger
+ * /api/copy-trading/orders/copy-follower/{copy_follower_account_id}/closed-orders:
+ *   get:
+ *     summary: Get closed orders for a specific copy follower account
+ *     description: Retrieves all closed orders for a specific copy follower account with comprehensive order details including performance fees and profitability metrics
+ *     tags: [Copy Trading Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: copy_follower_account_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Copy follower account ID
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: page_size
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           minimum: 1
+ *           maximum: 100
+ *         description: Number of orders per page
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           minimum: 1
+ *           maximum: 100
+ *         description: Alternative to page_size (for backward compatibility)
+ *     responses:
+ *       200:
+ *         description: Closed orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Closed orders retrieved successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     copy_follower_account:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                           example: 123
+ *                         account_name:
+ *                           type: string
+ *                           example: "My Copy Trading Account"
+ *                         account_number:
+ *                           type: string
+ *                           example: "CF1730890123456"
+ *                         status:
+ *                           type: integer
+ *                           example: 1
+ *                         is_active:
+ *                           type: integer
+ *                           example: 1
+ *                         strategy_provider:
+ *                           type: object
+ *                           properties:
+ *                             id:
+ *                               type: integer
+ *                               example: 456
+ *                             strategy_name:
+ *                               type: string
+ *                               example: "Conservative Growth Strategy"
+ *                             account_number:
+ *                               type: string
+ *                               example: "SP1730890123456"
+ *                     orders:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           order_id:
+ *                             type: string
+ *                             example: "1274319128000"
+ *                           master_order_id:
+ *                             type: string
+ *                             example: "1274319127000"
+ *                           symbol:
+ *                             type: string
+ *                             example: "EURUSD"
+ *                           order_type:
+ *                             type: string
+ *                             example: "BUY"
+ *                           order_status:
+ *                             type: string
+ *                             example: "CLOSED"
+ *                           order_price:
+ *                             type: number
+ *                             example: 1.1000
+ *                           order_quantity:
+ *                             type: number
+ *                             example: 0.1
+ *                           close_price:
+ *                             type: number
+ *                             example: 1.1025
+ *                           net_profit:
+ *                             type: number
+ *                             example: 25.00
+ *                           commission:
+ *                             type: number
+ *                             example: 2.50
+ *                           swap:
+ *                             type: number
+ *                             example: 0.00
+ *                           close_message:
+ *                             type: string
+ *                             example: "Order closed by user"
+ *                           performance_fee_amount:
+ *                             type: number
+ *                             example: 5.00
+ *                           net_profit_after_fees:
+ *                             type: number
+ *                             example: 20.00
+ *                           gross_profit:
+ *                             type: number
+ *                             example: 25.00
+ *                           fee_status:
+ *                             type: string
+ *                             example: "paid"
+ *                           created_at:
+ *                             type: string
+ *                             format: date-time
+ *                             example: "2025-11-06T10:30:00.000Z"
+ *                           updated_at:
+ *                             type: string
+ *                             format: date-time
+ *                             example: "2025-11-06T10:35:00.000Z"
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         current_page:
+ *                           type: integer
+ *                           example: 1
+ *                         page_size:
+ *                           type: integer
+ *                           example: 20
+ *                         total_orders:
+ *                           type: integer
+ *                           example: 150
+ *                         total_pages:
+ *                           type: integer
+ *                           example: 8
+ *                         has_next_page:
+ *                           type: boolean
+ *                           example: true
+ *                         has_previous_page:
+ *                           type: boolean
+ *                           example: false
+ *       400:
+ *         description: Invalid copy follower account ID parameter
+ *       401:
+ *         description: Authentication required
+ *       403:
+ *         description: Unauthorized access
+ *       404:
+ *         description: Copy follower account not found or access denied
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/copy-follower/:copy_follower_account_id/closed-orders',
+  authenticateJWT,
+  [
+    param('copy_follower_account_id')
+      .isInt({ gt: 0 })
+      .withMessage('Copy follower account ID must be a positive integer'),
+    query('page')
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage('Page must be a positive integer'),
+    query('page_size')
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage('Page size must be between 1 and 100'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage('Limit must be between 1 and 100')
+  ],
+  validateRequest,
+  copyTradingOrdersController.getCopyFollowerClosedOrders
+);
+
+/**
+ * @swagger
  * /api/copy-trading/orders/strategy-provider/take-profit/cancel:
  *   post:
  *     summary: Cancel take profit from strategy provider order
