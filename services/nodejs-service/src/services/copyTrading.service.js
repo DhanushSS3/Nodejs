@@ -1743,10 +1743,28 @@ class CopyTradingService {
         const order_id = followerOrder.order_id;
         const user_id = follower.id.toString();
         
-        // Calculate compare price for sorting (same logic as strategy provider)
-        let compare_price = parseFloat(followerOrder.order_price);
-        if (orderType === 'BUY_STOP' || orderType === 'SELL_LIMIT') {
-          compare_price = -compare_price; // Reverse for these order types
+        // Calculate compare price using same logic as strategy provider
+        // Pending monitoring is ask-based for all types: store compare = user_price - half_spread
+        // Get half_spread for this follower's group
+        let half_spread = 0;
+        try {
+          const followerGroup = follower.group || 'Standard';
+          const groupConfig = await redisCluster.hgetall(`group_config:${followerGroup}`);
+          half_spread = parseFloat(groupConfig.half_spread || 0);
+        } catch (e) {
+          logger.warn('Failed to get half_spread for follower group, using 0', {
+            followerId: follower.id,
+            group: follower.group,
+            error: e.message
+          });
+          half_spread = 0;
+        }
+        
+        const compare_price = Number((parseFloat(followerOrder.order_price) - half_spread).toFixed(8));
+        
+        // Validate compare_price (same validation as strategy provider)
+        if (!(compare_price > 0)) {
+          throw new Error(`Invalid compare_price for follower order: ${compare_price} (order_price: ${followerOrder.order_price}, half_spread: ${half_spread})`);
         }
 
         // Store pending order in Redis for monitoring (same as strategy provider)
@@ -1813,6 +1831,11 @@ class CopyTradingService {
         logger.info('Copy follower pending order stored locally', {
           followerOrderId: order_id,
           followerId: follower.id,
+          symbol,
+          orderType,
+          orderPrice: followerOrder.order_price,
+          halfSpread: half_spread,
+          comparePrice: compare_price,
           zkey,
           hkey
         });
