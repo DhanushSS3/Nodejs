@@ -290,7 +290,7 @@ class InternalTransferService {
       const portfolioData = await this.getPortfolioFromRedis(accountType, accountId);
       
       if (!portfolioData) {
-        logger.warning('Portfolio data not found in Redis, falling back to basic margin check only', {
+        logger.warn('Portfolio data not found in Redis, falling back to basic margin check only', {
           userId, accountType, accountId
         });
         // Continue with basic margin check only
