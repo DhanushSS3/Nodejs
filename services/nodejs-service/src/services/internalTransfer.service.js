@@ -7,6 +7,7 @@ const LiveUserOrder = require('../models/liveUserOrder.model');
 const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
 const logger = require('./logger.service');
+const { redisCluster } = require('../../config/redis');
 
 /**
  * Internal Transfer Service
@@ -285,6 +286,46 @@ class InternalTransferService {
           break;
       }
 
+      // Fetch current portfolio data from Python portfolio calculator (Redis)
+      const portfolioData = await this.getPortfolioFromRedis(accountType, accountId);
+      
+      if (!portfolioData) {
+        logger.warning('Portfolio data not found in Redis, falling back to basic margin check only', {
+          userId, accountType, accountId
+        });
+        // Continue with basic margin check only
+      } else {
+        // Use existing calculated equity and PnL from Python portfolio calculator
+        const currentEquity = parseFloat(portfolioData.equity || 0);
+        const currentOpenPnL = parseFloat(portfolioData.open_pnl || 0);
+        const currentUsedMargin = parseFloat(portfolioData.used_margin || 0);
+        
+        // Calculate equity after transfer (current equity - transfer amount)
+        const equityAfterTransfer = currentEquity - transferAmount;
+        
+        // Use the margin from portfolio data (more accurate than our calculation)
+        const usedMargin = currentUsedMargin > 0 ? currentUsedMargin : totalMarginRequired;
+
+        // Check margin level to prevent margin calls (equity/margin ratio should be > 100%)
+        if (usedMargin > 0) {
+          const marginLevel = (equityAfterTransfer / usedMargin) * 100;
+          if (marginLevel < 100) {
+            return {
+              valid: false,
+              error: `Transfer would result in margin call. Margin level after transfer: ${marginLevel.toFixed(2)}% (minimum required: 100%). Current equity: $${currentEquity.toFixed(2)}, Equity after transfer: $${equityAfterTransfer.toFixed(2)}, Used margin: $${usedMargin.toFixed(2)}.`,
+              openOrdersCount,
+              totalMarginRequired,
+              balanceAfterTransfer,
+              currentEquity,
+              equityAfterTransfer,
+              currentOpenPnL,
+              usedMargin,
+              marginLevel: marginLevel.toFixed(2) + '%'
+            };
+          }
+        }
+      }
+
       // Get current account balance
       const account = await this.getAccountDetails(userId, accountType, accountId);
       if (!account) {
@@ -309,7 +350,8 @@ class InternalTransferService {
         valid: true,
         openOrdersCount,
         totalMarginRequired,
-        balanceAfterTransfer
+        balanceAfterTransfer,
+        portfolioData: portfolioData || null
       };
     } catch (error) {
       logger.error('Margin requirements check failed', {
@@ -425,6 +467,22 @@ class InternalTransferService {
       await UserTransaction.create(destinationTransactionData, { transaction });
 
       await transaction.commit();
+
+      // Update Redis with new balances for background services
+      try {
+        await this.updateRedisBalances(sourceAccount, destinationAccount, amount);
+        logger.info('Redis balances updated successfully after transfer', {
+          transactionId,
+          sourceAccount: `${sourceAccount.type}:${sourceAccount.id}`,
+          destinationAccount: `${destinationAccount.type}:${destinationAccount.id}`
+        });
+      } catch (redisError) {
+        logger.error('Failed to update Redis balances after transfer', {
+          transactionId,
+          error: redisError.message,
+          // Transfer was successful, Redis update failure is non-critical
+        });
+      }
 
       logger.info('Internal transfer completed successfully', {
         userId,
@@ -578,6 +636,130 @@ class InternalTransferService {
         error: error.message
       });
       throw error;
+    }
+  }
+
+  /**
+   * Update Redis with new account balances after transfer
+   * @param {Object} sourceAccount - Source account details
+   * @param {Object} destinationAccount - Destination account details
+   * @param {number} amount - Transfer amount
+   */
+  static async updateRedisBalances(sourceAccount, destinationAccount, amount) {
+    try {
+      const pipeline = redisCluster.pipeline();
+
+      // Update source account balance in Redis
+      const sourceBalanceAfter = sourceAccount.wallet_balance - amount;
+      const sourceRedisKey = this.getRedisAccountKey(sourceAccount.type, sourceAccount.id);
+      
+      // Update destination account balance in Redis
+      const destinationBalanceAfter = destinationAccount.wallet_balance + amount;
+      const destinationRedisKey = this.getRedisAccountKey(destinationAccount.type, destinationAccount.id);
+
+      // Set updated balances in Redis
+      pipeline.hset(sourceRedisKey, 'wallet_balance', sourceBalanceAfter.toString());
+      pipeline.hset(destinationRedisKey, 'wallet_balance', destinationBalanceAfter.toString());
+
+      // Set expiration for cache (24 hours)
+      pipeline.expire(sourceRedisKey, 86400);
+      pipeline.expire(destinationRedisKey, 86400);
+
+      await pipeline.exec();
+
+      logger.info('Redis account balances updated', {
+        sourceAccount: {
+          key: sourceRedisKey,
+          balanceAfter: sourceBalanceAfter
+        },
+        destinationAccount: {
+          key: destinationRedisKey,
+          balanceAfter: destinationBalanceAfter
+        }
+      });
+
+    } catch (error) {
+      logger.error('Failed to update Redis account balances', {
+        sourceAccount: sourceAccount.type + ':' + sourceAccount.id,
+        destinationAccount: destinationAccount.type + ':' + destinationAccount.id,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch portfolio data from Python portfolio calculator (Redis)
+   * @param {string} accountType - Account type
+   * @param {number} accountId - Account ID
+   * @returns {Object|null} Portfolio data from Redis
+   */
+  static async getPortfolioFromRedis(accountType, accountId) {
+    try {
+      let redisKey;
+      
+      // Generate Redis key based on account type (matching Python portfolio calculator)
+      switch (accountType) {
+        case 'main':
+          redisKey = `user_portfolio:{live:${accountId}}`;
+          break;
+        case 'strategy_provider':
+          redisKey = `user_portfolio:{strategy_provider:${accountId}}`;
+          break;
+        case 'copy_follower':
+          redisKey = `user_portfolio:{copy_follower:${accountId}}`;
+          break;
+        default:
+          logger.error('Unknown account type for portfolio fetch', { accountType, accountId });
+          return null;
+      }
+
+      // Fetch portfolio data from Redis
+      const portfolioData = await redisCluster.hgetall(redisKey);
+      
+      if (!portfolioData || Object.keys(portfolioData).length === 0) {
+        logger.info('No portfolio data found in Redis', { redisKey, accountType, accountId });
+        return null;
+      }
+
+      logger.info('Portfolio data fetched from Redis', {
+        redisKey,
+        accountType,
+        accountId,
+        equity: portfolioData.equity,
+        used_margin: portfolioData.used_margin,
+        margin_level: portfolioData.margin_level,
+        open_pnl: portfolioData.open_pnl
+      });
+
+      return portfolioData;
+
+    } catch (error) {
+      logger.error('Failed to fetch portfolio data from Redis', {
+        accountType,
+        accountId,
+        error: error.message
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Generate Redis key for account balance caching
+   * @param {string} accountType - Account type
+   * @param {number} accountId - Account ID
+   * @returns {string} Redis key
+   */
+  static getRedisAccountKey(accountType, accountId) {
+    switch (accountType) {
+      case 'main':
+        return `live_user:${accountId}:balance`;
+      case 'strategy_provider':
+        return `strategy_provider:${accountId}:balance`;
+      case 'copy_follower':
+        return `copy_follower:${accountId}:balance`;
+      default:
+        throw new Error(`Unknown account type: ${accountType}`);
     }
   }
 }
