@@ -952,18 +952,55 @@ async function handlePostCloseOperations(payload, row) {
  */
 async function updateStrategyProviderStatistics(userId, orderId) {
   try {
-    // Find strategy provider account by user_id
-    const strategyProvider = await StrategyProviderAccount.findOne({
-      where: { user_id: parseInt(userId, 10) }
+    // First, let's check the actual order to see what user_id it has
+    const order = await StrategyProviderOrder.findOne({
+      where: { order_id: orderId },
+      attributes: ['id', 'order_id', 'order_user_id', 'order_status', 'net_profit']
     });
 
-    if (!strategyProvider) {
-      logger.warn('Strategy provider account not found for statistics update', {
+    logger.info('Looking for strategy provider account for statistics update', {
+      userId,
+      userIdType: typeof userId,
+      parsedUserId: parseInt(userId, 10),
+      orderId,
+      orderDetails: order ? {
+        id: order.id,
+        order_id: order.order_id,
+        order_user_id: order.order_user_id,
+        order_status: order.order_status,
+        net_profit: order.net_profit
+      } : null
+    });
+
+    if (!order) {
+      logger.warn('Strategy provider order not found for statistics update', {
         userId,
         orderId
       });
       return;
     }
+
+    // The order_user_id is the strategy provider account ID, not the user ID
+    // So we should find the strategy provider account by its ID (order_user_id)
+    const strategyProvider = await StrategyProviderAccount.findByPk(order.order_user_id);
+
+    if (!strategyProvider) {
+      logger.warn('Strategy provider account not found for statistics update', {
+        userId,
+        orderId,
+        orderUserId: order.order_user_id,
+        message: 'Strategy provider account not found by order_user_id'
+      });
+      return;
+    }
+
+    logger.info('Found strategy provider account for statistics update', {
+      userId,
+      orderId,
+      strategyProviderId: strategyProvider.id,
+      strategyProviderUserId: strategyProvider.user_id,
+      strategyName: strategyProvider.strategy_name
+    });
 
     // Update comprehensive statistics using the dedicated service
     // This is done asynchronously to avoid blocking the DB consumer
