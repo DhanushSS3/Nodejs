@@ -904,8 +904,23 @@ async function closeStrategyProviderOrder(req, res) {
     });
 
     // Update strategy provider statistics asynchronously (non-blocking)
+    logger.info('Scheduling strategy provider statistics update', {
+      strategyProviderId: tokenStrategyProviderId,
+      orderId: order_id,
+      operationId
+    });
+    
     setImmediate(async () => {
       try {
+        logger.info('Executing strategy provider statistics update', {
+          strategyProviderId: tokenStrategyProviderId,
+          orderId: order_id,
+          operationId
+        });
+        
+        // Add small delay to ensure database has been updated
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         await StrategyProviderStatsService.updateStatisticsAfterOrderClose(
           tokenStrategyProviderId, 
           order_id

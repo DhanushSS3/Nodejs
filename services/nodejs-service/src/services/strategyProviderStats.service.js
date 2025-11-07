@@ -20,7 +20,9 @@ class StrategyProviderStatsService {
     try {
       logger.info('Starting strategy provider statistics update', {
         strategyProviderId,
-        closedOrderId
+        strategyProviderIdType: typeof strategyProviderId,
+        closedOrderId,
+        closedOrderIdType: typeof closedOrderId
       });
 
       // Get strategy provider account
@@ -29,23 +31,53 @@ class StrategyProviderStatsService {
         throw new Error(`Strategy provider account not found: ${strategyProviderId}`);
       }
 
+      // Check if the specific closed order exists (for debugging)
+      if (closedOrderId) {
+        const specificOrder = await StrategyProviderOrder.findOne({
+          where: {
+            order_id: closedOrderId,
+            order_user_id: strategyProviderId
+          },
+          attributes: ['id', 'order_id', 'order_status', 'net_profit', 'createdAt', 'updatedAt']
+        });
+        
+        logger.info('Checking specific closed order', {
+          strategyProviderId,
+          closedOrderId,
+          specificOrder: specificOrder ? {
+            id: specificOrder.id,
+            order_id: specificOrder.order_id,
+            order_status: specificOrder.order_status,
+            net_profit: specificOrder.net_profit
+          } : null
+        });
+      }
+
       // Get all closed orders for this strategy provider
       const closedOrders = await StrategyProviderOrder.findAll({
         where: {
           order_user_id: strategyProviderId,
           order_status: 'CLOSED'
         },
-        attributes: ['id', 'net_profit', 'createdAt', 'updatedAt'],
+        attributes: ['id', 'order_id', 'net_profit', 'createdAt', 'updatedAt'],
         order: [['createdAt', 'ASC']]
       });
 
       logger.info('Retrieved closed orders for statistics calculation', {
         strategyProviderId,
-        totalClosedOrders: closedOrders.length
+        totalClosedOrders: closedOrders.length,
+        closedOrderIds: closedOrders.map(o => o.order_id),
+        closedOrderNetProfits: closedOrders.map(o => o.net_profit)
       });
 
       // Calculate all statistics
       const statistics = await this.calculateAllStatistics(strategyProvider, closedOrders);
+      
+      logger.info('Calculated statistics for strategy provider', {
+        strategyProviderId,
+        statistics,
+        strategyProviderCurrentBalance: strategyProvider.wallet_balance
+      });
 
       // Update strategy provider account in a single transaction
       await sequelize.transaction(async (t) => {
