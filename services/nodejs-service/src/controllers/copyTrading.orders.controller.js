@@ -3033,13 +3033,22 @@ async function addStopLossToCopyFollowerOrder(req, res) {
       return res.status(404).json({ success: false, message: 'Copy follower order not found or not in OPEN status' });
     }
 
-    // Validate stop loss price logic
-    const entry_price = parseFloat(order.order_price);
+    // Validate stop loss price logic using execution price if available, otherwise order price
+    const entry_price = order.execution_price 
+      ? parseFloat(order.execution_price) 
+      : parseFloat(order.order_price);
+    
     if (order_type.toUpperCase() === 'BUY' && stop_loss >= entry_price) {
-      return res.status(400).json({ success: false, message: 'For BUY orders, stop_loss must be less than entry price' });
+      return res.status(400).json({ 
+        success: false, 
+        message: `For BUY orders, stop_loss must be less than entry price. Entry: ${entry_price}, SL: ${stop_loss}` 
+      });
     }
     if (order_type.toUpperCase() === 'SELL' && stop_loss <= entry_price) {
-      return res.status(400).json({ success: false, message: 'For SELL orders, stop_loss must be greater than entry price' });
+      return res.status(400).json({ 
+        success: false, 
+        message: `For SELL orders, stop_loss must be greater than entry price. Entry: ${entry_price}, SL: ${stop_loss}` 
+      });
     }
 
     // Check if stoploss already exists (same validation as strategy providers)
@@ -3220,13 +3229,22 @@ async function addTakeProfitToCopyFollowerOrder(req, res) {
       return res.status(404).json({ success: false, message: 'Copy follower order not found or not in OPEN status' });
     }
 
-    // Validate take profit price logic
-    const entry_price = parseFloat(order.order_price);
+    // Validate take profit price logic using execution price if available, otherwise order price
+    const entry_price = order.execution_price 
+      ? parseFloat(order.execution_price) 
+      : parseFloat(order.order_price);
+    
     if (order_type.toUpperCase() === 'BUY' && take_profit <= entry_price) {
-      return res.status(400).json({ success: false, message: 'For BUY orders, take_profit must be greater than entry price' });
+      return res.status(400).json({ 
+        success: false, 
+        message: `For BUY orders, take_profit must be greater than entry price. Entry: ${entry_price}, TP: ${take_profit}` 
+      });
     }
     if (order_type.toUpperCase() === 'SELL' && take_profit >= entry_price) {
-      return res.status(400).json({ success: false, message: 'For SELL orders, take_profit must be less than entry price' });
+      return res.status(400).json({ 
+        success: false, 
+        message: `For SELL orders, take_profit must be less than entry price. Entry: ${entry_price}, TP: ${take_profit}` 
+      });
     }
 
     // Check if takeprofit already exists (same validation as strategy providers)

@@ -11,9 +11,10 @@ class CopyFollowerSlTpService {
    * Calculate SL/TP prices based on copy follower account settings
    * @param {Object} followerOrder - Copy follower order
    * @param {Object} followerAccount - Copy follower account with SL/TP settings
+   * @param {Object} executionResult - Order execution result with actual execution price
    * @returns {Object} SL/TP calculation results
    */
-  static async calculateSlTpPrices(followerOrder, followerAccount) {
+  static async calculateSlTpPrices(followerOrder, followerAccount, executionResult = null) {
     try {
       const result = {
         stopLoss: null,
@@ -22,7 +23,10 @@ class CopyFollowerSlTpService {
         hasTakeProfit: false
       };
 
-      const orderPrice = parseFloat(followerOrder.order_price);
+      // Use execution price if available, otherwise fall back to order price
+      const orderPrice = executionResult?.executionPrice 
+        ? parseFloat(executionResult.executionPrice)
+        : parseFloat(followerOrder.order_price);
       const orderType = followerOrder.order_type;
       const orderQuantity = parseFloat(followerOrder.order_quantity);
 
@@ -157,8 +161,8 @@ class CopyFollowerSlTpService {
         return { success: false, reason: 'Order execution failed' };
       }
 
-      // Calculate SL/TP prices
-      const slTpCalculation = await this.calculateSlTpPrices(followerOrder, followerAccount);
+      // Calculate SL/TP prices using actual execution result
+      const slTpCalculation = await this.calculateSlTpPrices(followerOrder, followerAccount, executionResult);
       
       if (!slTpCalculation.hasStopLoss && !slTpCalculation.hasTakeProfit) {
         return { success: true, reason: 'No SL/TP configured' };
