@@ -172,8 +172,8 @@ class InternalTransferService {
       switch (accountType) {
         case 'main':
           const liveUser = await LiveUser.findOne({
-            where: { id: userId },
-            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'name']
+            where: { id: userId, status: 1, is_active: 1 },
+            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'leverage', 'group']
           });
           return liveUser ? {
             id: liveUser.id,
@@ -182,13 +182,15 @@ class InternalTransferService {
             margin: parseFloat(liveUser.margin || 0),
             net_profit: parseFloat(liveUser.net_profit || 0),
             account_number: liveUser.account_number,
-            name: 'Main Trading Account'
+            name: 'Main Trading Account',
+            leverage: parseFloat(liveUser.leverage || 100),
+            group: liveUser.group || 'Standard'
           } : null;
 
         case 'strategy_provider':
           const strategyProvider = await StrategyProviderAccount.findOne({
             where: { id: accountId, user_id: userId, status: 1, is_active: 1 },
-            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'strategy_name']
+            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'strategy_name', 'leverage', 'group']
           });
           return strategyProvider ? {
             id: strategyProvider.id,
@@ -197,13 +199,15 @@ class InternalTransferService {
             margin: parseFloat(strategyProvider.margin || 0),
             net_profit: parseFloat(strategyProvider.net_profit || 0),
             account_number: strategyProvider.account_number,
-            name: strategyProvider.strategy_name
+            name: strategyProvider.strategy_name,
+            leverage: parseFloat(strategyProvider.leverage || 100),
+            group: strategyProvider.group || 'Standard'
           } : null;
 
         case 'copy_follower':
           const copyFollower = await CopyFollowerAccount.findOne({
             where: { id: accountId, user_id: userId, status: 1, is_active: 1 },
-            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'account_name']
+            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'account_name', 'leverage', 'group']
           });
           return copyFollower ? {
             id: copyFollower.id,
@@ -212,7 +216,9 @@ class InternalTransferService {
             margin: parseFloat(copyFollower.margin || 0),
             net_profit: parseFloat(copyFollower.net_profit || 0),
             account_number: copyFollower.account_number,
-            name: copyFollower.account_name
+            name: copyFollower.account_name,
+            leverage: parseFloat(copyFollower.leverage || 100),
+            group: copyFollower.group || 'Standard'
           } : null;
 
         default:
@@ -640,7 +646,7 @@ class InternalTransferService {
   }
 
   /**
-   * Update Redis with new account balances after transfer
+   * Update Redis with new account balances after transfer (comprehensive update for portfolio calculator)
    * @param {Object} sourceAccount - Source account details
    * @param {Object} destinationAccount - Destination account details
    * @param {number} amount - Transfer amount
@@ -649,31 +655,64 @@ class InternalTransferService {
     try {
       const pipeline = redisCluster.pipeline();
 
-      // Update source account balance in Redis
+      // Calculate new balances
       const sourceBalanceAfter = sourceAccount.wallet_balance - amount;
-      const sourceRedisKey = this.getRedisAccountKey(sourceAccount.type, sourceAccount.id);
-      
-      // Update destination account balance in Redis
       const destinationBalanceAfter = destinationAccount.wallet_balance + amount;
-      const destinationRedisKey = this.getRedisAccountKey(destinationAccount.type, destinationAccount.id);
 
-      // Set updated balances in Redis
-      pipeline.hset(sourceRedisKey, 'wallet_balance', sourceBalanceAfter.toString());
-      pipeline.hset(destinationRedisKey, 'wallet_balance', destinationBalanceAfter.toString());
+      // Update source account - use Python portfolio calculator's key format
+      const sourceConfigKey = this.getPortfolioCalculatorConfigKey(sourceAccount.type, sourceAccount.id);
+      pipeline.hset(sourceConfigKey, {
+        'wallet_balance': sourceBalanceAfter.toString(),
+        'leverage': (sourceAccount.leverage || 100).toString(),
+        'group': sourceAccount.group || 'Standard'
+      });
 
-      // Set expiration for cache (24 hours)
-      pipeline.expire(sourceRedisKey, 86400);
-      pipeline.expire(destinationRedisKey, 86400);
+      // Update destination account - use Python portfolio calculator's key format  
+      const destinationConfigKey = this.getPortfolioCalculatorConfigKey(destinationAccount.type, destinationAccount.id);
+      pipeline.hset(destinationConfigKey, {
+        'wallet_balance': destinationBalanceAfter.toString(),
+        'leverage': (destinationAccount.leverage || 100).toString(),
+        'group': destinationAccount.group || 'Standard'
+      });
+
+      // Also update legacy keys for backward compatibility
+      const sourceLegacyKey = this.getLegacyConfigKey(sourceAccount.type, sourceAccount.id);
+      const destinationLegacyKey = this.getLegacyConfigKey(destinationAccount.type, destinationAccount.id);
+      
+      pipeline.hset(sourceLegacyKey, 'wallet_balance', sourceBalanceAfter.toString());
+      pipeline.hset(destinationLegacyKey, 'wallet_balance', destinationBalanceAfter.toString());
+
+      // Invalidate portfolio cache to force recalculation
+      const sourcePortfolioKey = this.getPortfolioKey(sourceAccount.type, sourceAccount.id);
+      const destinationPortfolioKey = this.getPortfolioKey(destinationAccount.type, destinationAccount.id);
+      
+      pipeline.del(sourcePortfolioKey);
+      pipeline.del(destinationPortfolioKey);
+
+      // Mark users as dirty for portfolio recalculation (for Python portfolio calculator)
+      const sourceDirtyKey = this.getDirtyUserKey(sourceAccount.type);
+      const destinationDirtyKey = this.getDirtyUserKey(destinationAccount.type);
+      
+      pipeline.sadd(sourceDirtyKey, sourceAccount.id.toString());
+      pipeline.sadd(destinationDirtyKey, destinationAccount.id.toString());
+
+      // Set expiration for config keys (no expiration for portfolio calculator keys)
+      pipeline.expire(sourceLegacyKey, 86400);
+      pipeline.expire(destinationLegacyKey, 86400);
 
       await pipeline.exec();
 
-      logger.info('Redis account balances updated', {
+      logger.info('Redis balances updated comprehensively for portfolio calculator', {
         sourceAccount: {
-          key: sourceRedisKey,
+          configKey: sourceConfigKey,
+          legacyKey: sourceLegacyKey,
+          portfolioKey: sourcePortfolioKey,
           balanceAfter: sourceBalanceAfter
         },
         destinationAccount: {
-          key: destinationRedisKey,
+          configKey: destinationConfigKey,
+          legacyKey: destinationLegacyKey,
+          portfolioKey: destinationPortfolioKey,
           balanceAfter: destinationBalanceAfter
         }
       });
@@ -745,7 +784,102 @@ class InternalTransferService {
   }
 
   /**
-   * Generate Redis key for account balance caching
+   * Generate Redis key for portfolio calculator config (hash-tagged for cluster)
+   * @param {string} accountType - Account type
+   * @param {number} accountId - Account ID
+   * @returns {string} Redis key
+   */
+  static getPortfolioCalculatorConfigKey(accountType, accountId) {
+    let userType;
+    switch (accountType) {
+      case 'main':
+        userType = 'live';
+        break;
+      case 'strategy_provider':
+        userType = 'strategy_provider';
+        break;
+      case 'copy_follower':
+        userType = 'copy_follower';
+        break;
+      default:
+        throw new Error(`Unknown account type: ${accountType}`);
+    }
+    return `user:{${userType}:${accountId}}:config`;
+  }
+
+  /**
+   * Generate legacy Redis key for backward compatibility
+   * @param {string} accountType - Account type
+   * @param {number} accountId - Account ID
+   * @returns {string} Redis key
+   */
+  static getLegacyConfigKey(accountType, accountId) {
+    let userType;
+    switch (accountType) {
+      case 'main':
+        userType = 'live';
+        break;
+      case 'strategy_provider':
+        userType = 'strategy_provider';
+        break;
+      case 'copy_follower':
+        userType = 'copy_follower';
+        break;
+      default:
+        throw new Error(`Unknown account type: ${accountType}`);
+    }
+    return `user:${userType}:${accountId}:config`;
+  }
+
+  /**
+   * Generate portfolio cache key for invalidation
+   * @param {string} accountType - Account type
+   * @param {number} accountId - Account ID
+   * @returns {string} Redis key
+   */
+  static getPortfolioKey(accountType, accountId) {
+    let userType;
+    switch (accountType) {
+      case 'main':
+        userType = 'live';
+        break;
+      case 'strategy_provider':
+        userType = 'strategy_provider';
+        break;
+      case 'copy_follower':
+        userType = 'copy_follower';
+        break;
+      default:
+        throw new Error(`Unknown account type: ${accountType}`);
+    }
+    return `user_portfolio:{${userType}:${accountId}}`;
+  }
+
+  /**
+   * Generate dirty user set key for portfolio recalculation
+   * @param {string} accountType - Account type
+   * @returns {string} Redis key
+   */
+  static getDirtyUserKey(accountType) {
+    let userType;
+    switch (accountType) {
+      case 'main':
+        userType = 'live';
+        break;
+      case 'strategy_provider':
+        userType = 'strategy_provider';
+        break;
+      case 'copy_follower':
+        userType = 'copy_follower';
+        break;
+      default:
+        throw new Error(`Unknown account type: ${accountType}`);
+    }
+    return `dirty_users:${userType}`;
+  }
+
+  /**
+   * Generate Redis key for account balance caching (legacy)
    * @param {string} accountType - Account type
    * @param {number} accountId - Account ID
    * @returns {string} Redis key
