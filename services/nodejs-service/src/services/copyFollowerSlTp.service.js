@@ -1,6 +1,6 @@
 const logger = require('./logger.service');
 const groupsCache = require('./groups.cache.service');
-const copyTradingOrdersController = require('../controllers/copyTrading.orders.controller');
+// Note: copyTrading.orders.controller is loaded lazily to avoid circular dependency
 
 /**
  * Service for calculating and applying stop loss and take profit for copy follower orders
@@ -250,7 +250,8 @@ class CopyFollowerSlTpService {
         }
       };
 
-      // Call the dedicated copy follower addStopLoss function
+      // Call the dedicated copy follower addStopLoss function (lazy load to avoid circular dependency)
+      const copyTradingOrdersController = require('../controllers/copyTrading.orders.controller');
       await copyTradingOrdersController.addStopLossToCopyFollowerOrder(mockReq, mockRes);
 
       logger.info('Stop loss added to copy follower order', {
@@ -323,7 +324,8 @@ class CopyFollowerSlTpService {
         }
       };
 
-      // Call the dedicated copy follower addTakeProfit function
+      // Call the dedicated copy follower addTakeProfit function (lazy load to avoid circular dependency)
+      const copyTradingOrdersController = require('../controllers/copyTrading.orders.controller');
       await copyTradingOrdersController.addTakeProfitToCopyFollowerOrder(mockReq, mockRes);
 
       logger.info('Take profit added to copy follower order', {
