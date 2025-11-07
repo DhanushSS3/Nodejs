@@ -10,6 +10,7 @@ const idGenerator = require('./idGenerator.service');
 const groupsCache = require('./groups.cache.service');
 const { updateUserUsedMargin } = require('./user.margin.service');
 const portfolioEvents = require('./events/portfolio.events');
+const CopyFollowerSlTpService = require('./copyFollowerSlTp.service');
 const { redisCluster } = require('../../config/redis');
 const axios = require('axios');
 
@@ -480,6 +481,47 @@ class CopyTradingService {
             userType: 'copy_follower',
           });
           // Do not fail the request; SQL margin is an eventual-consistency mirror of Redis
+        }
+      }
+
+      // Apply SL/TP to copy follower order if execution was successful
+      if (executionResult.success) {
+        try {
+          logger.info('Applying SL/TP to copy follower order', {
+            orderId: followerOrder.order_id,
+            followerId: follower.id,
+            slMode: follower.copy_sl_mode,
+            tpMode: follower.copy_tp_mode
+          });
+
+          const slTpResult = await CopyFollowerSlTpService.applySlTpToFollowerOrder(
+            followerOrder, 
+            follower, 
+            executionResult
+          );
+
+          if (slTpResult.success) {
+            logger.info('SL/TP successfully applied to copy follower order', {
+              orderId: followerOrder.order_id,
+              flow: slTpResult.flow,
+              stopLossResult: slTpResult.stopLossResult,
+              takeProfitResult: slTpResult.takeProfitResult
+            });
+          } else {
+            logger.warn('Failed to apply SL/TP to copy follower order', {
+              orderId: followerOrder.order_id,
+              error: slTpResult.error,
+              errors: slTpResult.errors
+            });
+          }
+
+        } catch (slTpError) {
+          // SL/TP failure should not fail the entire copy operation
+          logger.error('Error applying SL/TP to copy follower order', {
+            orderId: followerOrder.order_id,
+            followerId: follower.id,
+            error: slTpError.message
+          });
         }
       }
 
@@ -2258,10 +2300,188 @@ class CopyTradingService {
 
     } catch (error) {
       logger.error('Failed to cancel follower order', {
-        copiedOrderId: copiedOrder.order_id,
         masterOrderId: masterOrder.order_id,
         error: error.message
       });
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Calculate close price for copy follower order
+   * @param {Object} copyOrder - Copy follower order
+   * @param {Object} masterOrder - Closed strategy provider order
+   * @returns {number} Close price for copy follower
+   */
+  calculateCopyFollowerClosePrice(copyOrder, masterOrder) {
+    // For now, use the same close price as master order
+    // In the future, this could be adjusted for spread differences
+    return parseFloat(masterOrder.close_price);
+  }
+
+  /**
+   * Remove SL/TP triggers for closed order
+   * @param {string} orderId - Order ID
+   */
+  async removeSlTpTriggersForOrder(orderId) {
+    try {
+      const redisCluster = require('../config/redis');
+
+      // Remove stop loss trigger
+      const slTriggerKey = `stoploss_trigger:${orderId}`;
+      await redisCluster.del(slTriggerKey);
+      await redisCluster.srem('active_stoploss_triggers', orderId);
+
+      // Remove take profit trigger
+      const tpTriggerKey = `takeprofit_trigger:${orderId}`;
+      await redisCluster.del(tpTriggerKey);
+      await redisCluster.srem('active_takeprofit_triggers', orderId);
+
+      logger.info('Removed SL/TP triggers for closed order', {
+        orderId,
+        slTriggerKey,
+        tpTriggerKey
+      });
+
+    } catch (error) {
+      logger.error('Failed to remove SL/TP triggers for order', {
+        orderId,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Handle strategy provider manual order closure and replicate to copy followers
+   * @param {Object} masterOrder - Strategy provider order that was closed
+   */
+  async handleStrategyProviderOrderClosure(masterOrder) {
+    try {
+      logger.info('Processing strategy provider order closure for copy trading', {
+        orderId: masterOrder.order_id,
+        strategyProviderId: masterOrder.order_user_id,
+        symbol: masterOrder.symbol,
+        closePrice: masterOrder.close_price
+      });
+
+      // Get all copy follower orders for this master order
+      const copyFollowerOrders = await CopyFollowerOrder.findAll({
+        where: {
+          master_order_id: masterOrder.order_id,
+          order_status: ['OPEN', 'PENDING'] // Only close orders that are still open
+        }
+      });
+
+      if (copyFollowerOrders.length === 0) {
+        logger.info('No open copy follower orders found for closed strategy provider order', {
+          masterOrderId: masterOrder.order_id
+        });
+        return;
+      }
+
+      logger.info('Found copy follower orders to close', {
+        masterOrderId: masterOrder.order_id,
+        copyOrdersCount: copyFollowerOrders.length,
+        copyOrderIds: copyFollowerOrders.map(o => o.order_id)
+      });
+
+      // Process each copy follower order closure
+      const closureResults = await Promise.allSettled(
+        copyFollowerOrders.map(copyOrder => this.closeCopyFollowerOrder(copyOrder, masterOrder))
+      );
+
+      // Count successful and failed closures
+      const successful = closureResults.filter(result => result.status === 'fulfilled').length;
+      const failed = closureResults.filter(result => result.status === 'rejected').length;
+
+      logger.info('Copy follower order closures completed', {
+        masterOrderId: masterOrder.order_id,
+        totalCopyOrders: copyFollowerOrders.length,
+        successful,
+        failed
+      });
+
+    } catch (error) {
+      logger.error('Failed to handle strategy provider order closure', {
+        masterOrderId: masterOrder?.order_id,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Close individual copy follower order when master order is closed
+   * @param {Object} copyOrder - Copy follower order to close
+   * @param {Object} masterOrder - Closed strategy provider order
+   */
+  async closeCopyFollowerOrder(copyOrder, masterOrder) {
+    try {
+      // Check if order is already closed to prevent duplicate closure
+      const isAlreadyClosed = await CopyFollowerSlTpService.isOrderClosed(copyOrder.order_id);
+      if (isAlreadyClosed) {
+        logger.info('Copy follower order already closed, skipping', {
+          copyOrderId: copyOrder.order_id,
+          masterOrderId: masterOrder.order_id
+        });
+        return { success: true, reason: 'Already closed' };
+      }
+
+      logger.info('Closing copy follower order due to master order closure', {
+        copyOrderId: copyOrder.order_id,
+        masterOrderId: masterOrder.order_id,
+        symbol: copyOrder.symbol,
+        orderType: copyOrder.order_type
+      });
+
+      // Get copy follower account details
+      const followerAccount = await CopyFollowerAccount.findByPk(copyOrder.copy_follower_account_id);
+      if (!followerAccount) {
+        throw new Error('Copy follower account not found');
+      }
+
+      // Calculate close price for copy follower (may need spread adjustment)
+      const closePrice = this.calculateCopyFollowerClosePrice(copyOrder, masterOrder);
+
+      // Close the order through order service
+      const orderService = require('./order.service');
+      const closeRequest = {
+        order_id: copyOrder.order_id,
+        close_price: closePrice,
+        user_type: 'copy_follower',
+        user_id: copyOrder.order_user_id,
+        close_reason: 'strategy_provider_closure'
+      };
+
+      const closeResult = await orderService.closeOrder(closeRequest);
+
+      if (closeResult.success) {
+        logger.info('Copy follower order closed successfully', {
+          copyOrderId: copyOrder.order_id,
+          masterOrderId: masterOrder.order_id,
+          closePrice,
+          closeResult
+        });
+
+        // Remove any active SL/TP triggers for this order
+        await this.removeSlTpTriggersForOrder(copyOrder.order_id);
+
+      } else {
+        logger.error('Failed to close copy follower order', {
+          copyOrderId: copyOrder.order_id,
+          masterOrderId: masterOrder.order_id,
+          error: closeResult.error
+        });
+      }
+
+      return closeResult;
+
+    } catch (error) {
+      logger.error('Error closing copy follower order', {
+        copyOrderId: copyOrder.order_id,
+        masterOrderId: masterOrder.order_id,
+        error: error.message
+      });
+      return { success: false, error: error.message };
     }
   }
 }

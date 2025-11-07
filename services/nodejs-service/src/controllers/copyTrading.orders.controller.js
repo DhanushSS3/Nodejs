@@ -2973,6 +2973,380 @@ async function processCopyTradingDistribution(masterOrder, operationId) {
   }
 }
 
+/**
+ * Add stop loss to copy follower order
+ */
+async function addStopLossToCopyFollowerOrder(req, res) {
+  const operationId = `add_cf_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    // Structured request log (same as strategy providers)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'addStopLossToCopyFollowerOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    
+    // Allow internal copy trading calls (no JWT validation needed)
+    const isInternalAuth = req.headers['x-internal-auth'];
+    if (!isInternalAuth) {
+      return res.status(403).json({ success: false, message: 'Internal authentication required for copy follower orders' });
+    }
+
+    const body = req.body || {};
+    const order_id = body.order_id;
+    const user_id = body.user_id; // copy_follower_account_id
+    const symbol = body.symbol;
+    const order_type = body.order_type;
+    const stop_loss = parseFloat(body.stop_loss);
+    const status = body.status || 'STOPLOSS';
+    const order_status_in = body.order_status || 'OPEN';
+
+    // Validation
+    if (!order_id || !user_id || !symbol || !order_type || !stop_loss) {
+      return res.status(400).json({ success: false, message: 'Missing required fields: order_id, user_id, symbol, order_type, stop_loss' });
+    }
+    if (!['BUY', 'SELL'].includes(order_type.toUpperCase())) {
+      return res.status(400).json({ success: false, message: 'order_type must be BUY or SELL' });
+    }
+    if (stop_loss <= 0) {
+      return res.status(400).json({ success: false, message: 'stop_loss must be greater than 0' });
+    }
+
+    // Find copy follower order
+    const order = await CopyFollowerOrder.findOne({
+      where: { 
+        order_id,
+        order_user_id: user_id,
+        order_status: 'OPEN'
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Copy follower order not found or not in OPEN status' });
+    }
+
+    // Validate stop loss price logic
+    const entry_price = parseFloat(order.order_price);
+    if (order_type.toUpperCase() === 'BUY' && stop_loss >= entry_price) {
+      return res.status(400).json({ success: false, message: 'For BUY orders, stop_loss must be less than entry price' });
+    }
+    if (order_type.toUpperCase() === 'SELL' && stop_loss <= entry_price) {
+      return res.status(400).json({ success: false, message: 'For SELL orders, stop_loss must be greater than entry price' });
+    }
+
+    // Check if stoploss already exists (same validation as strategy providers)
+    try {
+      // Check SQL row
+      if (order.stop_loss !== null && order.stop_loss !== undefined && parseFloat(order.stop_loss) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+
+      // Check Redis canonical data
+      const canonicalData = await redisCluster.hgetall(`order_data:${order_id}`);
+      if (canonicalData && canonicalData.stop_loss && parseFloat(canonicalData.stop_loss) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+
+      // Check user holdings
+      const tag = `copy_follower:${user_id}`;
+      const holdingsData = await redisCluster.hgetall(`user_holdings:{${tag}}:${order_id}`);
+      if (holdingsData && holdingsData.stop_loss && parseFloat(holdingsData.stop_loss) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+
+      // Check order triggers
+      const triggersData = await redisCluster.hgetall(`order_triggers:${order_id}`);
+      if (triggersData && (triggersData.stop_loss || triggersData.stop_loss_compare || triggersData.stop_loss_user)) {
+        return res.status(409).json({
+          success: false,
+          message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
+          error_code: 'STOPLOSS_ALREADY_EXISTS'
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to check existing stoploss', { order_id, error: error.message, operationId });
+      // Continue with the operation if check fails to avoid blocking valid requests
+    }
+
+    // Generate stop loss ID (same as strategy providers)
+    const stoploss_id = await idGenerator.generateStopLossId();
+    
+    // Update SQL row with stoploss_id and status
+    try {
+      await order.update({ stoploss_id, status });
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'stoploss_id', 
+        stoploss_id, 
+        `Copy follower stoploss added - price: ${stop_loss}`
+      );
+    } catch (e) {
+      logger.warn('Failed to persist stoploss_id before send', { order_id, stoploss_id, error: e.message });
+    }
+
+    // Build payload to Python (same pattern as strategy providers)
+    const pyPayload = {
+      order_id,
+      symbol: symbol.toUpperCase(),
+      user_id,
+      user_type: 'copy_follower',
+      order_type: order_type.toUpperCase(),
+      order_price: entry_price,
+      stop_loss,
+      status,
+      order_status: order_status_in,
+      stoploss_id
+    };
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    // Call Python service (same as strategy providers)
+    const pyResp = await pythonServiceAxios.post(
+      `${baseUrl}/api/orders/stoploss/add`,
+      pyPayload
+    );
+
+    const result = pyResp.data?.data || pyResp.data || {};
+
+    logger.info('Copy follower stop loss added successfully', {
+      order_id,
+      stoploss_id,
+      copyFollowerId: user_id,
+      operationId
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+      order_id,
+      stoploss_id,
+      operationId
+    });
+
+  } catch (error) {
+    logger.error('Add copy follower stop loss error', {
+      error: error.message,
+      order_id: req.body?.order_id,
+      operationId
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+}
+
+/**
+ * Add take profit to copy follower order
+ */
+async function addTakeProfitToCopyFollowerOrder(req, res) {
+  const operationId = `add_cf_takeprofit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    // Structured request log (same as strategy providers)
+    orderReqLogger.logOrderRequest({
+      endpoint: 'addTakeProfitToCopyFollowerOrder',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body,
+    }).catch(() => {});
+
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    
+    // Allow internal copy trading calls (no JWT validation needed)
+    const isInternalAuth = req.headers['x-internal-auth'];
+    if (!isInternalAuth) {
+      return res.status(403).json({ success: false, message: 'Internal authentication required for copy follower orders' });
+    }
+
+    const body = req.body || {};
+    const order_id = body.order_id;
+    const user_id = body.user_id; // copy_follower_account_id
+    const symbol = body.symbol;
+    const order_type = body.order_type;
+    const take_profit = parseFloat(body.take_profit);
+    const status = body.status || 'TAKEPROFIT';
+    const order_status_in = body.order_status || 'OPEN';
+
+    // Validation
+    if (!order_id || !user_id || !symbol || !order_type || !take_profit) {
+      return res.status(400).json({ success: false, message: 'Missing required fields: order_id, user_id, symbol, order_type, take_profit' });
+    }
+    if (!['BUY', 'SELL'].includes(order_type.toUpperCase())) {
+      return res.status(400).json({ success: false, message: 'order_type must be BUY or SELL' });
+    }
+    if (take_profit <= 0) {
+      return res.status(400).json({ success: false, message: 'take_profit must be greater than 0' });
+    }
+
+    // Find copy follower order
+    const order = await CopyFollowerOrder.findOne({
+      where: { 
+        order_id,
+        order_user_id: user_id,
+        order_status: 'OPEN'
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Copy follower order not found or not in OPEN status' });
+    }
+
+    // Validate take profit price logic
+    const entry_price = parseFloat(order.order_price);
+    if (order_type.toUpperCase() === 'BUY' && take_profit <= entry_price) {
+      return res.status(400).json({ success: false, message: 'For BUY orders, take_profit must be greater than entry price' });
+    }
+    if (order_type.toUpperCase() === 'SELL' && take_profit >= entry_price) {
+      return res.status(400).json({ success: false, message: 'For SELL orders, take_profit must be less than entry price' });
+    }
+
+    // Check if takeprofit already exists (same validation as strategy providers)
+    try {
+      // Check SQL row
+      if (order.take_profit !== null && order.take_profit !== undefined && parseFloat(order.take_profit) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+
+      // Check Redis canonical data
+      const canonicalData = await redisCluster.hgetall(`order_data:${order_id}`);
+      if (canonicalData && canonicalData.take_profit && parseFloat(canonicalData.take_profit) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+
+      // Check user holdings
+      const tag = `copy_follower:${user_id}`;
+      const holdingsData = await redisCluster.hgetall(`user_holdings:{${tag}}:${order_id}`);
+      if (holdingsData && holdingsData.take_profit && parseFloat(holdingsData.take_profit) > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+
+      // Check order triggers
+      const triggersData = await redisCluster.hgetall(`order_triggers:${order_id}`);
+      if (triggersData && (triggersData.take_profit || triggersData.take_profit_compare || triggersData.take_profit_user)) {
+        return res.status(409).json({
+          success: false,
+          message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
+          error_code: 'TAKEPROFIT_ALREADY_EXISTS'
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to check existing takeprofit', { order_id, error: error.message, operationId });
+      // Continue with the operation if check fails to avoid blocking valid requests
+    }
+
+    // Generate take profit ID (same as strategy providers)
+    const takeprofit_id = await idGenerator.generateTakeProfitId();
+    
+    // Update SQL row with takeprofit_id and status
+    try {
+      await order.update({ takeprofit_id, status });
+      
+      // Store in lifecycle service for complete ID history
+      await orderLifecycleService.addLifecycleId(
+        order_id, 
+        'takeprofit_id', 
+        takeprofit_id, 
+        `Copy follower takeprofit added - price: ${take_profit}`
+      );
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit_id before send', { order_id, takeprofit_id, error: e.message });
+    }
+
+    // Build payload to Python (same pattern as strategy providers)
+    const pyPayload = {
+      order_id,
+      symbol: symbol.toUpperCase(),
+      user_id,
+      user_type: 'copy_follower',
+      order_type: order_type.toUpperCase(),
+      order_price: entry_price,
+      take_profit,
+      status,
+      order_status: order_status_in,
+      takeprofit_id
+    };
+    if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    // Call Python service (same as strategy providers)
+    const pyResp = await pythonServiceAxios.post(
+      `${baseUrl}/api/orders/takeprofit/add`,
+      pyPayload
+    );
+
+    const result = pyResp.data?.data || pyResp.data || {};
+
+    logger.info('Copy follower take profit added successfully', {
+      order_id,
+      takeprofit_id,
+      copyFollowerId: user_id,
+      operationId
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+      order_id,
+      takeprofit_id,
+      operationId
+    });
+
+  } catch (error) {
+    logger.error('Add copy follower take profit error', {
+      error: error.message,
+      order_id: req.body?.order_id,
+      operationId
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+}
+
 module.exports = {
   placeStrategyProviderOrder,
   placeStrategyProviderPendingOrder,
@@ -2984,5 +3358,7 @@ module.exports = {
   addStopLossToOrder,
   addTakeProfitToOrder,
   cancelStopLossFromOrder,
-  cancelTakeProfitFromOrder
+  cancelTakeProfitFromOrder,
+  addStopLossToCopyFollowerOrder,
+  addTakeProfitToCopyFollowerOrder
 };
