@@ -38,7 +38,7 @@ class StrategyProviderStatsService {
             order_id: closedOrderId,
             order_user_id: strategyProviderId
           },
-          attributes: ['id', 'order_id', 'order_status', 'net_profit', 'createdAt', 'updatedAt']
+          attributes: ['id', 'order_id', 'order_status', 'net_profit', 'created_at', 'updated_at']
         });
         
         logger.info('Checking specific closed order', {
@@ -59,8 +59,8 @@ class StrategyProviderStatsService {
           order_user_id: strategyProviderId,
           order_status: 'CLOSED'
         },
-        attributes: ['id', 'order_id', 'net_profit', 'createdAt', 'updatedAt'],
-        order: [['createdAt', 'ASC']]
+        attributes: ['id', 'order_id', 'net_profit', 'created_at', 'updated_at'],
+        order: [['created_at', 'ASC']]
       });
 
       logger.info('Retrieved closed orders for statistics calculation', {
@@ -124,7 +124,7 @@ class StrategyProviderStatsService {
     
     // Set first_trade_date only if not already set
     if (!strategyProvider.first_trade_date && closedOrders.length > 0) {
-      statistics.first_trade_date = new Date(closedOrders[0].createdAt);
+      statistics.first_trade_date = new Date(closedOrders[0].created_at);
     }
 
     // 2. Trade counters
@@ -210,7 +210,7 @@ class StrategyProviderStatsService {
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
     const recentOrders = closedOrders.filter(order => 
-      new Date(order.updatedAt) >= threeMonthsAgo
+      new Date(order.updated_at) >= threeMonthsAgo
     );
 
     const threeMonthProfit = recentOrders.reduce((sum, order) => 
@@ -232,7 +232,7 @@ class StrategyProviderStatsService {
   /**
    * Calculate maximum drawdown percentage
    * @param {Object} strategyProvider - Strategy provider account
-   * @param {Array} closedOrders - Array of closed orders (should be sorted by createdAt ASC)
+   * @param {Array} closedOrders - Array of closed orders (should be sorted by created_at ASC)
    * @returns {number} Maximum drawdown percentage
    */
   static calculateMaxDrawdown(strategyProvider, closedOrders) {
