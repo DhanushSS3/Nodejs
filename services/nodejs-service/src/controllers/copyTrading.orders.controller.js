@@ -3119,7 +3119,7 @@ async function addStopLossToCopyFollowerOrder(req, res) {
     const pyPayload = {
       symbol,
       order_type,
-      user_id,
+      user_id: String(user_id), // Ensure user_id is string for Python validation
       user_type: 'copy_follower',
       order_id,
       stop_loss,
@@ -3327,7 +3327,7 @@ async function addTakeProfitToCopyFollowerOrder(req, res) {
     const pyPayload = {
       symbol,
       order_type,
-      user_id,
+      user_id: String(user_id), // Ensure user_id is string for Python validation
       user_type: 'copy_follower',
       order_id,
       take_profit,
