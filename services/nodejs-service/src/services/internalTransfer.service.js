@@ -1,4 +1,4 @@
-const { sequelize } = require('../config/db');
+const sequelize = require('../config/db');
 const LiveUser = require('../models/liveUser.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
@@ -6,7 +6,7 @@ const UserTransaction = require('../models/userTransaction.model');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
-const logger = require('../utils/logger');
+const logger = require('./logger.service');
 
 /**
  * Internal Transfer Service

@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const InternalTransferController = require('../controllers/internalTransfer.controller');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { body, param, query } = require('express-validator');
-const { handleValidationErrors } = require('../middleware/validation');
+const { validateRequest } = require('../middlewares/validation.middleware');
 
 /**
  * @swagger
@@ -122,7 +122,7 @@ const { handleValidationErrors } = require('../middleware/validation');
  *       500:
  *         description: Internal server error
  */
-router.get('/accounts', authenticateToken, InternalTransferController.getUserAccounts);
+router.get('/accounts', authenticateJWT, InternalTransferController.getUserAccounts);
 
 /**
  * @swagger
@@ -169,7 +169,7 @@ router.get('/accounts', authenticateToken, InternalTransferController.getUserAcc
  *         description: Internal server error
  */
 router.post('/validate', 
-  authenticateToken,
+  authenticateJWT,
   [
     body('fromAccountType')
       .isIn(['main', 'strategy_provider', 'copy_follower'])
@@ -189,7 +189,7 @@ router.post('/validate',
       .isInt({ min: 1 })
       .withMessage('toAccountId must be a positive integer')
   ],
-  handleValidationErrors,
+  validateRequest,
   InternalTransferController.validateTransfer
 );
 
@@ -238,7 +238,7 @@ router.post('/validate',
  *         description: Internal server error
  */
 router.post('/execute',
-  authenticateToken,
+  authenticateJWT,
   [
     body('fromAccountType')
       .isIn(['main', 'strategy_provider', 'copy_follower'])
@@ -262,7 +262,7 @@ router.post('/execute',
       .isLength({ max: 500 })
       .withMessage('Notes must be less than 500 characters')
   ],
-  handleValidationErrors,
+  validateRequest,
   InternalTransferController.executeTransfer
 );
 
@@ -335,7 +335,7 @@ router.post('/execute',
  *         description: Internal server error
  */
 router.get('/history',
-  authenticateToken,
+  authenticateJWT,
   [
     query('page')
       .optional()
@@ -354,7 +354,7 @@ router.get('/history',
       .isInt({ min: 1 })
       .withMessage('accountId must be a positive integer')
   ],
-  handleValidationErrors,
+  validateRequest,
   InternalTransferController.getTransferHistory
 );
 
@@ -412,7 +412,7 @@ router.get('/history',
  *         description: Internal server error
  */
 router.get('/account/:accountType/:accountId/balance',
-  authenticateToken,
+  authenticateJWT,
   [
     param('accountType')
       .isIn(['main', 'strategy_provider', 'copy_follower'])
@@ -428,7 +428,7 @@ router.get('/account/:accountType/:accountId/balance',
         return true;
       })
   ],
-  handleValidationErrors,
+  validateRequest,
   InternalTransferController.getAccountBalance
 );
 

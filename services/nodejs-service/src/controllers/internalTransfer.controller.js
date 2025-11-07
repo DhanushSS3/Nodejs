@@ -1,5 +1,5 @@
 const InternalTransferService = require('../services/internalTransfer.service');
-const logger = require('../utils/logger');
+const logger = require('../services/logger.service');
 
 /**
  * Internal Transfer Controller
