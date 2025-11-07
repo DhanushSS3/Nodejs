@@ -3117,12 +3117,11 @@ async function addStopLossToCopyFollowerOrder(req, res) {
 
     // Build payload to Python (same pattern as strategy providers)
     const pyPayload = {
-      order_id,
-      symbol: symbol.toUpperCase(),
+      symbol,
+      order_type,
       user_id,
       user_type: 'copy_follower',
-      order_type: order_type.toUpperCase(),
-      order_price: entry_price,
+      order_id,
       stop_loss,
       status,
       order_status: order_status_in,
@@ -3131,6 +3130,14 @@ async function addStopLossToCopyFollowerOrder(req, res) {
     if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    // Log payload for debugging
+    logger.info('Sending SL payload to Python service', {
+      order_id,
+      payload: pyPayload,
+      url: `${baseUrl}/api/orders/stoploss/add`,
+      operationId
+    });
     
     // Call Python service (same as strategy providers)
     const pyResp = await pythonServiceAxios.post(
@@ -3158,13 +3165,18 @@ async function addStopLossToCopyFollowerOrder(req, res) {
   } catch (error) {
     logger.error('Add copy follower stop loss error', {
       error: error.message,
+      stack: error.stack,
+      response: error.response?.data,
+      status: error.response?.status,
       order_id: req.body?.order_id,
       operationId
     });
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message,
+      details: error.response?.data
     });
   }
 }
@@ -3313,12 +3325,11 @@ async function addTakeProfitToCopyFollowerOrder(req, res) {
 
     // Build payload to Python (same pattern as strategy providers)
     const pyPayload = {
-      order_id,
-      symbol: symbol.toUpperCase(),
+      symbol,
+      order_type,
       user_id,
       user_type: 'copy_follower',
-      order_type: order_type.toUpperCase(),
-      order_price: entry_price,
+      order_id,
       take_profit,
       status,
       order_status: order_status_in,
@@ -3327,6 +3338,14 @@ async function addTakeProfitToCopyFollowerOrder(req, res) {
     if (body.idempotency_key) pyPayload.idempotency_key = body.idempotency_key;
 
     const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    
+    // Log payload for debugging
+    logger.info('Sending TP payload to Python service', {
+      order_id,
+      payload: pyPayload,
+      url: `${baseUrl}/api/orders/takeprofit/add`,
+      operationId
+    });
     
     // Call Python service (same as strategy providers)
     const pyResp = await pythonServiceAxios.post(
@@ -3354,13 +3373,18 @@ async function addTakeProfitToCopyFollowerOrder(req, res) {
   } catch (error) {
     logger.error('Add copy follower take profit error', {
       error: error.message,
+      stack: error.stack,
+      response: error.response?.data,
+      status: error.response?.status,
       order_id: req.body?.order_id,
       operationId
     });
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message,
+      details: error.response?.data
     });
   }
 }
