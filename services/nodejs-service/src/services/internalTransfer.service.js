@@ -56,16 +56,16 @@ class InternalTransferService {
       });
 
       return {
-        mainAccount: {
+        mainAccount: liveUser ? {
           type: 'main',
           id: liveUser.id,
           name: 'Main Trading Account',
           account_number: liveUser.account_number,
           wallet_balance: parseFloat(liveUser.wallet_balance || 0),
           margin: parseFloat(liveUser.margin || 0),
-          net_profit: parseFloat(liveUser.net_profit || 0),
-          available_balance: parseFloat(liveUser.wallet_balance || 0) - parseFloat(liveUser.margin || 0)
-        },
+          available_balance: parseFloat(liveUser.wallet_balance || 0) - parseFloat(liveUser.margin || 0),
+          lifetime_profit_loss: parseFloat(liveUser.net_profit || 0)
+        } : null,
         strategyProviderAccounts: strategyProviderAccounts.map(account => ({
           type: 'strategy_provider',
           id: account.id,
@@ -73,8 +73,8 @@ class InternalTransferService {
           account_number: account.account_number,
           wallet_balance: parseFloat(account.wallet_balance || 0),
           margin: parseFloat(account.margin || 0),
-          net_profit: parseFloat(account.net_profit || 0),
-          available_balance: parseFloat(account.wallet_balance || 0) - parseFloat(account.margin || 0)
+          available_balance: parseFloat(account.wallet_balance || 0) - parseFloat(account.margin || 0),
+          lifetime_profit_loss: parseFloat(account.net_profit || 0)
         })),
         copyFollowerAccounts: copyFollowerAccounts.map(account => ({
           type: 'copy_follower',
@@ -83,8 +83,8 @@ class InternalTransferService {
           account_number: account.account_number,
           wallet_balance: parseFloat(account.wallet_balance || 0),
           margin: parseFloat(account.margin || 0),
-          net_profit: parseFloat(account.net_profit || 0),
           available_balance: parseFloat(account.wallet_balance || 0) - parseFloat(account.margin || 0),
+          lifetime_profit_loss: parseFloat(account.net_profit || 0),
           following_strategy: strategyProviderMap[account.strategy_provider_id] || 'Unknown Strategy'
         }))
       };
@@ -246,7 +246,7 @@ class InternalTransferService {
         case 'main':
           const liveUserOrders = await LiveUserOrder.findAll({
             where: { 
-              user_id: userId, 
+              order_user_id: userId, 
               order_status: ['OPEN', 'PENDING', 'PARTIALLY_FILLED'] 
             },
             attributes: ['margin', 'order_status']
