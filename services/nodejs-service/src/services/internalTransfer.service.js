@@ -122,10 +122,15 @@ class InternalTransferService {
         return { valid: false, error: 'Source account not found or not accessible' };
       }
 
-      // Get destination account details
-      const destinationAccount = await this.getAccountDetails(userId, toAccountType, toAccountId);
-      if (!destinationAccount) {
-        return { valid: false, error: 'Destination account not found or not accessible' };
+      // Get destination account details 
+      // Skip validation for new copy follower account creation (toAccountId will be null)
+      // since the account doesn't exist yet and will be created after validation passes
+      let destinationAccount = null;
+      if (!(toAccountType === 'copy_follower' && toAccountId === null)) {
+        destinationAccount = await this.getAccountDetails(userId, toAccountType, toAccountId);
+        if (!destinationAccount) {
+          return { valid: false, error: 'Destination account not found or not accessible' };
+        }
       }
 
       // Check if source account has sufficient available balance
