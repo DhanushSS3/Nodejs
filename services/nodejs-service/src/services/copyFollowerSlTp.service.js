@@ -224,7 +224,7 @@ class CopyFollowerSlTpService {
       const mockReq = {
         body: {
           order_id: followerOrder.order_id,
-          user_id: followerOrder.order_user_id, // copy_follower_account_id
+          user_id: String(followerOrder.order_user_id), // Ensure string for Python validation
           symbol: followerOrder.symbol,
           order_type: followerOrder.order_type,
           stop_loss: stopLossPrice,
@@ -298,7 +298,7 @@ class CopyFollowerSlTpService {
       const mockReq = {
         body: {
           order_id: followerOrder.order_id,
-          user_id: followerOrder.order_user_id, // copy_follower_account_id
+          user_id: String(followerOrder.order_user_id), // Ensure string for Python validation
           symbol: followerOrder.symbol,
           order_type: followerOrder.order_type,
           take_profit: takeProfitPrice,
