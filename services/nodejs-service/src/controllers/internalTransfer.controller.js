@@ -223,7 +223,8 @@ class InternalTransferController {
         success: true,
         message: 'Transfer completed successfully',
         data: {
-          transactionId: result.transactionId,
+          sourceTransactionId: result.sourceTransactionId,
+          destinationTransactionId: result.destinationTransactionId,
           amount: result.amount,
           sourceAccount: result.sourceAccount,
           destinationAccount: result.destinationAccount

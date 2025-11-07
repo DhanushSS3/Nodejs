@@ -5,6 +5,7 @@ const LiveUser = require('../models/liveUser.model');
 const UserTransaction = require('../models/userTransaction.model');
 const logger = require('../services/logger.service');
 const strategyProviderService = require('../services/strategyProvider.service');
+const InternalTransferService = require('../services/internalTransfer.service');
 const sequelize = require('../config/db');
 
 /**
@@ -169,12 +170,12 @@ async function createFollowerAccount(req, res) {
       });
     }
 
-    // Check if user has sufficient balance and meets minimum balance requirement
-    const userBalance = parseFloat(liveUser.wallet_balance || 0);
+    // Comprehensive validation using internal transfer service logic
     const investmentAmountFloat = parseFloat(investment_amount);
     const minBalance = 100.00;
     
     // Check minimum balance requirement
+    const userBalance = parseFloat(liveUser.wallet_balance || 0);
     if (userBalance < minBalance) {
       return res.status(400).json({
         success: false,
@@ -182,13 +183,44 @@ async function createFollowerAccount(req, res) {
       });
     }
     
-    // Check if user has sufficient balance for investment
-    if (userBalance < investmentAmountFloat) {
+    // Use internal transfer validation for comprehensive margin and balance checks
+    logger.info('Validating copy follower investment transfer', { 
+      userId, 
+      investmentAmount: investmentAmountFloat,
+      userBalance 
+    });
+    
+    const transferValidation = await InternalTransferService.validateTransfer(userId, {
+      fromAccountType: 'main',
+      fromAccountId: userId,
+      toAccountType: 'copy_follower', // Temporary - will be created
+      toAccountId: null, // Will be set after account creation
+      amount: investmentAmountFloat
+    });
+    
+    if (!transferValidation.valid) {
+      logger.warn('Copy follower investment validation failed', {
+        userId,
+        investmentAmount: investmentAmountFloat,
+        error: transferValidation.error
+      });
+      
       return res.status(400).json({
         success: false,
-        message: `Insufficient balance. Required: $${investmentAmountFloat}, Available: $${userBalance}`
+        message: `Investment validation failed: ${transferValidation.error}`,
+        details: {
+          availableBalance: transferValidation.availableBalance,
+          openOrdersCount: transferValidation.openOrdersCount,
+          totalMarginRequired: transferValidation.totalMarginRequired
+        }
       });
     }
+    
+    logger.info('Copy follower investment validation passed', {
+      userId,
+      investmentAmount: investmentAmountFloat,
+      availableBalance: transferValidation.availableBalance
+    });
 
     // Generate unique account number
     const generateAccountNumber = () => {
@@ -351,6 +383,43 @@ async function createFollowerAccount(req, res) {
     }
 
     const followerAccount = result;
+
+    // Update Redis with new balances for portfolio calculator and autocutoff logic
+    try {
+      const sourceAccount = {
+        id: userId,
+        type: 'main',
+        wallet_balance: parseFloat(liveUser.wallet_balance || 0),
+        leverage: parseFloat(liveUser.leverage || 100),
+        group: liveUser.group || 'Standard'
+      };
+      
+      const destinationAccount = {
+        id: followerAccount.id,
+        type: 'copy_follower',
+        wallet_balance: 0, // Starting balance before transfer
+        leverage: parseFloat(followerAccount.leverage || 100),
+        group: followerAccount.group || 'Standard'
+      };
+
+      await InternalTransferService.updateRedisBalances(sourceAccount, destinationAccount, investmentAmountFloat);
+      
+      logger.info('Redis balances updated successfully after copy follower account creation', {
+        userId,
+        followerId: followerAccount.id,
+        investmentAmount: investmentAmountFloat,
+        sourceBalance: sourceAccount.wallet_balance - investmentAmountFloat,
+        destinationBalance: investmentAmountFloat
+      });
+    } catch (redisError) {
+      // Log Redis error but don't fail the operation since DB transaction already committed
+      logger.error('Failed to update Redis balances after copy follower account creation', {
+        userId,
+        followerId: followerAccount.id,
+        investmentAmount: investmentAmountFloat,
+        error: redisError.message
+      });
+    }
 
     logger.info('Copy follower account created', {
       userId,

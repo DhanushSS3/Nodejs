@@ -292,6 +292,15 @@ class InternalTransferService {
           break;
       }
 
+      // Get current account balance first (needed for both portfolio and basic validation)
+      const account = await this.getAccountDetails(userId, accountType, accountId);
+      if (!account) {
+        return { valid: false, error: 'Account not found for margin check' };
+      }
+
+      // Calculate balance after transfer
+      const balanceAfterTransfer = account.wallet_balance - transferAmount;
+
       // Fetch current portfolio data from Python portfolio calculator (Redis)
       const portfolioData = await this.getPortfolioFromRedis(accountType, accountId);
       
@@ -331,15 +340,6 @@ class InternalTransferService {
           }
         }
       }
-
-      // Get current account balance
-      const account = await this.getAccountDetails(userId, accountType, accountId);
-      if (!account) {
-        return { valid: false, error: 'Account not found for margin check' };
-      }
-
-      // Calculate balance after transfer
-      const balanceAfterTransfer = account.wallet_balance - transferAmount;
 
       // Check if remaining balance can cover margin requirements
       if (balanceAfterTransfer < totalMarginRequired) {
@@ -392,8 +392,9 @@ class InternalTransferService {
 
       const { sourceAccount, destinationAccount } = validation;
 
-      // Generate unique transaction ID
-      const transactionId = `TXN${Date.now()}${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+      // Generate unique transaction IDs (separate for source and destination)
+      const sourceTransactionId = `TXN${Date.now()}${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+      const destinationTransactionId = `TXN${Date.now() + 1}${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
 
       // Update source account balance
       await this.updateAccountBalance(
@@ -413,7 +414,7 @@ class InternalTransferService {
 
       // Create transaction records
       const sourceTransactionData = {
-        transaction_id: `${transactionId}_OUT`,
+        transaction_id: sourceTransactionId,
         user_id: userId,
         user_type: this.mapAccountTypeToUserType(sourceAccount.type),
         type: 'transfer',
@@ -436,12 +437,12 @@ class InternalTransferService {
             name: destinationAccount.name,
             account_number: destinationAccount.account_number
           },
-          related_transaction_id: `${transactionId}_IN`
+          related_transaction_id: destinationTransactionId
         }
       };
 
       const destinationTransactionData = {
-        transaction_id: `${transactionId}_IN`,
+        transaction_id: destinationTransactionId,
         user_id: userId,
         user_type: this.mapAccountTypeToUserType(destinationAccount.type),
         type: 'transfer',
@@ -464,7 +465,7 @@ class InternalTransferService {
             name: destinationAccount.name,
             account_number: destinationAccount.account_number
           },
-          related_transaction_id: `${transactionId}_OUT`
+          related_transaction_id: sourceTransactionId
         }
       };
 
@@ -478,21 +479,26 @@ class InternalTransferService {
       try {
         await this.updateRedisBalances(sourceAccount, destinationAccount, amount);
         logger.info('Redis balances updated successfully after transfer', {
-          transactionId,
+          sourceTransactionId,
+          destinationTransactionId,
           sourceAccount: `${sourceAccount.type}:${sourceAccount.id}`,
           destinationAccount: `${destinationAccount.type}:${destinationAccount.id}`
         });
       } catch (redisError) {
         logger.error('Failed to update Redis balances after transfer', {
-          transactionId,
-          error: redisError.message,
+          sourceTransactionId,
+          destinationTransactionId,
+          sourceAccount: `${sourceAccount.type}:${sourceAccount.id}`,
+          destinationAccount: `${destinationAccount.type}:${destinationAccount.id}`,
+          error: redisError.message
           // Transfer was successful, Redis update failure is non-critical
         });
       }
 
       logger.info('Internal transfer completed successfully', {
         userId,
-        transactionId,
+        sourceTransactionId,
+        destinationTransactionId,
         amount,
         fromAccount: `${sourceAccount.type}:${sourceAccount.id}`,
         toAccount: `${destinationAccount.type}:${destinationAccount.id}`
@@ -500,7 +506,8 @@ class InternalTransferService {
 
       return {
         success: true,
-        transactionId,
+        sourceTransactionId,
+        destinationTransactionId,
         amount,
         sourceAccount: {
           type: sourceAccount.type,
