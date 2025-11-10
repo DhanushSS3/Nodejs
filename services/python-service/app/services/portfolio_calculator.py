@@ -16,6 +16,10 @@ import time
 import os
 
 from ..config.redis_config import redis_cluster, redis_pubsub_client
+from ..config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.symbol_margin_aggregator import compute_symbol_margin
 from app.services.portfolio.conversion_utils import convert_to_usd as portfolio_convert_to_usd
@@ -301,15 +305,46 @@ class PortfolioCalculatorListener:
                 
                 for i in range(0, len(order_keys), batch_size):
                     batch_keys = order_keys[i:i + batch_size]
+                    operation_id = generate_operation_id()
+                    
                     async with self._redis_semaphore:  # Limit concurrent Redis operations
-                        pipe = redis_cluster.pipeline()
-                        for k in batch_keys:
-                            pipe.hgetall(k)
-                        batch_orders = await pipe.execute()
-                        orders.extend(batch_orders)
+                        max_retries = 3
+                        retry_delay = 0.01
+                        
+                        for attempt in range(max_retries):
+                            try:
+                                connection_tracker.start_operation(operation_id, "cluster", f"fetch_orders_batch_{len(batch_keys)}")
+                                log_connection_acquire("cluster", f"fetch_orders_batch_{len(batch_keys)}", operation_id)
+                                
+                                async with redis_cluster.pipeline() as pipe:
+                                    for k in batch_keys:
+                                        pipe.hgetall(k)
+                                    batch_orders = await pipe.execute()
+                                
+                                log_pipeline_operation("cluster", f"fetch_orders_batch_{len(batch_keys)}", len(batch_keys), operation_id)
+                                log_connection_release("cluster", f"fetch_orders_batch_{len(batch_keys)}", operation_id)
+                                connection_tracker.end_operation(operation_id, success=True)
+                                orders.extend(batch_orders)
+                                break  # Success, exit retry loop
+                                
+                            except (ConnectionError, TimeoutError, OSError) as e:
+                                log_connection_error("cluster", f"fetch_orders_batch_{len(batch_keys)}", str(e), operation_id, attempt + 1)
+                                if attempt < max_retries - 1:
+                                    await asyncio.sleep(retry_delay)
+                                    retry_delay *= 2  # Exponential backoff
+                                else:
+                                    connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                                    self.logger.error(f"Failed to fetch orders batch after {max_retries} attempts: {e}")
+                                    return []
+                                    
+                            except Exception as e:
+                                log_connection_error("cluster", f"fetch_orders_batch_{len(batch_keys)}", str(e), operation_id)
+                                connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                                self.logger.error(f"Pipeline execution failed for {user_type_str}:{user_id_str}: {e}")
+                                return []
                     
             except Exception as e:
-                self.logger.error(f"Pipeline execution failed for {user_type_str}:{user_id_str}: {e}")
+                self.logger.error(f"Batch processing failed for {user_type_str}:{user_id_str}: {e}")
                 return []
             # Attach order_id and key; symbol is expected in fields; if missing, it will be validated later
             # Filter out QUEUED, REJECTED, CANCELLED, and CLOSED orders for portfolio calculations
@@ -346,35 +381,68 @@ class PortfolioCalculatorListener:
         Returns dict: {symbol: {'bid':..., 'ask':...}}
         """
         prices = {}
+        operation_id = generate_operation_id()
+        
         try:
             if not symbols:
                 return prices
-            # Pipeline HMGET for all symbols to reduce round trips and pool usage
-            pipe = redis_cluster.pipeline()
-            keys = [f"market:{symbol}" for symbol in symbols]
-            for k in keys:
-                pipe.hmget(k, ["bid", "ask"])  # [bid, ask]
-            results = await pipe.execute()
-            for i, symbol in enumerate(symbols):
+            
+            max_retries = 3
+            retry_delay = 0.01
+            
+            for attempt in range(max_retries):
                 try:
-                    vals = results[i]
-                except Exception:
-                    vals = None
-                if vals and len(vals) >= 2:
-                    try:
-                        bid = float(vals[0]) if vals[0] is not None else None
-                    except Exception:
-                        bid = None
-                    try:
-                        ask = float(vals[1]) if vals[1] is not None else None
-                    except Exception:
-                        ask = None
-                    # Only include if any price exists
-                    if (bid is not None) or (ask is not None):
-                        prices[symbol] = {"bid": bid, "ask": ask}
-            return prices
+                    connection_tracker.start_operation(operation_id, "cluster", f"fetch_prices_{len(symbols)}_symbols")
+                    log_connection_acquire("cluster", f"fetch_prices_{len(symbols)}_symbols", operation_id)
+                    
+                    # Pipeline HMGET for all symbols to reduce round trips and pool usage
+                    async with redis_cluster.pipeline() as pipe:
+                        keys = [f"market:{symbol}" for symbol in symbols]
+                        for k in keys:
+                            pipe.hmget(k, ["bid", "ask"])  # [bid, ask]
+                        results = await pipe.execute()
+                    
+                    log_pipeline_operation("cluster", f"fetch_prices_{len(symbols)}_symbols", len(symbols), operation_id)
+                    log_connection_release("cluster", f"fetch_prices_{len(symbols)}_symbols", operation_id)
+                    connection_tracker.end_operation(operation_id, success=True)
+                    
+                    for i, symbol in enumerate(symbols):
+                        try:
+                            vals = results[i]
+                        except Exception:
+                            vals = None
+                        if vals and len(vals) >= 2:
+                            try:
+                                bid = float(vals[0]) if vals[0] is not None else None
+                            except Exception:
+                                bid = None
+                            try:
+                                ask = float(vals[1]) if vals[1] is not None else None
+                            except Exception:
+                                ask = None
+                            # Only include if any price exists
+                            if (bid is not None) or (ask is not None):
+                                prices[symbol] = {"bid": bid, "ask": ask}
+                    return prices
+                    
+                except (ConnectionError, TimeoutError, OSError) as e:
+                    log_connection_error("cluster", f"fetch_prices_{len(symbols)}_symbols", str(e), operation_id, attempt + 1)
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                        self.logger.error(f"Failed to fetch market prices after {max_retries} attempts: {e}")
+                        return prices
+                        
+                except Exception as e:
+                    log_connection_error("cluster", f"fetch_prices_{len(symbols)}_symbols", str(e), operation_id)
+                    connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                    self.logger.error(f"Error fetching market prices for symbols {symbols}: {e}")
+                    return prices
+                    
         except Exception as e:
-            self.logger.error(f"Error fetching market prices for symbols {symbols}: {e}")
+            self.logger.error(f"Unexpected error fetching market prices for symbols {symbols}: {e}")
             return prices
 
     async def _fetch_user_config(self, user_type: str, user_id: str) -> Dict:
@@ -792,8 +860,19 @@ class PortfolioCalculatorListener:
                 except Exception:
                     pass
 
-            # Read existing portfolio margin fields
-            existing_pf = await redis_cluster.hgetall(redis_key)
+            # Read existing portfolio margin fields with connection tracking
+            operation_id = generate_operation_id()
+            connection_tracker.start_operation(operation_id, "cluster", f"fetch_portfolio_{user_type}_{user_id}")
+            log_connection_acquire("cluster", f"fetch_portfolio_{user_type}_{user_id}", operation_id)
+            
+            try:
+                existing_pf = await redis_cluster.hgetall(redis_key)
+                log_connection_release("cluster", f"fetch_portfolio_{user_type}_{user_id}", operation_id)
+                connection_tracker.end_operation(operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"fetch_portfolio_{user_type}_{user_id}", str(e), operation_id)
+                connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                raise
             existing_exe = None
             existing_all = None
             try:
@@ -843,13 +922,34 @@ class PortfolioCalculatorListener:
             chosen_used = (float(total_margin) if (has_queued and (total_margin is not None)) else (float(executed_margin) if executed_margin is not None else 0.0))
             portfolio['used_margin'] = str(round(chosen_used, 2))
 
-            await redis_cluster.hset(redis_key, mapping=portfolio)
+            # Update portfolio with connection tracking
+            update_operation_id = generate_operation_id()
+            connection_tracker.start_operation(update_operation_id, "cluster", f"update_portfolio_{user_type}_{user_id}")
+            log_connection_acquire("cluster", f"update_portfolio_{user_type}_{user_id}", update_operation_id)
+            
+            try:
+                await redis_cluster.hset(redis_key, mapping=portfolio)
+                log_connection_release("cluster", f"update_portfolio_{user_type}_{user_id}", update_operation_id)
+                connection_tracker.end_operation(update_operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"update_portfolio_{user_type}_{user_id}", str(e), update_operation_id)
+                connection_tracker.end_operation(update_operation_id, success=False, error=str(e))
+                raise
+            
             # self.logger.info(f"✅ Portfolio calc: WROTE portfolio to Redis key={redis_key} equity={portfolio.get('equity')} margin_level={portfolio.get('margin_level')}")
             # Publish a lightweight notification for watchers (AutoCutoff, dashboards, etc.)
+            publish_operation_id = generate_operation_id()
+            connection_tracker.start_operation(publish_operation_id, "pubsub", f"publish_portfolio_update_{user_type}_{user_id}")
+            log_connection_acquire("pubsub", f"publish_portfolio_update_{user_type}_{user_id}", publish_operation_id)
+            
             try:
                 await redis_pubsub_client.publish('portfolio_updates', f"{user_type}:{user_id}")
+                log_connection_release("pubsub", f"publish_portfolio_update_{user_type}_{user_id}", publish_operation_id)
+                connection_tracker.end_operation(publish_operation_id, success=True)
                 self.logger.debug(f"📢 Portfolio calc: Published portfolio_updates for {user_type}:{user_id}")
             except Exception as pub_err:
+                log_connection_error("pubsub", f"publish_portfolio_update_{user_type}_{user_id}", str(pub_err), publish_operation_id)
+                connection_tracker.end_operation(publish_operation_id, success=False, error=str(pub_err))
                 self.logger.warning(f"Failed to publish portfolio update for {user_type}:{user_id}: {pub_err}")
         except Exception as e:
             self.logger.error(f"Error updating portfolio for {redis_key}: {e}")

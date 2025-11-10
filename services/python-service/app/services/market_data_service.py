@@ -7,6 +7,10 @@ from ..services.logging.execution_price_logger import (
     log_market_processing, log_redis_issue, log_price_inconsistency, 
     log_missing_price_data
 )
+from ..config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 import logging
 import math
 
@@ -124,11 +128,15 @@ class MarketDataService:
         Args:
             update_shard: List of partial price update tuples for this shard
         """
-        max_retries = 1  # Minimal retries for maximum speed
-        retry_delay = 0.01  # 10ms - ultra-fast retry for zero tick loss
+        max_retries = 3  # Increased retries with proper backoff
+        retry_delay = 0.01  # 10ms initial delay
+        operation_id = generate_operation_id()
         
         for attempt in range(max_retries):
             try:
+                connection_tracker.start_operation(operation_id, "cluster", f"market_shard_{len(update_shard)}_symbols")
+                log_connection_acquire("cluster", f"market_shard_{len(update_shard)}_symbols", operation_id)
+                
                 async with self.redis.pipeline() as pipe:
                     # Batch all operations in pipeline for better performance
                     for symbol, update_fields, timestamp in update_shard:
@@ -143,20 +151,25 @@ class MarketDataService:
                     
                     # Execute all operations atomically
                     results = await pipe.execute()
-                    # logger.info(f"✅ REDIS_STORAGE: Successfully stored {len(update_shard)} symbols to Redis")
-                    # logger.info(f"✅ REDIS_STORAGE: Pipeline results: {len(results)} operations completed")
-                    return  # Success, exit retry loop
+                    
+                log_pipeline_operation("cluster", f"market_shard_{len(update_shard)}_symbols", len(update_shard) * 2, operation_id)
+                log_connection_release("cluster", f"market_shard_{len(update_shard)}_symbols", operation_id)
+                connection_tracker.end_operation(operation_id, success=True)
+                return  # Success, exit retry loop
                     
             except (ConnectionError, TimeoutError, OSError) as e:
+                log_connection_error("cluster", f"market_shard_{len(update_shard)}_symbols", str(e), operation_id, attempt + 1)
                 if attempt < max_retries - 1:
                     logger.warning(f"Redis connection error on attempt {attempt + 1}/{max_retries}: {e}. Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
+                    connection_tracker.end_operation(operation_id, success=False, error=str(e))
                     logger.error(f"Failed to process partial update shard after {max_retries} attempts: {e}")
-                    # Continue processing other shards even if this one fails
                     
             except Exception as e:
+                log_connection_error("cluster", f"market_shard_{len(update_shard)}_symbols", str(e), operation_id)
+                connection_tracker.end_operation(operation_id, success=False, error=str(e))
                 logger.error(f"Unexpected error processing partial update shard: {e}")
                 break  # Don't retry for unexpected errors
     
@@ -402,26 +415,52 @@ class MarketDataService:
             
         logger.debug(f"Publishing price update notifications for {len(symbols_in_message)} unique symbols")
         
-        # Batch publish notifications for better performance
-        try:
-            # Use pipeline for pub/sub operations to reduce network round trips
-            async with self.pubsub_redis.pipeline() as pipe:
-                for symbol in symbols_in_message:
-                    pipe.publish("market_price_updates", symbol)
+        # Batch publish notifications for better performance with retry and backoff
+        max_retries = 3
+        retry_delay = 0.01
+        operation_id = generate_operation_id()
+        
+        for attempt in range(max_retries):
+            try:
+                connection_tracker.start_operation(operation_id, "pubsub", f"publish_notifications_{len(symbols_in_message)}_symbols")
+                log_connection_acquire("pubsub", f"publish_notifications_{len(symbols_in_message)}_symbols", operation_id)
                 
-                # Execute all publications at once
-                await pipe.execute()
+                # Use pipeline for pub/sub operations to reduce network round trips
+                async with self.pubsub_redis.pipeline() as pipe:
+                    for symbol in symbols_in_message:
+                        pipe.publish("market_price_updates", symbol)
+                    
+                    # Execute all publications at once
+                    await pipe.execute()
+                    
+                log_pipeline_operation("pubsub", f"publish_notifications_{len(symbols_in_message)}_symbols", len(symbols_in_message), operation_id)
+                log_connection_release("pubsub", f"publish_notifications_{len(symbols_in_message)}_symbols", operation_id)
+                connection_tracker.end_operation(operation_id, success=True)
                 
-            logger.debug(f"Batch published {len(symbols_in_message)} symbol notifications")
-            
-        except Exception as e:
-            logger.error(f"Failed to batch publish notifications: {e}")
-            # Fallback to individual publishing
-            for symbol in symbols_in_message:
-                try:
-                    await self.pubsub_redis.publish("market_price_updates", symbol)
-                except Exception as symbol_error:
-                    logger.error(f"Failed to publish symbol {symbol}: {symbol_error}")
+                logger.debug(f"Batch published {len(symbols_in_message)} symbol notifications")
+                return  # Success, exit retry loop
+                
+            except (ConnectionError, TimeoutError, OSError) as e:
+                log_connection_error("pubsub", f"publish_notifications_{len(symbols_in_message)}_symbols", str(e), operation_id, attempt + 1)
+                if attempt < max_retries - 1:
+                    logger.warning(f"PubSub connection error on attempt {attempt + 1}/{max_retries}: {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                    logger.error(f"Failed to batch publish notifications after {max_retries} attempts: {e}")
+                    # Fallback to individual publishing
+                    for symbol in symbols_in_message:
+                        try:
+                            await self.pubsub_redis.publish("market_price_updates", symbol)
+                        except Exception as symbol_error:
+                            logger.error(f"Failed to publish symbol {symbol}: {symbol_error}")
+                    
+            except Exception as e:
+                log_connection_error("pubsub", f"publish_notifications_{len(symbols_in_message)}_symbols", str(e), operation_id)
+                connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                logger.error(f"Unexpected error publishing notifications: {e}")
+                break  # Don't retry for unexpected errors
     
     def is_price_stale(self, timestamp: int) -> bool:
         """Check if price timestamp is stale (>5s old)"""

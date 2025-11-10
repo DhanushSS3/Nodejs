@@ -14,6 +14,10 @@ from collections import deque
 from app.services.market_data_service import MarketDataService
 from app.services.logging.execution_price_logger import log_websocket_issue, log_market_processing
 from app.config.redis_config import redis_pubsub_client
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 import threading
 
 # Configure logging
@@ -207,28 +211,78 @@ class ProtobufMarketListener:
                 continue
 
             async with self.redis_semaphore:
-                try:
-                    async with self.market_service.redis.pipeline() as pipe:
-                        ts = int(time.time() * 1000)
-                        for symbol, bid, ask in updates:
-                            pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
-                        await pipe.execute()
+                # Data pipeline operation
+                data_operation_id = generate_operation_id()
+                max_retries = 3
+                retry_delay = 0.01
+                
+                for attempt in range(max_retries):
+                    try:
+                        connection_tracker.start_operation(data_operation_id, "cluster", f"market_data_batch_{len(updates)}")
+                        log_connection_acquire("cluster", f"market_data_batch_{len(updates)}", data_operation_id)
+                        
+                        async with self.market_service.redis.pipeline() as pipe:
+                            ts = int(time.time() * 1000)
+                            for symbol, bid, ask in updates:
+                                pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
+                            await pipe.execute()
+                        
+                        log_pipeline_operation("cluster", f"market_data_batch_{len(updates)}", len(updates), data_operation_id)
+                        log_connection_release("cluster", f"market_data_batch_{len(updates)}", data_operation_id)
+                        connection_tracker.end_operation(data_operation_id, success=True)
+                        break  # Success, exit retry loop
+                        
+                    except (ConnectionError, TimeoutError, OSError) as e:
+                        log_connection_error("cluster", f"market_data_batch_{len(updates)}", str(e), data_operation_id, attempt + 1)
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            connection_tracker.end_operation(data_operation_id, success=False, error=str(e))
+                            logger.error(f"Failed to write market data after {max_retries} attempts: {e}")
+                            
+                    except Exception as e:
+                        log_connection_error("cluster", f"market_data_batch_{len(updates)}", str(e), data_operation_id)
+                        connection_tracker.end_operation(data_operation_id, success=False, error=str(e))
+                        logger.error(f"Redis writer pipeline error: {e}")
+                        break
+                
+                # Publish updated symbols to notify portfolio calculator and other subscribers
+                unique_symbols = list(set([symbol for symbol, _, _ in updates]))
+                if unique_symbols:
+                    pubsub_operation_id = generate_operation_id()
                     
-                    # Publish updated symbols to notify portfolio calculator and other subscribers
-                    unique_symbols = list(set([symbol for symbol, _, _ in updates]))
-                    if unique_symbols:
+                    for attempt in range(max_retries):
                         try:
+                            connection_tracker.start_operation(pubsub_operation_id, "pubsub", f"publish_batch_{len(unique_symbols)}")
+                            log_connection_acquire("pubsub", f"publish_batch_{len(unique_symbols)}", pubsub_operation_id)
+                            
                             async with redis_pubsub_client.pipeline() as pub_pipe:
                                 for sym in unique_symbols:
                                     pub_pipe.publish("market_price_updates", sym)
                                 await pub_pipe.execute()
-                            logger.debug(f"Published {len(unique_symbols)} symbol updates to market_price_updates channel")
-                        except Exception as pub_err:
-                            logger.warning(f"Failed to publish market_price_updates: {pub_err}")
                             
-                except Exception as e:
-                    logger.error(f"Redis writer pipeline error: {e}")
-                    await asyncio.sleep(0.05)
+                            log_pipeline_operation("pubsub", f"publish_batch_{len(unique_symbols)}", len(unique_symbols), pubsub_operation_id)
+                            log_connection_release("pubsub", f"publish_batch_{len(unique_symbols)}", pubsub_operation_id)
+                            connection_tracker.end_operation(pubsub_operation_id, success=True)
+                            logger.debug(f"Published {len(unique_symbols)} symbol updates to market_price_updates channel")
+                            break  # Success, exit retry loop
+                            
+                        except (ConnectionError, TimeoutError, OSError) as e:
+                            log_connection_error("pubsub", f"publish_batch_{len(unique_symbols)}", str(e), pubsub_operation_id, attempt + 1)
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                            else:
+                                connection_tracker.end_operation(pubsub_operation_id, success=False, error=str(e))
+                                logger.warning(f"Failed to publish market_price_updates after {max_retries} attempts: {e}")
+                                
+                        except Exception as pub_err:
+                            log_connection_error("pubsub", f"publish_batch_{len(unique_symbols)}", str(pub_err), pubsub_operation_id)
+                            connection_tracker.end_operation(pubsub_operation_id, success=False, error=str(pub_err))
+                            logger.warning(f"Failed to publish market_price_updates: {pub_err}")
+                            break
+                            
             # Periodic debug (every ~1s): queue size and last msg age
             try:
                 if int(time.time() * 1000) // 1000 % 1 == 0:

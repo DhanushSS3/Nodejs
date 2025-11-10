@@ -1,12 +1,17 @@
 import os
 import asyncio
 import logging
+import uuid
 from typing import Dict, Any, Optional
 
 from app.config.redis_config import redis_cluster
 from app.services.orders.order_repository import fetch_group_data, fetch_user_config, fetch_user_portfolio
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.orders.service_provider_client import send_provider_order
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,7 @@ async def register_provider_pending(info: Dict[str, Any]) -> None:
     Register a provider pending order for continuous margin monitoring.
     Expected fields in info: order_id, symbol, order_type, order_quantity, user_id, user_type, group
     """
+    operation_id = generate_operation_id()
     try:
         order_id = str(info.get("order_id"))
         symbol = str(info.get("symbol") or "").upper()
@@ -33,19 +39,31 @@ async def register_provider_pending(info: Dict[str, Any]) -> None:
         group = str(info.get("group") or "Standard")
         if not order_id:
             return
-        p = redis_cluster.pipeline()
-        p.sadd(SET_ACTIVE, order_id)
-        p.hset(_hkey(order_id), mapping={
-            "symbol": symbol,
-            "order_type": order_type,
-            "order_quantity": order_qty,
-            "user_id": user_id,
-            "user_type": user_type,
-            "group": group,
-            "created_at": str(int(asyncio.get_event_loop().time() * 1000)),
-        })
-        await p.execute()
-    except Exception:
+        
+        # Use async context manager to ensure connection is always returned to pool
+        connection_tracker.start_operation(operation_id, "cluster", f"register_pending_{order_id}")
+        log_connection_acquire("cluster", f"register_pending_{order_id}", operation_id)
+        
+        async with redis_cluster.pipeline() as pipe:
+            pipe.sadd(SET_ACTIVE, order_id)
+            pipe.hset(_hkey(order_id), mapping={
+                "symbol": symbol,
+                "order_type": order_type,
+                "order_quantity": order_qty,
+                "user_id": user_id,
+                "user_type": user_type,
+                "group": group,
+                "created_at": str(int(asyncio.get_event_loop().time() * 1000)),
+            })
+            await pipe.execute()
+            
+        log_pipeline_operation("cluster", f"register_pending_{order_id}", 2, operation_id)
+        log_connection_release("cluster", f"register_pending_{order_id}", operation_id)
+        connection_tracker.end_operation(operation_id, success=True)
+        
+    except Exception as e:
+        log_connection_error("cluster", f"register_pending_{info.get('order_id')}", str(e), operation_id)
+        connection_tracker.end_operation(operation_id, success=False, error=str(e))
         logger.exception("register_provider_pending failed for %s", info.get("order_id"))
 
 
