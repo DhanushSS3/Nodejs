@@ -251,9 +251,33 @@ async function applyDbUpdate(msg) {
     // Trigger fields
     stop_loss,
     take_profit,
+    // New fields from pending monitor
+    symbol,
   } = msg || {};
   if (!order_id || !user_id || !user_type) {
     throw new Error('Missing required fields in DB update message');
+  }
+
+  // Deduplication for ORDER_PENDING_TRIGGERED to prevent continuous processing
+  if (String(type) === 'ORDER_PENDING_TRIGGERED') {
+    const dedupKey = `pending_triggered:${String(order_id)}`;
+    try {
+      const alreadyProcessed = await redisCluster.set(dedupKey, '1', 'EX', 30, 'NX');
+      if (!alreadyProcessed) {
+        logger.debug('Skipping duplicate ORDER_PENDING_TRIGGERED message', {
+          order_id: String(order_id),
+          user_id: String(user_id),
+          user_type: String(user_type)
+        });
+        return; // Skip processing this duplicate message
+      }
+    } catch (error) {
+      logger.warn('Failed to check deduplication for ORDER_PENDING_TRIGGERED', {
+        order_id: String(order_id),
+        error: error.message
+      });
+      // Continue processing if Redis fails
+    }
   }
 
   const OrderModel = getOrderModel(String(user_type));
@@ -463,6 +487,10 @@ async function applyDbUpdate(msg) {
     if (order_type) updateFields.order_type = normalizeOrderType(order_type);
     if (order_price != null) updateFields.order_price = String(order_price);
     if (order_quantity != null) updateFields.order_quantity = String(order_quantity);
+    // Update symbol if provided (especially for ORDER_PENDING_TRIGGERED)
+    if (symbol && String(type) === 'ORDER_PENDING_TRIGGERED') {
+      updateFields.symbol = String(symbol).toUpperCase();
+    }
     if (margin != null && Number.isFinite(Number(margin))) {
       updateFields.margin = Number(margin).toFixed(8);
     }
@@ -751,6 +779,22 @@ async function applyDbUpdate(msg) {
           }
           if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_price') && row?.order_price != null) {
             updateForWs.order_price = String(row.order_price);
+          }
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
+            updateForWs.order_quantity = String(row.order_quantity);
+          }
+        }
+        // Hydrate WS update for ORDER_PENDING_TRIGGERED with fields from message
+        if (String(type) === 'ORDER_PENDING_TRIGGERED') {
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && symbol) {
+            updateForWs.symbol = String(symbol).toUpperCase();
+          }
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && order_quantity) {
+            updateForWs.order_quantity = String(order_quantity);
+          }
+          // Also include from row if message fields are missing
+          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && row?.symbol) {
+            updateForWs.symbol = String(row.symbol).toUpperCase();
           }
           if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
             updateForWs.order_quantity = String(row.order_quantity);

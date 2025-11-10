@@ -487,40 +487,51 @@ class CopyTradingService {
       // Apply SL/TP to copy follower order if execution was successful
       if (executionResult.success) {
         try {
-          logger.info('Applying SL/TP to copy follower order', {
+          logger.info('Monitoring equity for copy follower account', {
             orderId: followerOrder.order_id,
             followerId: follower.id,
+            copyFollowerAccountId: follower.id,
             slMode: follower.copy_sl_mode,
             tpMode: follower.copy_tp_mode
           });
 
-          const slTpResult = await CopyFollowerSlTpService.applySlTpToFollowerOrder(
+          const equityMonitorResult = await CopyFollowerSlTpService.monitorEquityAfterOrderPlacement(
             followerOrder, 
             follower, 
             executionResult
           );
 
-          if (slTpResult.success) {
-            logger.info('SL/TP successfully applied to copy follower order', {
-              orderId: followerOrder.order_id,
-              flow: slTpResult.flow,
-              stopLossResult: slTpResult.stopLossResult,
-              takeProfitResult: slTpResult.takeProfitResult
-            });
+          if (equityMonitorResult.success) {
+            if (equityMonitorResult.autoStopTriggered) {
+              logger.warn('Auto stop copying triggered for copy follower account', {
+                orderId: followerOrder.order_id,
+                copyFollowerAccountId: follower.id,
+                reason: equityMonitorResult.reason,
+                thresholdType: equityMonitorResult.thresholdType,
+                currentEquity: equityMonitorResult.currentEquity
+              });
+            } else {
+              logger.info('Equity monitoring completed - account within thresholds', {
+                orderId: followerOrder.order_id,
+                copyFollowerAccountId: follower.id,
+                currentEquity: equityMonitorResult.currentEquity,
+                withinThresholds: equityMonitorResult.withinThresholds
+              });
+            }
           } else {
-            logger.warn('Failed to apply SL/TP to copy follower order', {
+            logger.warn('Failed to monitor equity for copy follower account', {
               orderId: followerOrder.order_id,
-              error: slTpResult.error,
-              errors: slTpResult.errors
+              copyFollowerAccountId: follower.id,
+              error: equityMonitorResult.error
             });
           }
 
-        } catch (slTpError) {
-          // SL/TP failure should not fail the entire copy operation
-          logger.error('Error applying SL/TP to copy follower order', {
+        } catch (equityMonitorError) {
+          // Equity monitoring failure should not fail the entire copy operation
+          logger.error('Error monitoring equity for copy follower account', {
             orderId: followerOrder.order_id,
-            followerId: follower.id,
-            error: slTpError.message
+            copyFollowerAccountId: follower.id,
+            error: equityMonitorError.message
           });
         }
       }

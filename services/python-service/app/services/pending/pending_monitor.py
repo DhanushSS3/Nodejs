@@ -252,6 +252,9 @@ class PendingMonitor:
                     "order_status": "OPEN",
                     "order_type": side,
                     "order_price": str(exec_px),
+                    # Add missing fields to prevent null values in websocket
+                    "symbol": str(symbol).upper(),
+                    "order_quantity": str(order_qty),
                 }
                 await self._publish(DB_UPDATE_QUEUE, db_update_payload)
                 logger.info(f"Sent immediate DB update for pending order trigger: {order_id}")
@@ -335,7 +338,7 @@ class PendingMonitor:
                     mkt_px = ask or 0.0
                     ok_margin, needed = await self._validate_margin(user_type, user_id, group, symbol, side, order_qty, mkt_px)
                     if not ok_margin:
-                        await self._remove_pending(symbol, order_type, oid)
+                        await self.remove_pending(symbol, order_type, oid)
                         await self._reject_pending(oid, user_type, user_id, reason="insufficient_margin_pretrigger")
                         continue
                     # Execute
@@ -347,7 +350,7 @@ class PendingMonitor:
                         hs_val = 0.0
                     exec_px = (float(ask or 0.0) + hs_val)
                     await self._execute_pending(oid, user_type, user_id, symbol, order_type, order_qty, exec_px, group)
-                    await self._remove_pending(symbol, order_type, oid)
+                    await self.remove_pending(symbol, order_type, oid)
                 finally:
                     # Best-effort unlock
                     try:
