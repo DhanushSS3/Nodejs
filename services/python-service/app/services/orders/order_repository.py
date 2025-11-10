@@ -132,8 +132,8 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
     used_legacy = False
     try:
         data = await redis_cluster.hgetall(tagged_key)
-        if user_type == "strategy_provider":
-            logger.info("fetch_user_config: Tagged key result for %s:%s: %s", user_type, user_id, data)
+        # if user_type == "strategy_provider":
+            # logger.info("fetch_user_config: Tagged key result for %s:%s: %s", user_type, user_id, data)
         # Only log if no data found (potential issue)
         if not data:
             _TIMING_LOG.info('{"component":"redis_tagged_empty","user_type":"%s","user_id":"%s","tagged_key":"%s"}',
