@@ -808,6 +808,288 @@ async function updateFollowerAccountStrict(req, res) {
 }
 
 /**
+ * Update copy follower SL/TP settings for future orders
+ */
+async function updateFollowerSlTpSettings(req, res) {
+  try {
+    const user = req.user || {};
+    const userId = user.sub || user.user_id || user.id;
+    const { id } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    // Verify account belongs to user and is active
+    const followerAccount = await CopyFollowerAccount.findOne({
+      where: {
+        id: id,
+        user_id: userId,
+        status: 1,
+        is_active: 1
+      },
+      include: [{
+        model: StrategyProviderAccount,
+        as: 'strategyProvider',
+        attributes: ['id', 'strategy_name', 'account_number']
+      }]
+    });
+
+    if (!followerAccount) {
+      return res.status(404).json({
+        success: false,
+        message: 'Copy follower account not found or does not belong to you'
+      });
+    }
+
+    const {
+      copy_sl_mode,
+      sl_percentage,
+      sl_amount,
+      copy_tp_mode,
+      tp_percentage,
+      tp_amount
+    } = req.body;
+
+    const updateFields = {};
+    const validationErrors = [];
+
+    // Validate and update Stop Loss settings
+    if (copy_sl_mode !== undefined) {
+      if (!['none', 'percentage', 'amount'].includes(copy_sl_mode)) {
+        validationErrors.push('copy_sl_mode must be one of: none, percentage, amount');
+      } else {
+        updateFields.copy_sl_mode = copy_sl_mode;
+        
+        if (copy_sl_mode === 'percentage') {
+          if (sl_percentage === undefined || sl_percentage === null) {
+            validationErrors.push('sl_percentage is required when copy_sl_mode is percentage');
+          } else {
+            const slPercent = parseFloat(sl_percentage);
+            if (isNaN(slPercent) || slPercent <= 0 || slPercent > 100) {
+              validationErrors.push('sl_percentage must be between 0.01 and 100.00');
+            } else {
+              updateFields.sl_percentage = slPercent;
+              updateFields.sl_amount = null; // Clear amount when using percentage
+            }
+          }
+        } else if (copy_sl_mode === 'amount') {
+          if (sl_amount === undefined || sl_amount === null) {
+            validationErrors.push('sl_amount is required when copy_sl_mode is amount');
+          } else {
+            const slAmt = parseFloat(sl_amount);
+            if (isNaN(slAmt) || slAmt <= 0) {
+              validationErrors.push('sl_amount must be greater than 0');
+            } else {
+              updateFields.sl_amount = slAmt;
+              updateFields.sl_percentage = null; // Clear percentage when using amount
+            }
+          }
+        } else {
+          // copy_sl_mode === 'none'
+          updateFields.sl_percentage = null;
+          updateFields.sl_amount = null;
+        }
+      }
+    }
+
+    // Validate and update Take Profit settings
+    if (copy_tp_mode !== undefined) {
+      if (!['none', 'percentage', 'amount'].includes(copy_tp_mode)) {
+        validationErrors.push('copy_tp_mode must be one of: none, percentage, amount');
+      } else {
+        updateFields.copy_tp_mode = copy_tp_mode;
+        
+        if (copy_tp_mode === 'percentage') {
+          if (tp_percentage === undefined || tp_percentage === null) {
+            validationErrors.push('tp_percentage is required when copy_tp_mode is percentage');
+          } else {
+            const tpPercent = parseFloat(tp_percentage);
+            if (isNaN(tpPercent) || tpPercent <= 0 || tpPercent > 1000) {
+              validationErrors.push('tp_percentage must be between 0.01 and 1000.00');
+            } else {
+              updateFields.tp_percentage = tpPercent;
+              updateFields.tp_amount = null; // Clear amount when using percentage
+            }
+          }
+        } else if (copy_tp_mode === 'amount') {
+          if (tp_amount === undefined || tp_amount === null) {
+            validationErrors.push('tp_amount is required when copy_tp_mode is amount');
+          } else {
+            const tpAmt = parseFloat(tp_amount);
+            if (isNaN(tpAmt) || tpAmt <= 0) {
+              validationErrors.push('tp_amount must be greater than 0');
+            } else {
+              updateFields.tp_amount = tpAmt;
+              updateFields.tp_percentage = null; // Clear percentage when using amount
+            }
+          }
+        } else {
+          // copy_tp_mode === 'none'
+          updateFields.tp_percentage = null;
+          updateFields.tp_amount = null;
+        }
+      }
+    }
+
+    // Return validation errors if any
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: validationErrors
+      });
+    }
+
+    // Ensure at least one field is being updated
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No SL/TP settings provided for update'
+      });
+    }
+
+    // Update the account
+    await CopyFollowerAccount.update(updateFields, {
+      where: { id: id }
+    });
+
+    // Get updated account for response
+    const updatedAccount = await CopyFollowerAccount.findByPk(id, {
+      attributes: [
+        'id', 'account_name', 'copy_sl_mode', 'sl_percentage', 'sl_amount',
+        'copy_tp_mode', 'tp_percentage', 'tp_amount'
+      ]
+    });
+
+    logger.info('Copy follower SL/TP settings updated', {
+      userId,
+      followerId: id,
+      strategyProvider: followerAccount.strategyProvider?.strategy_name,
+      updateFields
+    });
+
+    res.json({
+      success: true,
+      message: 'SL/TP settings updated successfully. These settings will apply to future orders.',
+      data: {
+        account_id: updatedAccount.id,
+        account_name: updatedAccount.account_name,
+        stop_loss_settings: {
+          mode: updatedAccount.copy_sl_mode,
+          percentage: updatedAccount.sl_percentage,
+          amount: updatedAccount.sl_amount
+        },
+        take_profit_settings: {
+          mode: updatedAccount.copy_tp_mode,
+          percentage: updatedAccount.tp_percentage,
+          amount: updatedAccount.tp_amount
+        }
+      },
+      updated_fields: Object.keys(updateFields)
+    });
+
+  } catch (error) {
+    logger.error('Failed to update copy follower SL/TP settings', {
+      userId: req.user?.id,
+      followerId: req.params?.id,
+      error: error.message
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update SL/TP settings',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Get copy follower SL/TP settings
+ */
+async function getFollowerSlTpSettings(req, res) {
+  try {
+    const user = req.user || {};
+    const userId = user.sub || user.user_id || user.id;
+    const { id } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    // Verify account belongs to user
+    const followerAccount = await CopyFollowerAccount.findOne({
+      where: {
+        id: id,
+        user_id: userId,
+        status: 1,
+        is_active: 1
+      },
+      attributes: [
+        'id', 'account_name', 'account_number', 'investment_amount',
+        'copy_sl_mode', 'sl_percentage', 'sl_amount',
+        'copy_tp_mode', 'tp_percentage', 'tp_amount'
+      ],
+      include: [{
+        model: StrategyProviderAccount,
+        as: 'strategyProvider',
+        attributes: ['id', 'strategy_name', 'account_number']
+      }]
+    });
+
+    if (!followerAccount) {
+      return res.status(404).json({
+        success: false,
+        message: 'Copy follower account not found or does not belong to you'
+      });
+    }
+
+    logger.info('Copy follower SL/TP settings retrieved', {
+      userId,
+      followerId: id,
+      strategyProvider: followerAccount.strategyProvider?.strategy_name
+    });
+
+    res.json({
+      success: true,
+      message: 'SL/TP settings retrieved successfully',
+      data: {
+        account_info: {
+          id: followerAccount.id,
+          account_name: followerAccount.account_name,
+          account_number: followerAccount.account_number,
+          investment_amount: followerAccount.investment_amount,
+          strategy_provider: followerAccount.strategyProvider
+        },
+        stop_loss_settings: {
+          mode: followerAccount.copy_sl_mode || 'none',
+          percentage: followerAccount.sl_percentage,
+          amount: followerAccount.sl_amount
+        },
+        take_profit_settings: {
+          mode: followerAccount.copy_tp_mode || 'none',
+          percentage: followerAccount.tp_percentage,
+          amount: followerAccount.tp_amount
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to get copy follower SL/TP settings', {
+      userId: req.user?.id,
+      followerId: req.params?.id,
+      error: error.message
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get SL/TP settings',
+      error: error.message
+    });
+  }
+}
+
+/**
  * Stop following a strategy (close follower account)
  */
 async function stopFollowing(req, res) {
@@ -1076,6 +1358,8 @@ module.exports = {
   getFollowerAccounts,
   updateFollowerAccount,
   updateFollowerAccountStrict,
+  updateFollowerSlTpSettings,
+  getFollowerSlTpSettings,
   stopFollowing,
   getCopyTradingOverview
 };

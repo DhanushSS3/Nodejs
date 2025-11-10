@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const copyTradingController = require('../controllers/copyTrading.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+const { validateSlTpSettingsUpdate, validateSlTpSettingsGet } = require('../middlewares/copyTrading.validation');
 
 /**
  * Copy Trading Routes
@@ -30,6 +31,20 @@ router.put('/accounts/:follower_id',
 router.put('/accounts/:id', 
   authenticateJWT,
   copyTradingController.updateFollowerAccountStrict
+);
+
+// Get follower account SL/TP settings
+router.get('/accounts/:id/sl-tp-settings', 
+  authenticateJWT,
+  validateSlTpSettingsGet,
+  copyTradingController.getFollowerSlTpSettings
+);
+
+// Update follower account SL/TP settings for future orders
+router.put('/accounts/:id/sl-tp-settings', 
+  authenticateJWT,
+  validateSlTpSettingsUpdate,
+  copyTradingController.updateFollowerSlTpSettings
 );
 
 // Stop following a strategy
