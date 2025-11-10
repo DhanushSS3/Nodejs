@@ -10,10 +10,14 @@ import orjson
 import aio_pika
 
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.commission_calculator import compute_entry_commission
-from app.services.orders.order_repository import fetch_group_data, fetch_user_orders
+from app.services.orders.order_repository import fetch_group_data, fetch_user_orders, place_order_atomic
 from app.services.groups.group_config_helper import get_group_config_with_fallback
 from app.services.logging.provider_logger import (
     get_worker_open_logger,
@@ -125,37 +129,51 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
         "provider_ts": str(ts) if ts is not None else "",
     }
 
-    # Update both keys in a pipeline with retry logic
+    # Update both keys in a pipeline with retry logic and proper connection management
     max_retries = 3
+    retry_delay = 0.01
+    operation_id = generate_operation_id()
+    
     for attempt in range(max_retries):
         try:
-            pipe = redis_cluster.pipeline()
-            # Filter out None values to avoid writing 'order_type': None
-            mapping_filtered = {k: v for k, v in mapping_common.items() if v is not None}
-            pipe.hset(order_data_key, mapping=mapping_filtered)
-            pipe.hset(order_key, mapping=mapping_filtered)
-            # Ensure order is in the active index (idempotent safety)
-            pipe.sadd(index_key, order_id)
-            # Ensure symbol_holders has this user for this symbol (idempotent safety)
-            try:
-                symbol = str(payload.get("symbol") or "").upper()
-                if symbol:
-                    sym_set = f"symbol_holders:{symbol}:{user_type}"
-                    pipe.sadd(sym_set, hash_tag)
-            except Exception:
-                pass
-            await pipe.execute()
+            connection_tracker.start_operation(operation_id, "cluster", f"open_redis_update_{order_id}")
+            log_connection_acquire("cluster", f"open_redis_update_{order_id}", operation_id)
+            
+            async with redis_cluster.pipeline() as pipe:
+                # Filter out None values to avoid writing 'order_type': None
+                mapping_filtered = {k: v for k, v in mapping_common.items() if v is not None}
+                pipe.hset(order_data_key, mapping=mapping_filtered)
+                pipe.hset(order_key, mapping=mapping_filtered)
+                # Ensure order is in the active index (idempotent safety)
+                pipe.sadd(index_key, order_id)
+                # Ensure symbol_holders has this user for this symbol (idempotent safety)
+                try:
+                    symbol = str(payload.get("symbol") or "").upper()
+                    if symbol:
+                        sym_set = f"symbol_holders:{symbol}:{user_type}"
+                        pipe.sadd(sym_set, hash_tag)
+                except Exception:
+                    pass
+                await pipe.execute()
+            
+            log_pipeline_operation("cluster", f"open_redis_update_{order_id}", 3 + (1 if symbol else 0), operation_id)
+            log_connection_release("cluster", f"open_redis_update_{order_id}", operation_id)
+            connection_tracker.end_operation(operation_id, success=True)
             break  # Success, exit retry loop
+            
         except Exception as e:
+            log_connection_error("cluster", f"open_redis_update_{order_id}", str(e), operation_id, attempt + 1)
             if attempt == max_retries - 1:
                 # Last attempt failed, re-raise
+                connection_tracker.end_operation(operation_id, success=False, error=str(e))
                 raise
             logger.warning(
                 "[OPEN:REDIS_UPDATE_RETRY] order_id=%s attempt=%d error=%s",
                 order_id, attempt + 1, str(e)
             )
             # Wait briefly before retry (exponential backoff)
-            await asyncio.sleep(0.1 * (2 ** attempt))
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 2
 
     return {
         "order_id": order_id,
@@ -198,13 +216,25 @@ async def _recompute_margins(order_ctx: Dict[str, Any], payload: Dict[str, Any])
             final_qty = float(payload.get("order_quantity"))
             qty_source = "payload"
         else:
-            # Fallback: fetch from canonical
+            # Fallback: fetch from canonical with connection tracking
             try:
                 order_id_lookup = str(payload.get("order_id"))
-                raw_qty = await redis_cluster.hget(f"order_data:{order_id_lookup}", "order_quantity")
-                if raw_qty is not None:
-                    final_qty = float(raw_qty)
-                    qty_source = "canonical"
+                qty_operation_id = generate_operation_id()
+                connection_tracker.start_operation(qty_operation_id, "cluster", f"fetch_qty_{order_id_lookup}")
+                log_connection_acquire("cluster", f"fetch_qty_{order_id_lookup}", qty_operation_id)
+                
+                try:
+                    raw_qty = await redis_cluster.hget(f"order_data:{order_id_lookup}", "order_quantity")
+                    log_connection_release("cluster", f"fetch_qty_{order_id_lookup}", qty_operation_id)
+                    connection_tracker.end_operation(qty_operation_id, success=True)
+                    
+                    if raw_qty is not None:
+                        final_qty = float(raw_qty)
+                        qty_source = "canonical"
+                except Exception as e:
+                    log_connection_error("cluster", f"fetch_qty_{order_id_lookup}", str(e), qty_operation_id)
+                    connection_tracker.end_operation(qty_operation_id, success=False, error=str(e))
+                    raise
             except Exception:
                 final_qty = None
         if final_qty is None and order_ctx.get("cumqty_hint") is not None:

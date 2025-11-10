@@ -7,6 +7,10 @@ import orjson
 import aio_pika
 
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.orders.order_repository import fetch_group_data, fetch_user_portfolio, fetch_user_config
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 
@@ -60,21 +64,39 @@ class PendingMonitor:
         await self._ex.publish(msg, routing_key=queue_name)
 
     async def _get_ask(self, symbol: str) -> Optional[float]:
+        operation_id = generate_operation_id()
+        connection_tracker.start_operation(operation_id, "cluster", f"get_ask_{symbol}")
+        log_connection_acquire("cluster", f"get_ask_{symbol}", operation_id)
+        
         try:
             arr = await redis_cluster.hmget(f"market:{symbol}", ["bid", "ask"])  # reuse list API
+            log_connection_release("cluster", f"get_ask_{symbol}", operation_id)
+            connection_tracker.end_operation(operation_id, success=True)
+            
             if arr and arr[1] is not None:
                 return float(arr[1])
         except Exception as e:
+            log_connection_error("cluster", f"get_ask_{symbol}", str(e), operation_id)
+            connection_tracker.end_operation(operation_id, success=False, error=str(e))
             logger.warning("get_ask failed for %s: %s", symbol, e)
         return None
 
     async def _get_bid_ask(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
+        operation_id = generate_operation_id()
+        connection_tracker.start_operation(operation_id, "cluster", f"get_bid_ask_{symbol}")
+        log_connection_acquire("cluster", f"get_bid_ask_{symbol}", operation_id)
+        
         try:
             arr = await redis_cluster.hmget(f"market:{symbol}", ["bid", "ask"])  # [bid, ask]
+            log_connection_release("cluster", f"get_bid_ask_{symbol}", operation_id)
+            connection_tracker.end_operation(operation_id, success=True)
+            
             bid = float(arr[0]) if arr and arr[0] is not None else None
             ask = float(arr[1]) if arr and arr[1] is not None else None
             return bid, ask
         except Exception as e:
+            log_connection_error("cluster", f"get_bid_ask_{symbol}", str(e), operation_id)
+            connection_tracker.end_operation(operation_id, success=False, error=str(e))
             logger.warning("get_bid_ask failed for %s: %s", symbol, e)
             return None, None
 
@@ -144,13 +166,39 @@ class PendingMonitor:
             logger.exception("validate_margin failed for %s:%s %s %s", user_type, user_id, symbol, side)
             return False, None
 
-    async def _remove_pending(self, symbol: str, order_type: str, order_id: str):
+    async def remove_pending(self, symbol: str, order_type: str, order_id: str):
+        operation_id = generate_operation_id()
         try:
             zk = _zkey(symbol, order_type)
             hk = _hkey(order_id)
-            # Avoid cross-slot pipeline: perform operations sequentially
-            await redis_cluster.zrem(zk, order_id)
-            await redis_cluster.delete(hk)
+            
+            # Remove from sorted set with connection tracking
+            connection_tracker.start_operation(operation_id, "cluster", f"remove_pending_zrem_{order_id}")
+            log_connection_acquire("cluster", f"remove_pending_zrem_{order_id}", operation_id)
+            
+            try:
+                await redis_cluster.zrem(zk, order_id)
+                log_connection_release("cluster", f"remove_pending_zrem_{order_id}", operation_id)
+                connection_tracker.end_operation(operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"remove_pending_zrem_{order_id}", str(e), operation_id)
+                connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                raise
+            
+            # Delete hash with connection tracking
+            delete_operation_id = generate_operation_id()
+            connection_tracker.start_operation(delete_operation_id, "cluster", f"remove_pending_delete_{order_id}")
+            log_connection_acquire("cluster", f"remove_pending_delete_{order_id}", delete_operation_id)
+            
+            try:
+                await redis_cluster.delete(hk)
+                log_connection_release("cluster", f"remove_pending_delete_{order_id}", delete_operation_id)
+                connection_tracker.end_operation(delete_operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"remove_pending_delete_{order_id}", str(e), delete_operation_id)
+                connection_tracker.end_operation(delete_operation_id, success=False, error=str(e))
+                raise
+                
         except Exception:
             logger.exception("remove_pending failed for %s %s %s", symbol, order_type, order_id)
 

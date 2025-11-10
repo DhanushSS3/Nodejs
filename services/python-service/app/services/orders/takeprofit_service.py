@@ -1,11 +1,21 @@
+import asyncio
 import logging
+import time
 from typing import Any, Dict, Optional
 
+import orjson
+from redis.exceptions import ResponseError
+
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.orders.order_repository import fetch_user_config, fetch_group_data
-from app.services.orders.sl_tp_repository import upsert_order_triggers, remove_takeprofit_trigger
-from app.services.orders.service_provider_client import send_provider_order
+from app.services.orders.id_generator import generate_take_profit_id
 from app.services.orders.order_registry import add_lifecycle_id
+from app.services.orders.sl_tp_repository import remove_order_triggers, upsert_order_triggers, remove_takeprofit_trigger
+from app.services.orders.service_provider_client import send_provider_order
 
 logger = logging.getLogger(__name__)
 
@@ -189,15 +199,29 @@ class TakeProfitService:
             except Exception as e:
                 logger.warning("add_lifecycle_id takeprofit_id failed: %s", e)
 
-        # Mark status=TAKEPROFIT in Redis for routing
+        # Mark status=TAKEPROFIT in Redis for routing with proper connection management
         try:
             order_data_key = f"order_data:{order_id}"
             hash_tag = f"{user_type}:{user_id}"
             order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
-            pipe = redis_cluster.pipeline()
-            pipe.hset(order_data_key, mapping={"status": "TAKEPROFIT", "symbol": symbol, "order_type": side})
-            pipe.hset(order_key, mapping={"status": "TAKEPROFIT"})
-            await pipe.execute()
+            
+            operation_id = generate_operation_id()
+            connection_tracker.start_operation(operation_id, "cluster", f"takeprofit_status_{order_id}")
+            log_connection_acquire("cluster", f"takeprofit_status_{order_id}", operation_id)
+            
+            try:
+                async with redis_cluster.pipeline() as pipe:
+                    pipe.hset(order_data_key, mapping={"status": "TAKEPROFIT", "symbol": symbol, "order_type": side})
+                    pipe.hset(order_key, mapping={"status": "TAKEPROFIT"})
+                    await pipe.execute()
+                
+                log_pipeline_operation("cluster", f"takeprofit_status_{order_id}", 2, operation_id)
+                log_connection_release("cluster", f"takeprofit_status_{order_id}", operation_id)
+                connection_tracker.end_operation(operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"takeprofit_status_{order_id}", str(e), operation_id)
+                connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                raise
         except Exception:
             pass
 
@@ -205,19 +229,29 @@ class TakeProfitService:
         order_status_in = str(payload.get("order_status") or "OPEN")
         qty = _safe_float(payload.get("order_quantity"))
         entry_price = _safe_float(payload.get("order_price"))
-        # Try to fetch missing fields from Redis canonical
+        # Try to fetch missing fields from Redis canonical with connection tracking
         if qty is None or entry_price is None:
+            fetch_operation_id = generate_operation_id()
+            connection_tracker.start_operation(fetch_operation_id, "cluster", f"fetch_order_data_{order_id}")
+            log_connection_acquire("cluster", f"fetch_order_data_{order_id}", fetch_operation_id)
+            
             try:
                 od = await redis_cluster.hgetall(f"order_data:{order_id}")
+                log_connection_release("cluster", f"fetch_order_data_{order_id}", fetch_operation_id)
+                connection_tracker.end_operation(fetch_operation_id, success=True)
+                
                 if qty is None:
                     qty = _safe_float(od.get("order_quantity"))
                 if entry_price is None:
                     entry_price = _safe_float(od.get("order_price"))
                 cv_existing = _safe_float(od.get("contract_value")) if od else None
-            except Exception:
+            except Exception as e:
+                log_connection_error("cluster", f"fetch_order_data_{order_id}", str(e), fetch_operation_id)
+                connection_tracker.end_operation(fetch_operation_id, success=False, error=str(e))
                 cv_existing = None
         else:
             cv_existing = None
+
         # Compute contract_value if missing
         try:
             if cv_existing is not None:
@@ -304,12 +338,26 @@ class TakeProfitService:
                 order_data_key = f"order_data:{order_id}"
                 hash_tag = f"{user_type}:{user_id}"
                 order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
-                pipe = redis_cluster.pipeline()
-                pipe.hdel(order_data_key, "take_profit")
-                pipe.hdel(order_key, "take_profit")
-                pipe.hset(order_data_key, mapping={"status": "OPEN", "symbol": symbol, "order_type": side})
-                pipe.hset(order_key, mapping={"status": "OPEN"})
-                await pipe.execute()
+                
+                cancel_operation_id = generate_operation_id()
+                connection_tracker.start_operation(cancel_operation_id, "cluster", f"takeprofit_cancel_{order_id}")
+                log_connection_acquire("cluster", f"takeprofit_cancel_{order_id}", cancel_operation_id)
+                
+                try:
+                    async with redis_cluster.pipeline() as pipe:
+                        pipe.hdel(order_data_key, "take_profit")
+                        pipe.hdel(order_key, "take_profit")
+                        pipe.hset(order_data_key, mapping={"status": "OPEN", "symbol": symbol, "order_type": side})
+                        pipe.hset(order_key, mapping={"status": "OPEN"})
+                        await pipe.execute()
+                    
+                    log_pipeline_operation("cluster", f"takeprofit_cancel_{order_id}", 4, cancel_operation_id)
+                    log_connection_release("cluster", f"takeprofit_cancel_{order_id}", cancel_operation_id)
+                    connection_tracker.end_operation(cancel_operation_id, success=True)
+                except Exception as e:
+                    log_connection_error("cluster", f"takeprofit_cancel_{order_id}", str(e), cancel_operation_id)
+                    connection_tracker.end_operation(cancel_operation_id, success=False, error=str(e))
+                    raise
             except Exception:
                 pass
 

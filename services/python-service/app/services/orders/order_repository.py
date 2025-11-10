@@ -8,6 +8,10 @@ import aiomysql
 from redis.exceptions import ResponseError
 
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.logging.timing_logger import get_orders_timing_logger
 
 logger = logging.getLogger(__name__)
@@ -35,8 +39,15 @@ async def _get_order_place_script_text() -> str:
 
 
 async def get_idempotency(key: str) -> Optional[Dict[str, Any]]:
+    operation_id = generate_operation_id()
+    connection_tracker.start_operation(operation_id, "cluster", f"get_idempotency_{key}")
+    log_connection_acquire("cluster", f"get_idempotency_{key}", operation_id)
+    
     try:
         raw = await redis_cluster.get(key)
+        log_connection_release("cluster", f"get_idempotency_{key}", operation_id)
+        connection_tracker.end_operation(operation_id, success=True)
+        
         if not raw:
             return None
         try:
@@ -44,6 +55,8 @@ async def get_idempotency(key: str) -> Optional[Dict[str, Any]]:
         except Exception:
             return {"raw": raw}
     except Exception as e:
+        log_connection_error("cluster", f"get_idempotency_{key}", str(e), operation_id)
+        connection_tracker.end_operation(operation_id, success=False, error=str(e))
         logger.error("get_idempotency error for key=%s: %s", key, e)
         return None
 
@@ -52,19 +65,35 @@ async def set_idempotency_placeholder(key: str, ttl_sec: int = 60) -> bool:
     """Set a short-lived placeholder to prevent duplicate processing.
     Returns True if successfully set (NX), False if already exists.
     """
+    operation_id = generate_operation_id()
+    connection_tracker.start_operation(operation_id, "cluster", f"set_idempotency_placeholder_{key}")
+    log_connection_acquire("cluster", f"set_idempotency_placeholder_{key}", operation_id)
+    
     try:
         # SET key value NX EX ttl
         ok = await redis_cluster.set(key, json.dumps({"status": "processing"}), ex=ttl_sec, nx=True)
+        log_connection_release("cluster", f"set_idempotency_placeholder_{key}", operation_id)
+        connection_tracker.end_operation(operation_id, success=True)
         return bool(ok)
     except Exception as e:
+        log_connection_error("cluster", f"set_idempotency_placeholder_{key}", str(e), operation_id)
+        connection_tracker.end_operation(operation_id, success=False, error=str(e))
         logger.error("set_idempotency_placeholder error for key=%s: %s", key, e)
         return False
 
 
 async def save_idempotency_result(key: str, result: Dict[str, Any], ttl_sec: int = 300) -> None:
+    operation_id = generate_operation_id()
+    connection_tracker.start_operation(operation_id, "cluster", f"save_idempotency_result_{key}")
+    log_connection_acquire("cluster", f"save_idempotency_result_{key}", operation_id)
+    
     try:
         await redis_cluster.set(key, json.dumps(result), ex=ttl_sec)
+        log_connection_release("cluster", f"save_idempotency_result_{key}", operation_id)
+        connection_tracker.end_operation(operation_id, success=True)
     except Exception as e:
+        log_connection_error("cluster", f"save_idempotency_result_{key}", str(e), operation_id)
+        connection_tracker.end_operation(operation_id, success=False, error=str(e))
         logger.error("save_idempotency_result error for key=%s: %s", key, e)
 
 

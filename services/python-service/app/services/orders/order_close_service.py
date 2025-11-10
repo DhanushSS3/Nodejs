@@ -1,15 +1,20 @@
-import time
-import logging
 import asyncio
+import logging
 import os
-from typing import Any, Dict, Optional, Tuple, List
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import orjson
-import aio_pika
+from redis.exceptions import ResponseError
+
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
+from app.services.orders.order_repository import fetch_user_config, fetch_user_portfolio
 from app.services.orders.sl_tp_repository import remove_order_triggers
 from app.services.orders.order_repository import (
-    fetch_user_config,
     fetch_group_data,
     fetch_user_orders,
 )
@@ -567,48 +572,76 @@ class OrderCloser:
                 )
 
                 # Remove keys and update margins using same-slot pipeline for user-scoped keys
-                # Add retry logic for Redis connection pool exhaustion
+                # Add retry logic for Redis connection pool exhaustion with proper connection management
                 max_retries = 3
+                retry_delay = 0.01
+                operation_id = generate_operation_id()
+                
                 for attempt in range(max_retries):
                     try:
-                        p_user = redis_cluster.pipeline()
-                        p_user.srem(index_key, order_id)
-                        p_user.delete(order_key)
-                        if executed_margin is not None:
-                            p_user.hset(portfolio_key, mapping={
-                                "used_margin_executed": str(float(executed_margin)),
-                                "used_margin": str(float(executed_margin)),
-                            })
-                        if total_margin is not None:
-                            p_user.hset(portfolio_key, mapping={
-                                "used_margin_all": str(float(total_margin)),
-                            })
-                        await p_user.execute()
+                        connection_tracker.start_operation(operation_id, "cluster", f"close_cleanup_{order_id}")
+                        log_connection_acquire("cluster", f"close_cleanup_{order_id}", operation_id)
+                        
+                        async with redis_cluster.pipeline() as p_user:
+                            p_user.srem(index_key, order_id)
+                            p_user.delete(order_key)
+                            if executed_margin is not None:
+                                p_user.hset(portfolio_key, mapping={
+                                    "used_margin_executed": str(float(executed_margin)),
+                                    "used_margin": str(float(executed_margin)),
+                                })
+                            if total_margin is not None:
+                                p_user.hset(portfolio_key, mapping={
+                                    "used_margin_all": str(float(total_margin)),
+                                })
+                            await p_user.execute()
+                        
+                        log_pipeline_operation("cluster", f"close_cleanup_{order_id}", 2 + (1 if executed_margin else 0) + (1 if total_margin else 0), operation_id)
+                        log_connection_release("cluster", f"close_cleanup_{order_id}", operation_id)
+                        connection_tracker.end_operation(operation_id, success=True)
                         break  # Success, exit retry loop
+                        
                     except Exception as e:
+                        log_connection_error("cluster", f"close_cleanup_{order_id}", str(e), operation_id, attempt + 1)
                         if attempt == max_retries - 1:
                             # Last attempt failed, re-raise
+                            connection_tracker.end_operation(operation_id, success=False, error=str(e))
                             raise
                         logger.warning(
                             "[CLOSE:CLEANUP_RETRY] order_id=%s user=%s:%s attempt=%d error=%s",
                             order_id, user_type, user_id, attempt + 1, str(e)
                         )
                         # Wait briefly before retry (exponential backoff)
-                        await asyncio.sleep(0.1 * (2 ** attempt))
-                # Delete canonical in separate call to avoid cross-slot pipeline
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                # Delete canonical in separate call to avoid cross-slot pipeline with connection tracking
+                delete_operation_id = generate_operation_id()
+                connection_tracker.start_operation(delete_operation_id, "cluster", f"delete_canonical_{order_id}")
+                log_connection_acquire("cluster", f"delete_canonical_{order_id}", delete_operation_id)
+                
                 try:
                     await redis_cluster.delete(order_data_key)
-                except Exception:
-                    pass
+                    log_connection_release("cluster", f"delete_canonical_{order_id}", delete_operation_id)
+                    connection_tracker.end_operation(delete_operation_id, success=True)
+                except Exception as e:
+                    log_connection_error("cluster", f"delete_canonical_{order_id}", str(e), delete_operation_id)
+                    connection_tracker.end_operation(delete_operation_id, success=False, error=str(e))
 
-                # Symbol holders cleanup if no more orders for same symbol
+                # Symbol holders cleanup if no more orders for same symbol with connection tracking
                 if symbol:
                     any_same_symbol = any(str(od.get("symbol", "")).upper() == str(symbol).upper() for od in remaining)
                     if not any_same_symbol:
+                        symbol_operation_id = generate_operation_id()
+                        connection_tracker.start_operation(symbol_operation_id, "cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}")
+                        log_connection_acquire("cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}", symbol_operation_id)
+                        
                         try:
                             await redis_cluster.srem(f"symbol_holders:{symbol}:{user_type}", f"{user_type}:{user_id}")
-                        except Exception:
-                            pass
+                            log_connection_release("cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}", symbol_operation_id)
+                            connection_tracker.end_operation(symbol_operation_id, success=True)
+                        except Exception as e:
+                            log_connection_error("cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}", str(e), symbol_operation_id)
+                            connection_tracker.end_operation(symbol_operation_id, success=False, error=str(e))
 
                 return {
                     "ok": True,

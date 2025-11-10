@@ -3,12 +3,17 @@ import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-import orjson
 import aio_pika
+import orjson
+from redis.exceptions import ResponseError
 
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.orders.order_close_service import OrderCloser
 
 logger = logging.getLogger(__name__)
@@ -74,26 +79,60 @@ class TriggerMonitor:
             logger.exception("Failed to publish DB update from TriggerMonitor")
 
     async def _fetch_market(self, symbol: str):
+        operation_id = generate_operation_id()
+        connection_tracker.start_operation(operation_id, "cluster", f"fetch_market_{symbol}")
+        log_connection_acquire("cluster", f"fetch_market_{symbol}", operation_id)
+        
         try:
             vals = await redis_cluster.hmget(f"market:{symbol}", ["bid", "ask"])  # [bid, ask]
+            log_connection_release("cluster", f"fetch_market_{symbol}", operation_id)
+            connection_tracker.end_operation(operation_id, success=True)
+            
             bid = float(vals[0]) if vals and vals[0] is not None else None
             ask = float(vals[1]) if vals and vals[1] is not None else None
             return bid, ask
-        except Exception:
+        except Exception as e:
+            log_connection_error("cluster", f"fetch_market_{symbol}", str(e), operation_id)
+            connection_tracker.end_operation(operation_id, success=False, error=str(e))
             return None, None
 
     async def _scan_and_trigger(self, symbol: str, side: str, bid: Optional[float], ask: Optional[float]):
         side = side.upper()
         if side not in ("BUY", "SELL"):
             return
-        # Determine queries per rule
+        # Determine queries per rule with connection tracking
         try:
             if side == "BUY":
                 # SL: trigger when bid <= compare -> zrangebyscore [bid, +inf)
                 # TP: trigger when bid >= compare -> zrangebyscore (-inf, bid]
                 if bid is not None:
-                    sl_ids = await redis_cluster.zrangebyscore(_sl_key(symbol, side), min=bid, max="+inf", start=0, num=BATCH)
-                    tp_ids = await redis_cluster.zrangebyscore(_tp_key(symbol, side), min="-inf", max=bid, start=0, num=BATCH)
+                    # SL query with connection tracking
+                    sl_operation_id = generate_operation_id()
+                    connection_tracker.start_operation(sl_operation_id, "cluster", f"sl_scan_{symbol}_{side}")
+                    log_connection_acquire("cluster", f"sl_scan_{symbol}_{side}", sl_operation_id)
+                    
+                    try:
+                        sl_ids = await redis_cluster.zrangebyscore(_sl_key(symbol, side), min=bid, max="+inf", start=0, num=BATCH)
+                        log_connection_release("cluster", f"sl_scan_{symbol}_{side}", sl_operation_id)
+                        connection_tracker.end_operation(sl_operation_id, success=True)
+                    except Exception as e:
+                        log_connection_error("cluster", f"sl_scan_{symbol}_{side}", str(e), sl_operation_id)
+                        connection_tracker.end_operation(sl_operation_id, success=False, error=str(e))
+                        raise
+                    
+                    # TP query with connection tracking
+                    tp_operation_id = generate_operation_id()
+                    connection_tracker.start_operation(tp_operation_id, "cluster", f"tp_scan_{symbol}_{side}")
+                    log_connection_acquire("cluster", f"tp_scan_{symbol}_{side}", tp_operation_id)
+                    
+                    try:
+                        tp_ids = await redis_cluster.zrangebyscore(_tp_key(symbol, side), min="-inf", max=bid, start=0, num=BATCH)
+                        log_connection_release("cluster", f"tp_scan_{symbol}_{side}", tp_operation_id)
+                        connection_tracker.end_operation(tp_operation_id, success=True)
+                    except Exception as e:
+                        log_connection_error("cluster", f"tp_scan_{symbol}_{side}", str(e), tp_operation_id)
+                        connection_tracker.end_operation(tp_operation_id, success=False, error=str(e))
+                        raise
                 else:
                     sl_ids, tp_ids = [], []
             else:
@@ -101,8 +140,33 @@ class TriggerMonitor:
                 # SL: trigger when ask >= compare -> zrangebyscore (-inf, ask]
                 # TP: trigger when ask <= compare -> zrangebyscore [ask, +inf)
                 if ask is not None:
-                    sl_ids = await redis_cluster.zrangebyscore(_sl_key(symbol, side), min="-inf", max=ask, start=0, num=BATCH)
-                    tp_ids = await redis_cluster.zrangebyscore(_tp_key(symbol, side), min=ask, max="+inf", start=0, num=BATCH)
+                    # SL query with connection tracking
+                    sl_operation_id = generate_operation_id()
+                    connection_tracker.start_operation(sl_operation_id, "cluster", f"sl_scan_{symbol}_{side}")
+                    log_connection_acquire("cluster", f"sl_scan_{symbol}_{side}", sl_operation_id)
+                    
+                    try:
+                        sl_ids = await redis_cluster.zrangebyscore(_sl_key(symbol, side), min="-inf", max=ask, start=0, num=BATCH)
+                        log_connection_release("cluster", f"sl_scan_{symbol}_{side}", sl_operation_id)
+                        connection_tracker.end_operation(sl_operation_id, success=True)
+                    except Exception as e:
+                        log_connection_error("cluster", f"sl_scan_{symbol}_{side}", str(e), sl_operation_id)
+                        connection_tracker.end_operation(sl_operation_id, success=False, error=str(e))
+                        raise
+                    
+                    # TP query with connection tracking
+                    tp_operation_id = generate_operation_id()
+                    connection_tracker.start_operation(tp_operation_id, "cluster", f"tp_scan_{symbol}_{side}")
+                    log_connection_acquire("cluster", f"tp_scan_{symbol}_{side}", tp_operation_id)
+                    
+                    try:
+                        tp_ids = await redis_cluster.zrangebyscore(_tp_key(symbol, side), min=ask, max="+inf", start=0, num=BATCH)
+                        log_connection_release("cluster", f"tp_scan_{symbol}_{side}", tp_operation_id)
+                        connection_tracker.end_operation(tp_operation_id, success=True)
+                    except Exception as e:
+                        log_connection_error("cluster", f"tp_scan_{symbol}_{side}", str(e), tp_operation_id)
+                        connection_tracker.end_operation(tp_operation_id, success=False, error=str(e))
+                        raise
                 else:
                     sl_ids, tp_ids = [], []
         except Exception as e:

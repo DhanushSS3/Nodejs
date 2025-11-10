@@ -11,6 +11,10 @@ import aio_pika
 import aiohttp
 
 from app.config.redis_config import redis_cluster
+from app.config.redis_logging import (
+    log_connection_acquire, log_connection_release, log_connection_error,
+    log_pipeline_operation, connection_tracker, generate_operation_id
+)
 from app.services.orders.order_close_service import OrderCloser
 from app.services.orders.order_repository import fetch_user_config
 from app.services.orders.provider_connection import get_provider_connection_manager
@@ -42,15 +46,27 @@ INTERNAL_PROVIDER_SECRET = os.getenv("INTERNAL_PROVIDER_SECRET", "")
 
 # ------------- Concurrency: Lightweight Redis lock -------------
 async def acquire_lock(lock_key: str, token: str, ttl_sec: int = 5) -> bool:
+    operation_id = generate_operation_id()
+    connection_tracker.start_operation(operation_id, "cluster", f"acquire_lock_{lock_key}")
+    log_connection_acquire("cluster", f"acquire_lock_{lock_key}", operation_id)
+    
     try:
         ok = await redis_cluster.set(lock_key, token, ex=ttl_sec, nx=True)
+        log_connection_release("cluster", f"acquire_lock_{lock_key}", operation_id)
+        connection_tracker.end_operation(operation_id, success=True)
         return bool(ok)
     except Exception as e:
+        log_connection_error("cluster", f"acquire_lock_{lock_key}", str(e), operation_id)
+        connection_tracker.end_operation(operation_id, success=False, error=str(e))
         logger.error("acquire_lock error: %s", e)
         return False
 
 
 async def release_lock(lock_key: str, token: str) -> None:
+    operation_id = generate_operation_id()
+    connection_tracker.start_operation(operation_id, "cluster", f"release_lock_{lock_key}")
+    log_connection_acquire("cluster", f"release_lock_{lock_key}", operation_id)
+    
     try:
         # Safe release: only delete if value matches token
         lua = """
@@ -62,10 +78,14 @@ async def release_lock(lock_key: str, token: str) -> None:
         """
         try:
             await redis_cluster.eval(lua, 1, lock_key, token)
-        except Exception:
-            # Best effort
-            pass
+            log_connection_release("cluster", f"release_lock_{lock_key}", operation_id)
+            connection_tracker.end_operation(operation_id, success=True)
+        except Exception as e:
+            log_connection_error("cluster", f"release_lock_{lock_key}", str(e), operation_id)
+            connection_tracker.end_operation(operation_id, success=False, error=str(e))
     except Exception as e:
+        log_connection_error("cluster", f"release_lock_{lock_key}", str(e), operation_id)
+        connection_tracker.end_operation(operation_id, success=False, error=str(e))
         logger.error("release_lock error: %s", e)
 
 
@@ -129,15 +149,39 @@ class CloseWorker:
         order_type: 'stoploss', 'takeprofit', 'close', or 'unknown'
         """
         try:
-            # First check global lookup to get canonical order_id
-            canonical_order_id = await redis_cluster.get(f"global_order_lookup:{received_order_id}")
+            # First check global lookup to get canonical order_id with connection tracking
+            lookup_operation_id = generate_operation_id()
+            connection_tracker.start_operation(lookup_operation_id, "cluster", f"global_lookup_{received_order_id}")
+            log_connection_acquire("cluster", f"global_lookup_{received_order_id}", lookup_operation_id)
+            
+            try:
+                canonical_order_id = await redis_cluster.get(f"global_order_lookup:{received_order_id}")
+                log_connection_release("cluster", f"global_lookup_{received_order_id}", lookup_operation_id)
+                connection_tracker.end_operation(lookup_operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"global_lookup_{received_order_id}", str(e), lookup_operation_id)
+                connection_tracker.end_operation(lookup_operation_id, success=False, error=str(e))
+                raise
+                
             if not canonical_order_id:
                 return ("unknown", received_order_id)
             
             canonical_order_id = str(canonical_order_id)
             
-            # Get order data to check which ID type this is
-            order_data = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
+            # Get order data to check which ID type this is with connection tracking
+            data_operation_id = generate_operation_id()
+            connection_tracker.start_operation(data_operation_id, "cluster", f"order_data_{canonical_order_id}")
+            log_connection_acquire("cluster", f"order_data_{canonical_order_id}", data_operation_id)
+            
+            try:
+                order_data = await redis_cluster.hgetall(f"order_data:{canonical_order_id}")
+                log_connection_release("cluster", f"order_data_{canonical_order_id}", data_operation_id)
+                connection_tracker.end_operation(data_operation_id, success=True)
+            except Exception as e:
+                log_connection_error("cluster", f"order_data_{canonical_order_id}", str(e), data_operation_id)
+                connection_tracker.end_operation(data_operation_id, success=False, error=str(e))
+                raise
+                
             if not order_data:
                 return ("unknown", canonical_order_id)
             
