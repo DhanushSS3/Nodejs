@@ -2,9 +2,12 @@ const strategyProviderService = require('../services/strategyProvider.service');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const LiveUser = require('../models/liveUser.model');
+const UserTransaction = require('../models/userTransaction.model');
 const jwt = require('jsonwebtoken');
 const logger = require('../services/logger.service');
 const redisUserCache = require('../services/redis.user.cache.service');
+const { Op } = require('sequelize');
+const sequelize = require('../config/db');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -1155,6 +1158,183 @@ async function logoutStrategyProvider(req, res) {
   }
 }
 
+/**
+ * Get strategy provider performance fee earnings overview
+ * GET /api/strategy-providers/performance-fee-earnings
+ */
+async function getPerformanceFeeEarnings(req, res) {
+  try {
+    // Handle both strategy provider JWT and main account JWT
+    let strategyProviderId = req.user?.strategy_provider_id;
+    
+    logger.info('Debug: Initial check', {
+      hasUser: !!req.user,
+      strategyProviderId,
+      userType: req.user?.user_type,
+      accountType: req.user?.account_type,
+      queryParams: req.query
+    });
+    
+    // If not strategy provider JWT, check if it's main account accessing specific strategy
+    if (!strategyProviderId) {
+      const requestedStrategyId = req.query.strategy_provider_id || req.params.strategy_provider_id;
+      const userId = getUserId(req.user);
+      
+      logger.info('Debug: Authentication check', {
+        requestedStrategyId,
+        userId,
+        userObject: req.user
+      });
+      
+      if (!requestedStrategyId || !userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Strategy provider ID required or strategy provider authentication required'
+        });
+      }
+      
+      // Parse strategy provider ID as integer
+      const parsedStrategyId = parseInt(requestedStrategyId);
+      if (isNaN(parsedStrategyId)) {
+        logger.error('Debug: Invalid strategy provider ID format', {
+          requestedStrategyId,
+          parsedStrategyId
+        });
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid strategy provider ID format'
+        });
+      }
+      
+      logger.info('Debug: Looking for strategy provider account', {
+        parsedStrategyId,
+        userId
+      });
+      
+      // Verify the user owns this strategy provider account
+      const strategyAccount = await StrategyProviderAccount.findOne({
+        where: {
+          id: parsedStrategyId,
+          user_id: userId,
+          status: 1,
+          is_active: 1
+        }
+      });
+      
+      logger.info('Debug: Strategy account lookup result', {
+        found: !!strategyAccount,
+        strategyAccount: strategyAccount ? {
+          id: strategyAccount.id,
+          user_id: strategyAccount.user_id,
+          status: strategyAccount.status,
+          is_active: strategyAccount.is_active
+        } : null
+      });
+      
+      if (!strategyAccount) {
+        return res.status(403).json({
+          success: false,
+          message: 'Strategy provider account not found or access denied'
+        });
+      }
+      
+      strategyProviderId = parsedStrategyId;
+    }
+
+    logger.info('Getting performance fee earnings for strategy provider', { 
+      strategyProviderId 
+    });
+
+    // Single efficient query to get all performance fee transactions
+    // Only select essential fields for chart: amount and date
+    const performanceFeeTransactions = await UserTransaction.findAll({
+      where: {
+        user_id: strategyProviderId,
+        user_type: 'strategy_provider',
+        type: 'performance_fee_earned',
+        status: 'completed'
+      },
+      attributes: [
+        'amount',
+        'created_at'
+      ],
+      order: [['created_at', 'ASC']], // Chronological order for frontend processing
+      raw: true
+    });
+
+    // Calculate totals efficiently in JavaScript (faster than separate DB query)
+    let totalEarnings = 0;
+    const totalTransactions = performanceFeeTransactions.length;
+
+    // Format all transactions for frontend chart - minimal data
+    const chartTransactions = performanceFeeTransactions.map(txn => {
+      const amount = parseFloat(txn.amount || 0);
+      totalEarnings += amount; // Calculate total while mapping
+      
+      return {
+        amount: amount,
+        date: txn.created_at
+      };
+    });
+
+    // Get active copy follower investments for this strategy provider
+    const copyFollowerInvestments = await CopyFollowerAccount.findAll({
+      where: {
+        strategy_provider_id: strategyProviderId,
+        copy_status: 'active',
+        is_active: 1
+      },
+      attributes: [
+        'investment_amount',
+        'created_at'
+      ],
+      order: [['created_at', 'ASC']], // Chronological order for frontend processing
+      raw: true
+    });
+
+    // Format copy follower investments for chart
+    const investmentTransactions = copyFollowerInvestments.map(investment => ({
+      amount: parseFloat(investment.investment_amount || 0),
+      date: investment.created_at
+    }));
+
+    const response = {
+      strategy_provider_id: strategyProviderId,
+      total_performance_fee_earned: parseFloat(totalEarnings.toFixed(2)),
+      total_fee_transactions: totalTransactions,
+      performance_fee_transactions: chartTransactions, // Performance fee earnings with date
+      copy_follower_investments: investmentTransactions // Copy follower investments with date
+    };
+
+    logger.info('Performance fee earnings retrieved successfully', {
+      strategyProviderId,
+      totalEarnings: totalEarnings.toFixed(2),
+      totalTransactions,
+      performanceFeeTransactions: chartTransactions.length,
+      copyFollowerInvestments: investmentTransactions.length
+    });
+
+    res.json({
+      success: true,
+      message: 'Performance fee earnings retrieved successfully',
+      data: response
+    });
+
+  } catch (error) {
+    logger.error('Failed to get performance fee earnings', {
+      strategyProviderId: req.user?.strategy_provider_id,
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get performance fee earnings',
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   createStrategyProviderAccount,
   getStrategyProviderAccount,
@@ -1167,5 +1347,6 @@ module.exports = {
   switchToStrategyProvider,
   switchBackToLiveUser,
   refreshStrategyProviderToken,
-  logoutStrategyProvider
+  logoutStrategyProvider,
+  getPerformanceFeeEarnings
 };
