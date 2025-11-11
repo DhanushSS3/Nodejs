@@ -1167,24 +1167,10 @@ async function getPerformanceFeeEarnings(req, res) {
     // Handle both strategy provider JWT and main account JWT
     let strategyProviderId = req.user?.strategy_provider_id;
     
-    logger.info('Debug: Initial check', {
-      hasUser: !!req.user,
-      strategyProviderId,
-      userType: req.user?.user_type,
-      accountType: req.user?.account_type,
-      queryParams: req.query
-    });
-    
     // If not strategy provider JWT, check if it's main account accessing specific strategy
     if (!strategyProviderId) {
       const requestedStrategyId = req.query.strategy_provider_id || req.params.strategy_provider_id;
       const userId = getUserId(req.user);
-      
-      logger.info('Debug: Authentication check', {
-        requestedStrategyId,
-        userId,
-        userObject: req.user
-      });
       
       if (!requestedStrategyId || !userId) {
         return res.status(401).json({
@@ -1196,20 +1182,11 @@ async function getPerformanceFeeEarnings(req, res) {
       // Parse strategy provider ID as integer
       const parsedStrategyId = parseInt(requestedStrategyId);
       if (isNaN(parsedStrategyId)) {
-        logger.error('Debug: Invalid strategy provider ID format', {
-          requestedStrategyId,
-          parsedStrategyId
-        });
         return res.status(400).json({
           success: false,
           message: 'Invalid strategy provider ID format'
         });
       }
-      
-      logger.info('Debug: Looking for strategy provider account', {
-        parsedStrategyId,
-        userId
-      });
       
       // Verify the user owns this strategy provider account
       const strategyAccount = await StrategyProviderAccount.findOne({
@@ -1219,16 +1196,6 @@ async function getPerformanceFeeEarnings(req, res) {
           status: 1,
           is_active: 1
         }
-      });
-      
-      logger.info('Debug: Strategy account lookup result', {
-        found: !!strategyAccount,
-        strategyAccount: strategyAccount ? {
-          id: strategyAccount.id,
-          user_id: strategyAccount.user_id,
-          status: strategyAccount.status,
-          is_active: strategyAccount.is_active
-        } : null
       });
       
       if (!strategyAccount) {
