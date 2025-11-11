@@ -832,7 +832,13 @@ async function updateFollowerSlTpSettings(req, res) {
         model: StrategyProviderAccount,
         as: 'strategyProvider',
         attributes: ['id', 'strategy_name', 'account_number']
-      }]
+      }],
+      attributes: [
+        'id', 'account_name', 'account_number', 'user_id', 'strategy_provider_id',
+        'investment_amount', 'initial_investment', 'wallet_balance', 'net_profit',
+        'copy_sl_mode', 'sl_percentage', 'sl_amount',
+        'copy_tp_mode', 'tp_percentage', 'tp_amount'
+      ]
     });
 
     if (!followerAccount) {
@@ -854,6 +860,12 @@ async function updateFollowerSlTpSettings(req, res) {
     const updateFields = {};
     const validationErrors = [];
 
+    // Calculate current balance for validation
+    const currentWalletBalance = parseFloat(followerAccount.wallet_balance || 0);
+    const currentNetProfit = parseFloat(followerAccount.net_profit || 0);
+    const currentEquity = currentWalletBalance;
+    const initialInvestment = parseFloat(followerAccount.initial_investment || 0);
+
     // Validate and update Stop Loss settings
     if (copy_sl_mode !== undefined) {
       if (!['none', 'percentage', 'amount'].includes(copy_sl_mode)) {
@@ -869,8 +881,14 @@ async function updateFollowerSlTpSettings(req, res) {
             if (isNaN(slPercent) || slPercent <= 0 || slPercent > 100) {
               validationErrors.push('sl_percentage must be between 0.01 and 100.00');
             } else {
-              updateFields.sl_percentage = slPercent;
-              updateFields.sl_amount = null; // Clear amount when using percentage
+              // Validate that SL percentage results in a value less than current equity
+              const slThreshold = initialInvestment * (slPercent / 100);
+              if (slThreshold >= currentEquity) {
+                validationErrors.push(`Stop loss percentage (${slPercent}%) results in threshold $${slThreshold.toFixed(2)} which must be less than current equity $${currentEquity.toFixed(2)}`);
+              } else {
+                updateFields.sl_percentage = slPercent;
+                updateFields.sl_amount = null; // Clear amount when using percentage
+              }
             }
           }
         } else if (copy_sl_mode === 'amount') {
@@ -880,6 +898,8 @@ async function updateFollowerSlTpSettings(req, res) {
             const slAmt = parseFloat(sl_amount);
             if (isNaN(slAmt) || slAmt <= 0) {
               validationErrors.push('sl_amount must be greater than 0');
+            } else if (slAmt >= currentEquity) {
+              validationErrors.push(`Stop loss amount $${slAmt.toFixed(2)} must be less than current equity $${currentEquity.toFixed(2)}`);
             } else {
               updateFields.sl_amount = slAmt;
               updateFields.sl_percentage = null; // Clear percentage when using amount
@@ -908,8 +928,14 @@ async function updateFollowerSlTpSettings(req, res) {
             if (isNaN(tpPercent) || tpPercent <= 0 || tpPercent > 1000) {
               validationErrors.push('tp_percentage must be between 0.01 and 1000.00');
             } else {
-              updateFields.tp_percentage = tpPercent;
-              updateFields.tp_amount = null; // Clear amount when using percentage
+              // Validate that TP percentage results in a value greater than current equity
+              const tpThreshold = initialInvestment * (1 + tpPercent / 100);
+              if (tpThreshold <= currentEquity) {
+                validationErrors.push(`Take profit percentage (${tpPercent}%) results in threshold $${tpThreshold.toFixed(2)} which must be greater than current equity $${currentEquity.toFixed(2)}`);
+              } else {
+                updateFields.tp_percentage = tpPercent;
+                updateFields.tp_amount = null; // Clear amount when using percentage
+              }
             }
           }
         } else if (copy_tp_mode === 'amount') {
@@ -919,6 +945,8 @@ async function updateFollowerSlTpSettings(req, res) {
             const tpAmt = parseFloat(tp_amount);
             if (isNaN(tpAmt) || tpAmt <= 0) {
               validationErrors.push('tp_amount must be greater than 0');
+            } else if (tpAmt <= currentEquity) {
+              validationErrors.push(`Take profit amount $${tpAmt.toFixed(2)} must be greater than current equity $${currentEquity.toFixed(2)}`);
             } else {
               updateFields.tp_amount = tpAmt;
               updateFields.tp_percentage = null; // Clear percentage when using amount
@@ -1237,7 +1265,13 @@ async function getCopyTradingOverview(req, res) {
         'copy_status',
         'status',
         'is_active',
-        'created_at'
+        'created_at',
+        'copy_sl_mode',
+        'sl_percentage',
+        'sl_amount',
+        'copy_tp_mode',
+        'tp_percentage',
+        'tp_amount'
       ],
       order: [['created_at', 'DESC']]
     });
@@ -1314,7 +1348,14 @@ async function getCopyTradingOverview(req, res) {
         copy_status: account.copy_status,
         account_status: account.status, // 1 = active, 0 = inactive
         is_active: account.is_active, // 1 = active, 0 = inactive
-        created_at: account.created_at
+        created_at: account.created_at,
+        // SL/TP Settings
+        copy_sl_mode: account.copy_sl_mode || 'none',
+        sl_percentage: account.sl_percentage,
+        sl_amount: account.sl_amount,
+        copy_tp_mode: account.copy_tp_mode || 'none',
+        tp_percentage: account.tp_percentage,
+        tp_amount: account.tp_amount
       });
     }
 
