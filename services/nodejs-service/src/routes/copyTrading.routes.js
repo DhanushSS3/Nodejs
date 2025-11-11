@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const copyTradingController = require('../controllers/copyTrading.controller');
+const copyFollowerEquityMonitorController = require('../controllers/copyFollowerEquityMonitor.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { validateSlTpSettingsUpdate, validateSlTpSettingsGet } = require('../middlewares/copyTrading.validation');
 
@@ -57,6 +58,27 @@ router.delete('/accounts/:follower_id',
 router.get('/overview', 
   authenticateJWT,
   copyTradingController.getCopyTradingOverview
+);
+
+// Equity Monitor Management Routes (for monitoring and debugging)
+router.get('/equity-monitor/status', 
+  authenticateJWT,
+  copyFollowerEquityMonitorController.getEquityMonitorStatus
+);
+
+router.post('/equity-monitor/start', 
+  authenticateJWT,
+  copyFollowerEquityMonitorController.startEquityMonitor
+);
+
+router.post('/equity-monitor/stop', 
+  authenticateJWT,
+  copyFollowerEquityMonitorController.stopEquityMonitor
+);
+
+router.get('/equity-monitor/account/:id/check', 
+  authenticateJWT,
+  copyFollowerEquityMonitorController.checkAccountThresholds
 );
 
 module.exports = router;

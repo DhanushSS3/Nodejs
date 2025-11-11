@@ -4,12 +4,17 @@ const CopyFollowerEquityMonitorService = require('./copyFollowerEquityMonitor.se
 /**
  * Service for equity-based auto stop copying (SL/TP based on account equity, not individual orders)
  * 
- * IMPORTANT: This service has been updated to handle equity-based auto stop copying.
- * The SL/TP settings in copy follower accounts are for monitoring account equity thresholds,
- * not for individual order stop loss/take profit.
+ * IMPORTANT: Copy followers CANNOT set individual order SL/TP. They can only configure
+ * account-level equity thresholds for automatic stop copying.
  * 
- * When equity reaches the configured threshold (percentage or amount), all orders are closed
- * and copying is automatically stopped.
+ * SL/TP settings in copy follower accounts are for monitoring account equity thresholds:
+ * - copy_sl_mode: 'percentage' | 'amount' | 'none'
+ * - copy_tp_mode: 'percentage' | 'amount' | 'none'
+ * - sl_percentage/sl_amount: Stop loss threshold
+ * - tp_percentage/tp_amount: Take profit threshold
+ * 
+ * When equity reaches the configured threshold, all orders are closed and copying stops.
+ * Monitoring runs every 200ms for accounts with open orders and SL/TP configured.
  */
 class CopyFollowerSlTpService {
   
@@ -123,22 +128,31 @@ class CopyFollowerSlTpService {
     return await CopyFollowerEquityMonitorService.monitorAllCopyFollowerAccounts();
   }
 
-  // Legacy method compatibility (deprecated - now logs warning)
+  // REMOVED: Individual order SL/TP methods
+  // Copy followers cannot set individual order SL/TP - only account-level equity thresholds
+  
   static async addStopLossToOrder(followerOrder, stopLossPrice) {
-    logger.warn('DEPRECATED: addStopLossToOrder called. Use equity-based monitoring instead.', {
+    logger.error('UNSUPPORTED: Copy followers cannot set individual order SL/TP', {
       orderId: followerOrder.order_id,
-      stopLossPrice
+      stopLossPrice,
+      message: 'Use account-level equity thresholds instead'
     });
-    return { success: true, reason: 'Legacy method - use equity monitoring instead' };
+    return { 
+      success: false, 
+      error: 'Copy followers cannot set individual order SL/TP. Use account-level equity thresholds instead.' 
+    };
   }
 
-  // Legacy method compatibility (deprecated - now logs warning)
   static async addTakeProfitToOrder(followerOrder, takeProfitPrice) {
-    logger.warn('DEPRECATED: addTakeProfitToOrder called. Use equity-based monitoring instead.', {
+    logger.error('UNSUPPORTED: Copy followers cannot set individual order TP', {
       orderId: followerOrder.order_id,
-      takeProfitPrice
+      takeProfitPrice,
+      message: 'Use account-level equity thresholds instead'
     });
-    return { success: true, reason: 'Legacy method - use equity monitoring instead' };
+    return { 
+      success: false, 
+      error: 'Copy followers cannot set individual order TP. Use account-level equity thresholds instead.' 
+    };
   }
 
   // Legacy method compatibility (deprecated)

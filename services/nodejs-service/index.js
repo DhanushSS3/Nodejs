@@ -8,6 +8,7 @@ const startupCacheService = require('./src/services/startup.cache.service');
 const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
 const swapSchedulerService = require('./src/services/swap.scheduler.service');
 const CatalogEligibilityCronService = require('./src/services/cron/catalogEligibility.cron.service');
+const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEquityMonitor.worker');
 
 const PORT = process.env.PORT || 3000;
 const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
@@ -84,6 +85,14 @@ const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
       console.log('✅ Catalog eligibility cron job initialized');
     } catch (cronErr) {
       console.error('❌ Failed to initialize catalog eligibility cron job', cronErr);
+    }
+
+    // 8. Start copy follower equity monitor worker
+    try {
+      copyFollowerEquityMonitorWorker.start();
+      console.log('✅ Copy follower equity monitor worker started');
+    } catch (equityErr) {
+      console.error('❌ Failed to start copy follower equity monitor worker', equityErr);
     }
 
   } catch (err) {

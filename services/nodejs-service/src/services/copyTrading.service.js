@@ -10,9 +10,10 @@ const idGenerator = require('./idGenerator.service');
 const groupsCache = require('./groups.cache.service');
 const { updateUserUsedMargin } = require('./user.margin.service');
 const portfolioEvents = require('./events/portfolio.events');
-const CopyFollowerSlTpService = require('./copyFollowerSlTp.service');
+// CopyFollowerSlTpService removed - equity monitoring now handled by background worker
 const { redisCluster } = require('../../config/redis');
 const axios = require('axios');
+
 
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
@@ -388,13 +389,14 @@ class CopyTradingService {
         return { status: 'skipped', reason: 'Below minimum lot size' };
       }
 
-      // Apply follower's SL/TP modifications
-      const modifiedOrder = await this.applyFollowerSlTpSettings(masterOrder, follower);
+      // Note: Individual order SL/TP removed - copy followers use account-level equity thresholds only
+      // const modifiedOrder = await this.applyFollowerSlTpSettings(masterOrder, follower); // REMOVED
 
       // Generate follower order ID
       const followerOrderId = await idGenerator.generateOrderId();
 
       // Create follower order record
+      // Note: Individual order SL/TP removed - copy followers use account-level equity thresholds only
       const followerOrder = await CopyFollowerOrder.create({
         order_id: followerOrderId,
         order_user_id: follower.id,
@@ -403,8 +405,8 @@ class CopyTradingService {
         order_status: 'QUEUED',
         order_price: masterOrder.order_price,
         order_quantity: lotCalculation.finalLotSize,
-        stop_loss: null, // Set after successful execution
-        take_profit: null, // Set after successful execution
+        stop_loss: null, // Individual order SL/TP removed
+        take_profit: null, // Individual order SL/TP removed
         
         // Copy trading specific fields
         master_order_id: masterOrder.order_id,
@@ -421,11 +423,11 @@ class CopyTradingService {
         
         // Copy settings
         copy_status: 'pending',
-        original_stop_loss: masterOrder.stop_loss,
-        original_take_profit: masterOrder.take_profit,
-        modified_by_follower: modifiedOrder.modified,
-        sl_modification_type: modifiedOrder.slModType,
-        tp_modification_type: modifiedOrder.tpModType,
+        original_stop_loss: null, // Individual order SL/TP removed
+        original_take_profit: null, // Individual order SL/TP removed
+        modified_by_follower: false, // No individual order modifications
+        sl_modification_type: 'none', // No individual order SL/TP
+        tp_modification_type: 'none', // No individual order SL/TP
         
         // Performance fee tracking
         performance_fee_percentage: follower.strategyProvider?.performance_fee || 0,
@@ -484,57 +486,8 @@ class CopyTradingService {
         }
       }
 
-      // Apply SL/TP to copy follower order if execution was successful
-      if (executionResult.success) {
-        try {
-          logger.info('Monitoring equity for copy follower account', {
-            orderId: followerOrder.order_id,
-            followerId: follower.id,
-            copyFollowerAccountId: follower.id,
-            slMode: follower.copy_sl_mode,
-            tpMode: follower.copy_tp_mode
-          });
-
-          const equityMonitorResult = await CopyFollowerSlTpService.monitorEquityAfterOrderPlacement(
-            followerOrder, 
-            follower, 
-            executionResult
-          );
-
-          if (equityMonitorResult.success) {
-            if (equityMonitorResult.autoStopTriggered) {
-              logger.warn('Auto stop copying triggered for copy follower account', {
-                orderId: followerOrder.order_id,
-                copyFollowerAccountId: follower.id,
-                reason: equityMonitorResult.reason,
-                thresholdType: equityMonitorResult.thresholdType,
-                currentEquity: equityMonitorResult.currentEquity
-              });
-            } else {
-              logger.info('Equity monitoring completed - account within thresholds', {
-                orderId: followerOrder.order_id,
-                copyFollowerAccountId: follower.id,
-                currentEquity: equityMonitorResult.currentEquity,
-                withinThresholds: equityMonitorResult.withinThresholds
-              });
-            }
-          } else {
-            logger.warn('Failed to monitor equity for copy follower account', {
-              orderId: followerOrder.order_id,
-              copyFollowerAccountId: follower.id,
-              error: equityMonitorResult.error
-            });
-          }
-
-        } catch (equityMonitorError) {
-          // Equity monitoring failure should not fail the entire copy operation
-          logger.error('Error monitoring equity for copy follower account', {
-            orderId: followerOrder.order_id,
-            copyFollowerAccountId: follower.id,
-            error: equityMonitorError.message
-          });
-        }
-      }
+      // Note: Equity monitoring is now handled by background worker (every 200ms)
+      // No need for individual order monitoring - background worker monitors all accounts efficiently
 
       // Update follower account statistics
       await this.updateFollowerAccountStats(follower, executionResult.success);
@@ -928,92 +881,25 @@ class CopyTradingService {
   }
 
   /**
-   * Apply follower's SL/TP settings to master order
+   * DEPRECATED: Apply follower's SL/TP settings to master order
+   * Individual order SL/TP removed - copy followers use account-level equity thresholds only
    * @param {Object} masterOrder - Master order
    * @param {Object} follower - Follower account
    * @returns {Object} Modified order with SL/TP
+   * @deprecated Use account-level equity monitoring instead
    */
   async applyFollowerSlTpSettings(masterOrder, follower) {
-    try {
-      let stopLoss = masterOrder.stop_loss;
-      let takeProfit = masterOrder.take_profit;
-      let modified = false;
-      let slModType = 'none';
-      let tpModType = 'none';
-
-      const orderPrice = parseFloat(masterOrder.order_price);
-      const isBuy = masterOrder.order_type.toUpperCase().includes('BUY');
-
-      // Apply follower's stop loss settings
-      if (follower.copy_sl_mode && follower.copy_sl_mode !== 'none') {
-        if (follower.copy_sl_mode === 'percentage' && follower.sl_percentage) {
-          const slPercentage = parseFloat(follower.sl_percentage) / 100;
-          if (isBuy) {
-            stopLoss = orderPrice * (1 - slPercentage);
-          } else {
-            stopLoss = orderPrice * (1 + slPercentage);
-          }
-          modified = true;
-          slModType = 'percentage';
-        } else if (follower.copy_sl_mode === 'amount' && follower.sl_amount) {
-          const slAmount = parseFloat(follower.sl_amount);
-          if (isBuy) {
-            stopLoss = orderPrice - slAmount;
-          } else {
-            stopLoss = orderPrice + slAmount;
-          }
-          modified = true;
-          slModType = 'amount';
-        }
-      }
-
-      // Apply follower's take profit settings
-      if (follower.copy_tp_mode && follower.copy_tp_mode !== 'none') {
-        if (follower.copy_tp_mode === 'percentage' && follower.tp_percentage) {
-          const tpPercentage = parseFloat(follower.tp_percentage) / 100;
-          if (isBuy) {
-            takeProfit = orderPrice * (1 + tpPercentage);
-          } else {
-            takeProfit = orderPrice * (1 - tpPercentage);
-          }
-          modified = true;
-          tpModType = 'percentage';
-        } else if (follower.copy_tp_mode === 'amount' && follower.tp_amount) {
-          const tpAmount = parseFloat(follower.tp_amount);
-          if (isBuy) {
-            takeProfit = orderPrice + tpAmount;
-          } else {
-            takeProfit = orderPrice - tpAmount;
-          }
-          modified = true;
-          tpModType = 'amount';
-        }
-      }
-
-      return {
-        stopLoss,
-        takeProfit,
-        modified,
-        slModType,
-        tpModType
-      };
-
-    } catch (error) {
-      logger.error('Failed to apply follower SL/TP settings', {
-        masterOrderId: masterOrder.order_id,
-        followerId: follower.id,
-        error: error.message
-      });
-      
-      // Return original values on error
-      return {
-        stopLoss: masterOrder.stop_loss,
-        takeProfit: masterOrder.take_profit,
-        modified: false,
-        slModType: 'none',
-        tpModType: 'none'
-      };
-    }
+    logger.warn('DEPRECATED: applyFollowerSlTpSettings called. Individual order SL/TP removed for copy followers.', {
+      masterOrderId: masterOrder.order_id,
+      followerId: follower.id
+    });
+    return {
+      stopLoss: null,
+      takeProfit: null,
+      modified: false,
+      slModType: 'none',
+      tpModType: 'none'
+    };
   }
 
   /**
@@ -1069,42 +955,8 @@ class CopyTradingService {
         commission: response.data?.data?.commission_entry || 0
       };
 
-      // Set stop loss and take profit after successful order execution
-      // Get the original SL/TP values from the master order
-      const masterOrderData = await StrategyProviderOrder.findOne({ where: { order_id: followerOrder.master_order_id } });
-      if (masterOrderData && (masterOrderData.stop_loss || masterOrderData.take_profit)) {
-        try {
-          // Apply follower's SL/TP modifications
-          const modifiedOrder = await this.applyFollowerSlTpSettings(masterOrderData, follower);
-          
-          // Update the database record with SL/TP values
-          await CopyFollowerOrder.update({
-            stop_loss: modifiedOrder.stopLoss,
-            take_profit: modifiedOrder.takeProfit,
-            original_stop_loss: masterOrderData.stop_loss,
-            original_take_profit: masterOrderData.take_profit,
-            modified_by_follower: modifiedOrder.modified,
-            sl_modification_type: modifiedOrder.slModType,
-            tp_modification_type: modifiedOrder.tpModType
-          }, {
-            where: { order_id: followerOrder.order_id }
-          });
-          
-          // Set SL/TP via Python service
-          await this.setFollowerOrderSlTp({
-            ...followerOrder.dataValues,
-            stop_loss: modifiedOrder.stopLoss,
-            take_profit: modifiedOrder.takeProfit
-          }, follower);
-        } catch (slTpError) {
-          logger.warn('Failed to set SL/TP for follower order after execution', {
-            followerOrderId: followerOrder.order_id,
-            followerId: follower.id,
-            error: slTpError.message
-          });
-          // Don't fail the main order execution for SL/TP issues
-        }
-      }
+      // Note: Individual order SL/TP removed - copy followers use account-level equity thresholds only
+      // Post-execution SL/TP logic removed - background worker monitors equity thresholds
 
       return result;
 
@@ -1661,86 +1513,18 @@ class CopyTradingService {
   }
 
   /**
-   * Set stop loss and take profit for follower order after execution
+   * DEPRECATED: Set stop loss and take profit for follower order after execution
+   * Individual order SL/TP removed - copy followers use account-level equity thresholds only
    * @param {Object} followerOrder - Follower order
    * @param {Object} follower - Follower account
+   * @deprecated Use account-level equity monitoring instead
    */
   async setFollowerOrderSlTp(followerOrder, follower) {
-    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-    
-    try {
-      // Set stop loss if provided
-      if (followerOrder.stop_loss) {
-        const slPayload = {
-          order_id: followerOrder.order_id,
-          user_id: follower.id.toString(),
-          user_type: 'copy_follower',
-          symbol: followerOrder.symbol,
-          order_type: followerOrder.order_type,
-          stop_loss: parseFloat(followerOrder.stop_loss),
-          order_quantity: followerOrder.order_quantity,
-          order_status: 'OPEN',
-          status: 'OPEN'
-        };
-
-        await axios.post(
-          `${baseUrl}/api/orders/stoploss/set`,
-          slPayload,
-          {
-            timeout: 10000,
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || 'livefxhub'
-            }
-          }
-        );
-
-        logger.info('Set stop loss for follower order', {
-          followerOrderId: followerOrder.order_id,
-          stopLoss: followerOrder.stop_loss
-        });
-      }
-
-      // Set take profit if provided
-      if (followerOrder.take_profit) {
-        const tpPayload = {
-          order_id: followerOrder.order_id,
-          user_id: follower.id.toString(),
-          user_type: 'copy_follower',
-          symbol: followerOrder.symbol,
-          order_type: followerOrder.order_type,
-          take_profit: parseFloat(followerOrder.take_profit),
-          order_quantity: followerOrder.order_quantity,
-          order_status: 'OPEN',
-          status: 'OPEN'
-        };
-
-        await axios.post(
-          `${baseUrl}/api/orders/takeprofit/set`,
-          tpPayload,
-          {
-            timeout: 10000,
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || 'livefxhub'
-            }
-          }
-        );
-
-        logger.info('Set take profit for follower order', {
-          followerOrderId: followerOrder.order_id,
-          takeProfit: followerOrder.take_profit
-        });
-      }
-
-    } catch (error) {
-      logger.error('Failed to set SL/TP for follower order', {
-        followerOrderId: followerOrder.order_id,
-        followerId: follower.id,
-        error: error.message
-      });
-      throw error;
-    }
+    logger.warn('DEPRECATED: setFollowerOrderSlTp called. Individual order SL/TP removed for copy followers.', {
+      followerOrderId: followerOrder.order_id,
+      followerId: follower.id
+    });
+    return { success: false, error: 'Individual order SL/TP not supported for copy followers' };
   }
 
 

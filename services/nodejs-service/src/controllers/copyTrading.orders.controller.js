@@ -218,6 +218,7 @@ async function placeStrategyProviderOrder(req, res) {
     }
 
     // Create strategy provider order in database
+    // Note: SL/TP removed - copy followers use account-level equity thresholds only
     const masterOrder = await StrategyProviderOrder.create({
       order_id,
       order_user_id: parseInt(tokenStrategyProviderId),
@@ -226,8 +227,8 @@ async function placeStrategyProviderOrder(req, res) {
       order_status: 'QUEUED',
       order_price: parsed.order_price,
       order_quantity: parsed.order_quantity,
-      stop_loss: req.body.stop_loss || null,
-      take_profit: req.body.take_profit || null,
+      stop_loss: null, // Individual order SL/TP removed
+      take_profit: null, // Individual order SL/TP removed
       is_master_order: true,
       copy_distribution_status: 'pending',
       status: 'OPEN',
@@ -238,6 +239,7 @@ async function placeStrategyProviderOrder(req, res) {
     // Build payload for Python execution service
     // IMPORTANT: Use strategy provider account ID for config lookup
     // The Redis cache is now correctly populated with strategy_provider:{strategy_provider_account_id}
+    // Note: SL/TP removed - copy followers use account-level equity thresholds only
     const pyPayload = {
       symbol: parsed.symbol,
       order_type: parsed.order_type,
@@ -246,8 +248,8 @@ async function placeStrategyProviderOrder(req, res) {
       user_id: tokenStrategyProviderId.toString(), // Use strategy provider account ID for config lookup
       user_type: 'strategy_provider', // Use strategy_provider user type
       order_id,
-      stop_loss: req.body.stop_loss || null,
-      take_profit: req.body.take_profit || null,
+      // stop_loss: removed - individual order SL/TP not supported
+      // take_profit: removed - individual order SL/TP not supported
       status: 'OPEN',
       order_status: 'OPEN',
       strategy_provider_id: tokenStrategyProviderId.toString() // Add strategy provider ID for reference

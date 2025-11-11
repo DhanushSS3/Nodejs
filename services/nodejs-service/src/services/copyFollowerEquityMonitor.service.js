@@ -1,5 +1,4 @@
 const logger = require('./logger.service');
-const axios = require('axios');
 
 /**
  * Service for monitoring copy follower equity and triggering auto stop copying
@@ -111,8 +110,10 @@ class CopyFollowerEquityMonitorService {
         if (percentageValue <= 0) return null;
 
         if (type === 'stop_loss') {
-          // SL: equity drops to X% of initial investment
-          return initialInvestment * (percentageValue / 100);
+          // SL: equity drops by X% from initial investment
+          // If user sets 0.01% SL, they can lose 0.01% of their investment
+          // Threshold = initial - (initial * percentage/100)
+          return initialInvestment * (1 - percentageValue / 100);
         } else if (type === 'take_profit') {
           // TP: equity reaches X% above initial investment
           return initialInvestment * (1 + percentageValue / 100);
@@ -145,29 +146,39 @@ class CopyFollowerEquityMonitorService {
   }
 
   /**
-   * Get user portfolio data from Python service
+   * Get user portfolio data from Redis (written by portfolio calculator)
    * @param {string} userType - User type (copy_follower)
    * @param {string} userId - User ID
    * @returns {Object|null} Portfolio data
    */
   static async getUserPortfolio(userType, userId) {
     try {
-      const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://localhost:8001';
-      const response = await axios.get(`${pythonServiceUrl}/api/portfolio/${userType}/${userId}`, {
-        timeout: 5000,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-internal-auth': process.env.INTERNAL_API_SECRET || 'livefxhub'
-        }
-      });
-
-      if (response.data && response.data.success) {
-        return response.data.data;
+      const { redisCluster } = require('../../config/redis');
+      
+      // Portfolio calculator writes to: user_portfolio:{user_type:user_id}
+      const portfolioKey = `user_portfolio:{${userType}:${userId}}`;
+      
+      const portfolioData = await redisCluster.hgetall(portfolioKey);
+      
+      if (portfolioData && Object.keys(portfolioData).length > 0) {
+        // Convert string values to numbers where appropriate
+        const portfolio = {
+          equity: parseFloat(portfolioData.equity || 0),
+          balance: parseFloat(portfolioData.balance || 0),
+          margin: parseFloat(portfolioData.margin || 0),
+          free_margin: parseFloat(portfolioData.free_margin || 0),
+          margin_level: parseFloat(portfolioData.margin_level || 0),
+          profit: parseFloat(portfolioData.profit || 0),
+          calc_status: portfolioData.calc_status || 'unknown',
+          last_updated: portfolioData.last_updated || null
+        };
+        
+        return portfolio;
       }
 
       return null;
     } catch (error) {
-      logger.error('Failed to get user portfolio from Python service', {
+      logger.error('Failed to get user portfolio from Redis', {
         userType,
         userId,
         error: error.message
@@ -290,53 +301,32 @@ class CopyFollowerEquityMonitorService {
   }
 
   /**
-   * Close individual copy follower order
+   * Close individual copy follower order using existing copy trading service
    * @param {Object} order - Copy follower order
    * @returns {Object} Close order result
    */
   static async closeCopyFollowerOrder(order) {
     try {
-      // Call copy trading controller to close order
-      const copyTradingOrdersController = require('../controllers/copyTrading.orders.controller');
+      // Use existing copy trading service to close the order
+      const copyTradingService = require('./copyTrading.service');
       
-      const mockReq = {
-        body: {
-          order_id: order.order_id,
-          user_id: String(order.order_user_id),
-          symbol: order.symbol,
-          order_type: order.order_type === 'BUY' ? 'SELL' : 'BUY', // Opposite to close
-          order_quantity: order.order_quantity,
-          close_reason: 'auto_stop_copying'
-        },
-        headers: {
-          'x-internal-auth': process.env.INTERNAL_API_SECRET || 'livefxhub'
-        },
-        user: {},
-        ip: '127.0.0.1',
-        method: 'POST',
-        originalUrl: '/internal/copy-follower/order/close'
+      // Create a mock master order for the close operation
+      const mockMasterOrder = {
+        order_id: `master_${order.order_id}`,
+        order_status: 'CLOSED',
+        close_price: null, // Will be determined by Python service
+        close_time: new Date().toISOString(),
+        net_profit: 0, // Will be calculated by Python service
+        close_reason: 'auto_stop_copying'
       };
-
-      let responseData = null;
-      let statusCode = null;
-      const mockRes = {
-        status: (code) => {
-          statusCode = code;
-          return mockRes;
-        },
-        json: (data) => {
-          responseData = data;
-          return mockRes;
-        }
-      };
-
-      await copyTradingOrdersController.closeCopyFollowerOrder(mockReq, mockRes);
-
+      
+      // Call the existing closeFollowerOrder method
+      const result = await copyTradingService.closeFollowerOrder(order, mockMasterOrder);
+      
       return {
-        success: statusCode === 200,
+        success: true,
         orderId: order.order_id,
-        statusCode,
-        data: responseData
+        result: result
       };
 
     } catch (error) {
@@ -406,21 +396,51 @@ class CopyFollowerEquityMonitorService {
 
   /**
    * Monitor all active copy follower accounts for equity thresholds
-   * Called periodically by a background job
+   * Called periodically by a background job (every 200ms)
+   * Only monitors accounts with:
+   * 1. Active status and copy_status
+   * 2. SL/TP configured (not 'none')
+   * 3. Has open orders (to avoid unnecessary monitoring)
    */
   static async monitorAllCopyFollowerAccounts() {
     try {
       const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+      const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      const { Op } = require('sequelize');
       
-      // Get all active copy follower accounts with SL/TP configured
+      // First, get copy follower accounts that have open orders
+      const accountsWithOpenOrders = await CopyFollowerOrder.findAll({
+        where: {
+          order_status: 'OPEN'
+        },
+        attributes: ['copy_follower_account_id'],
+        group: ['copy_follower_account_id'],
+        raw: true
+      });
+
+      if (accountsWithOpenOrders.length === 0) {
+        // No accounts with open orders, skip monitoring
+        return {
+          success: true,
+          totalAccounts: 0,
+          checkedCount: 0,
+          triggeredCount: 0,
+          errors: []
+        };
+      }
+
+      const accountIdsWithOrders = accountsWithOpenOrders.map(a => a.copy_follower_account_id);
+
+      // Get active copy follower accounts with SL/TP configured AND have open orders
       const accounts = await CopyFollowerAccount.findAll({
         where: {
+          id: { [Op.in]: accountIdsWithOrders },
           copy_status: 'active',
           is_active: 1,
           status: 1,
-          [require('sequelize').Op.or]: [
-            { copy_sl_mode: { [require('sequelize').Op.ne]: 'none' } },
-            { copy_tp_mode: { [require('sequelize').Op.ne]: 'none' } }
+          [Op.or]: [
+            { copy_sl_mode: { [Op.ne]: 'none' } },
+            { copy_tp_mode: { [Op.ne]: 'none' } }
           ]
         }
       });
@@ -458,12 +478,12 @@ class CopyFollowerEquityMonitorService {
         }
       }
 
-      logger.info('Copy follower equity monitoring completed', {
-        totalAccounts: accounts.length,
-        checkedCount,
-        triggeredCount,
-        errorCount: errors.length
-      });
+      // logger.info('Copy follower equity monitoring completed', {
+      //   totalAccounts: accounts.length,
+      //   checkedCount,
+      //   triggeredCount,
+      //   errorCount: errors.length
+      // });
 
       return {
         success: true,
