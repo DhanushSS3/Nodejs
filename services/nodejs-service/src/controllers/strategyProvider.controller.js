@@ -1244,8 +1244,8 @@ async function getPerformanceFeeEarnings(req, res) {
       toDate.setHours(23, 59, 59, 999);
     }
     
-    // If no date range specified, default to last 1000 days for daily aggregation
-    if (!fromDate && !toDate && aggregation === 'daily') {
+    // If no date range specified, default to last 1000 days
+    if (!fromDate && !toDate) {
       toDate = new Date();
       toDate.setHours(23, 59, 59, 999);
       fromDate = new Date();
@@ -1257,7 +1257,8 @@ async function getPerformanceFeeEarnings(req, res) {
       strategyProviderId,
       fromDate: fromDate?.toISOString(),
       toDate: toDate?.toISOString(),
-      aggregation
+      aggregation,
+      rawQuery: req.query
     });
 
     // Build where clause for performance fee transactions
@@ -1315,7 +1316,10 @@ async function getPerformanceFeeEarnings(req, res) {
     let chartTransactions = [];
     let investmentTransactions = [];
 
+    logger.info('Processing aggregation', { aggregation, aggregationType: typeof aggregation });
+    
     if (aggregation === 'daily') {
+      logger.info('Using daily aggregation path');
       // Aggregate performance fees by day
       const dailyEarnings = {};
       performanceFeeTransactions.forEach(txn => {
@@ -1352,6 +1356,7 @@ async function getPerformanceFeeEarnings(req, res) {
         amount: parseFloat(amount.toFixed(2))
       }));
     } else {
+      logger.info('Using raw transactions path');
       // Raw transactions (individual records)
       chartTransactions = performanceFeeTransactions.map(txn => {
         const amount = parseFloat(txn.amount || 0);
