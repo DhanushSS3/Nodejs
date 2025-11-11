@@ -197,6 +197,15 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
     type: DataTypes.DECIMAL(18, 6), 
     defaultValue: 0 
   },
+  // Strategy provider's own investment tracking (similar to copy follower)
+  provider_investment_amount: { 
+    type: DataTypes.DECIMAL(18, 6), 
+    defaultValue: 0 
+  },
+  provider_initial_investment: { 
+    type: DataTypes.DECIMAL(18, 6), 
+    defaultValue: 0 
+  },
   total_trades: { 
     type: DataTypes.INTEGER, 
     defaultValue: 0 
@@ -319,6 +328,17 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
         const crypto = require('crypto');
         strategyProvider.access_link = crypto.randomBytes(16).toString('hex');
       }
+
+      // Set initial provider investment tracking
+      if (!strategyProvider.provider_investment_amount) {
+        strategyProvider.provider_investment_amount = strategyProvider.wallet_balance || 0;
+      }
+      if (!strategyProvider.provider_initial_investment) {
+        strategyProvider.provider_initial_investment = strategyProvider.wallet_balance || 0;
+      }
+      
+      // Note: total_investment tracks follower investments, not provider's own deposits
+      // It starts at 0 and gets updated when followers invest
     },
     beforeUpdate: (strategyProvider) => {
       // Update equity calculation

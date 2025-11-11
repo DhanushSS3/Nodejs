@@ -478,6 +478,32 @@ class InternalTransferService {
       await UserTransaction.create(sourceTransactionData, { transaction });
       await UserTransaction.create(destinationTransactionData, { transaction });
 
+      // Update copy follower investment tracking
+      if (destinationAccount.type === 'copy_follower') {
+        // Money transferred TO copy follower = additional investment
+        await this.updateCopyFollowerInvestment(destinationAccount.id, amount, transaction);
+        // Also update strategy provider's total_investment
+        await this.updateStrategyProviderTotalInvestment(destinationAccount.id, amount, transaction);
+      }
+      
+      if (sourceAccount.type === 'copy_follower') {
+        // Money transferred FROM copy follower = withdrawal (reduce investment)
+        await this.updateCopyFollowerInvestment(sourceAccount.id, -amount, transaction);
+        // Also update strategy provider's total_investment
+        await this.updateStrategyProviderTotalInvestment(sourceAccount.id, -amount, transaction);
+      }
+
+      // Update strategy provider's own investment tracking
+      if (destinationAccount.type === 'strategy_provider') {
+        // Money transferred TO strategy provider = additional provider investment
+        await this.updateStrategyProviderOwnInvestment(destinationAccount.id, amount, transaction);
+      }
+      
+      if (sourceAccount.type === 'strategy_provider') {
+        // Money transferred FROM strategy provider = withdrawal (reduce provider investment)
+        await this.updateStrategyProviderOwnInvestment(sourceAccount.id, -amount, transaction);
+      }
+
       await transaction.commit();
 
       // Update Redis with new balances for background services
@@ -674,7 +700,8 @@ class InternalTransferService {
       // Update source account - use Python portfolio calculator's key format
       const sourceConfigKey = this.getPortfolioCalculatorConfigKey(sourceAccount.type, sourceAccount.id);
       pipeline.hset(sourceConfigKey, {
-        'wallet_balance': sourceBalanceAfter.toString(),
+        'balance': sourceBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
+        'wallet_balance': sourceBalanceAfter.toString(), // Keep for backward compatibility
         'leverage': (sourceAccount.leverage || 100).toString(),
         'group': sourceAccount.group || 'Standard'
       });
@@ -682,7 +709,8 @@ class InternalTransferService {
       // Update destination account - use Python portfolio calculator's key format  
       const destinationConfigKey = this.getPortfolioCalculatorConfigKey(destinationAccount.type, destinationAccount.id);
       pipeline.hset(destinationConfigKey, {
-        'wallet_balance': destinationBalanceAfter.toString(),
+        'balance': destinationBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
+        'wallet_balance': destinationBalanceAfter.toString(), // Keep for backward compatibility
         'leverage': (destinationAccount.leverage || 100).toString(),
         'group': destinationAccount.group || 'Standard'
       });
@@ -691,8 +719,14 @@ class InternalTransferService {
       const sourceLegacyKey = this.getLegacyConfigKey(sourceAccount.type, sourceAccount.id);
       const destinationLegacyKey = this.getLegacyConfigKey(destinationAccount.type, destinationAccount.id);
       
-      pipeline.hset(sourceLegacyKey, 'wallet_balance', sourceBalanceAfter.toString());
-      pipeline.hset(destinationLegacyKey, 'wallet_balance', destinationBalanceAfter.toString());
+      pipeline.hset(sourceLegacyKey, {
+        'balance': sourceBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
+        'wallet_balance': sourceBalanceAfter.toString() // Keep for backward compatibility
+      });
+      pipeline.hset(destinationLegacyKey, {
+        'balance': destinationBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
+        'wallet_balance': destinationBalanceAfter.toString() // Keep for backward compatibility
+      });
 
       // Invalidate portfolio cache to force recalculation
       const sourcePortfolioKey = this.getPortfolioKey(sourceAccount.type, sourceAccount.id);
@@ -908,6 +942,169 @@ class InternalTransferService {
         throw new Error(`Unknown account type: ${accountType}`);
     }
   }
+
+  /**
+   * Update copy follower investment tracking when money is transferred to/from the account
+   * This is crucial for accurate return calculations
+   * @param {number} copyFollowerAccountId - Copy follower account ID
+   * @param {number} transferAmount - Amount being transferred (positive for deposits, negative for withdrawals)
+   * @param {Object} transaction - Database transaction
+   */
+  static async updateCopyFollowerInvestment(copyFollowerAccountId, transferAmount, transaction) {
+    try {
+      const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+      
+      // Get current copy follower account
+      const copyFollowerAccount = await CopyFollowerAccount.findByPk(copyFollowerAccountId, { transaction });
+      
+      if (!copyFollowerAccount) {
+        throw new Error(`Copy follower account ${copyFollowerAccountId} not found`);
+      }
+
+      // Update investment amounts
+      const currentInvestment = parseFloat(copyFollowerAccount.investment_amount || 0);
+      const newInvestmentAmount = Math.max(0, currentInvestment + transferAmount); // Prevent negative investment
+
+      // Determine transfer type for logging
+      const transferType = transferAmount > 0 ? 'deposit' : 'withdrawal';
+      
+      // Update the account with new investment amount
+      // Note: We don't update initial_investment as it should remain the original amount
+      // The return calculation will use current vs initial to show total return including additional investments
+      await copyFollowerAccount.update({
+        investment_amount: newInvestmentAmount
+      }, { transaction });
+
+      logger.info('Updated copy follower investment tracking', {
+        copyFollowerAccountId,
+        transferType,
+        transferAmount,
+        previousInvestment: currentInvestment,
+        newInvestmentAmount,
+        initialInvestment: copyFollowerAccount.initial_investment
+      });
+
+    } catch (error) {
+      logger.error('Failed to update copy follower investment tracking', {
+        copyFollowerAccountId,
+        transferAmount,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update strategy provider's total_investment when copy followers add/withdraw money
+   * @param {number} copyFollowerAccountId - Copy follower account ID
+   * @param {number} transferAmount - Amount being transferred (positive for deposits, negative for withdrawals)
+   * @param {Object} transaction - Database transaction
+   */
+  static async updateStrategyProviderTotalInvestment(copyFollowerAccountId, transferAmount, transaction) {
+    try {
+      const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+      const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+      
+      // Get copy follower account to find the strategy provider
+      const copyFollowerAccount = await CopyFollowerAccount.findByPk(copyFollowerAccountId, { 
+        attributes: ['strategy_provider_id'],
+        transaction 
+      });
+      
+      if (!copyFollowerAccount) {
+        throw new Error(`Copy follower account ${copyFollowerAccountId} not found`);
+      }
+
+      // Update strategy provider's total_investment
+      const strategyProviderId = copyFollowerAccount.strategy_provider_id;
+      const transferType = transferAmount > 0 ? 'deposit' : 'withdrawal';
+      
+      if (transferAmount > 0) {
+        // Increase total_investment
+        await StrategyProviderAccount.increment('total_investment', {
+          by: transferAmount,
+          where: { id: strategyProviderId },
+          transaction
+        });
+      } else {
+        // Decrease total_investment (but don't go below 0)
+        const strategyProvider = await StrategyProviderAccount.findByPk(strategyProviderId, { transaction });
+        const currentTotalInvestment = parseFloat(strategyProvider.total_investment || 0);
+        const newTotalInvestment = Math.max(0, currentTotalInvestment + transferAmount);
+        
+        await StrategyProviderAccount.update({
+          total_investment: newTotalInvestment
+        }, {
+          where: { id: strategyProviderId },
+          transaction
+        });
+      }
+
+      logger.info('Updated strategy provider total_investment', {
+        strategyProviderId,
+        copyFollowerAccountId,
+        transferType,
+        transferAmount
+      });
+
+    } catch (error) {
+      logger.error('Failed to update strategy provider total_investment', {
+        copyFollowerAccountId,
+        transferAmount,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update strategy provider's own investment tracking when they deposit/withdraw money
+   * @param {number} strategyProviderAccountId - Strategy provider account ID
+   * @param {number} transferAmount - Amount being transferred (positive for deposits, negative for withdrawals)
+   * @param {Object} transaction - Database transaction
+   */
+  static async updateStrategyProviderOwnInvestment(strategyProviderAccountId, transferAmount, transaction) {
+    try {
+      const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+      
+      // Get current strategy provider account
+      const strategyProviderAccount = await StrategyProviderAccount.findByPk(strategyProviderAccountId, { transaction });
+      
+      if (!strategyProviderAccount) {
+        throw new Error(`Strategy provider account ${strategyProviderAccountId} not found`);
+      }
+
+      // Update provider investment amounts
+      const currentInvestment = parseFloat(strategyProviderAccount.provider_investment_amount || 0);
+      const newInvestmentAmount = Math.max(0, currentInvestment + transferAmount); // Prevent negative investment
+
+      // Determine transfer type for logging
+      const transferType = transferAmount > 0 ? 'deposit' : 'withdrawal';
+      
+      // Update the account with new provider investment amount
+      await strategyProviderAccount.update({
+        provider_investment_amount: newInvestmentAmount
+      }, { transaction });
+
+      logger.info('Updated strategy provider own investment tracking', {
+        strategyProviderAccountId,
+        transferType,
+        transferAmount,
+        previousInvestment: currentInvestment,
+        newInvestmentAmount,
+        initialInvestment: strategyProviderAccount.provider_initial_investment
+      });
+
+    } catch (error) {
+      logger.error('Failed to update strategy provider own investment tracking', {
+        strategyProviderAccountId,
+        transferAmount,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
 }
 
 module.exports = InternalTransferService;

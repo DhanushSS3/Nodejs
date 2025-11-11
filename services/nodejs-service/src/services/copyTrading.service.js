@@ -780,20 +780,42 @@ class CopyTradingService {
       let equitySource;
       
       if (!portfolioData || !portfolioData.equity) {
-        // Fallback: Use wallet balance when no portfolio data exists
-        // This happens when strategy provider has no open orders or portfolio calculation isn't running
-        logger.warn('No live equity data available in Redis portfolio, using wallet balance as fallback', {
+        // Enhanced fallback: Check Redis config for updated balance first, then DB wallet_balance
+        let configBalance = null;
+        try {
+          const configKey = `user:{strategy_provider:${masterOrder.order_user_id}}:config`;
+          const configData = await redisCluster.hgetall(configKey);
+          configBalance = parseFloat(configData.balance || configData.wallet_balance || 0);
+          
+          logger.info('Checking Redis config for updated balance', {
+            strategyProviderId: masterOrder.order_user_id,
+            configKey,
+            configBalance,
+            configFields: Object.keys(configData || {})
+          });
+        } catch (configError) {
+          logger.warn('Failed to fetch config balance from Redis', {
+            strategyProviderId: masterOrder.order_user_id,
+            error: configError.message
+          });
+        }
+        
+        // Use config balance if available and valid, otherwise fallback to DB wallet_balance
+        masterEquity = (configBalance && configBalance > 0) ? configBalance : parseFloat(strategyProvider.wallet_balance || 0);
+        equitySource = (configBalance && configBalance > 0) ? 'redis_config_balance' : 'db_wallet_balance_fallback';
+        
+        logger.warn('No live equity data available in Redis portfolio, using enhanced fallback', {
           strategyProviderId: masterOrder.order_user_id,
           portfolioKey,
           portfolioData: portfolioData ? Object.keys(portfolioData) : null,
-          walletBalance: strategyProvider.wallet_balance
+          configBalance,
+          dbWalletBalance: strategyProvider.wallet_balance,
+          finalEquity: masterEquity,
+          equitySource
         });
         
-        masterEquity = parseFloat(strategyProvider.wallet_balance || 0);
-        equitySource = 'wallet_balance_fallback';
-        
         if (masterEquity <= 0) {
-          throw new Error(`Strategy provider ${masterOrder.order_user_id} has no equity available (wallet balance: ${masterEquity})`);
+          throw new Error(`Strategy provider ${masterOrder.order_user_id} has no equity available (final equity: ${masterEquity}, source: ${equitySource})`);
         }
       } else {
         masterEquity = parseFloat(portfolioData.equity);

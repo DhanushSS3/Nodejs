@@ -169,25 +169,28 @@ class StrategyProviderStatsService {
   }
 
   /**
-   * Calculate total return percentage based on initial balance
+   * Calculate total return percentage based on strategy provider's own account performance
+   * This is how major copy trading platforms (eToro, ZuluTrade, FXTM) calculate strategy provider returns
    * @param {Object} strategyProvider - Strategy provider account
    * @param {Array} closedOrders - Array of closed orders
    * @returns {number} Total return percentage
    */
   static calculateTotalReturn(strategyProvider, closedOrders) {
-    const initialBalance = parseFloat(strategyProvider.wallet_balance || 0);
+    // Strategy provider return = (Current Equity - Provider Investment) / Provider Investment * 100
+    // Current Equity = wallet_balance + net_profit
+    // Provider Investment = provider_investment_amount (tracks their own deposits/withdrawals)
     
-    if (initialBalance <= 0) return 0;
-
-    const totalNetProfit = closedOrders.reduce((sum, order) => 
-      sum + parseFloat(order.net_profit || 0), 0
-    );
-
-    const totalReturn = (totalNetProfit / initialBalance) * 100;
+    const currentEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
+    const providerInvestment = parseFloat(strategyProvider.provider_investment_amount || 0);
     
-    logger.debug('Total return calculated', {
-      initialBalance,
-      totalNetProfit,
+    if (providerInvestment <= 0) return 0;
+
+    const totalReturn = ((currentEquity - providerInvestment) / providerInvestment) * 100;
+    
+    logger.debug('Strategy provider total return calculated', {
+      currentEquity,
+      providerInvestment,
+      initialInvestment: strategyProvider.provider_initial_investment,
       totalReturn: totalReturn.toFixed(4)
     });
 
@@ -195,16 +198,12 @@ class StrategyProviderStatsService {
   }
 
   /**
-   * Calculate three month return percentage
+   * Calculate three month return percentage based on strategy provider's own performance
    * @param {Object} strategyProvider - Strategy provider account
    * @param {Array} closedOrders - Array of closed orders
    * @returns {number} Three month return percentage
    */
   static calculateThreeMonthReturn(strategyProvider, closedOrders) {
-    const initialBalance = parseFloat(strategyProvider.wallet_balance || 0);
-    
-    if (initialBalance <= 0) return 0;
-
     // Get orders closed in last 3 months
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
@@ -217,10 +216,15 @@ class StrategyProviderStatsService {
       sum + parseFloat(order.net_profit || 0), 0
     );
 
-    const threeMonthReturn = (threeMonthProfit / initialBalance) * 100;
+    // Use provider investment as baseline for 3-month return
+    const providerInvestment = parseFloat(strategyProvider.provider_investment_amount || 0);
+    
+    if (providerInvestment <= 0) return 0;
+
+    const threeMonthReturn = (threeMonthProfit / providerInvestment) * 100;
     
     logger.debug('Three month return calculated', {
-      initialBalance,
+      providerInvestment,
       recentOrdersCount: recentOrders.length,
       threeMonthProfit,
       threeMonthReturn: threeMonthReturn.toFixed(4)
@@ -230,16 +234,19 @@ class StrategyProviderStatsService {
   }
 
   /**
-   * Calculate maximum drawdown percentage
+   * Calculate maximum drawdown percentage based on strategy provider's own account
    * @param {Object} strategyProvider - Strategy provider account
    * @param {Array} closedOrders - Array of closed orders (should be sorted by created_at ASC)
    * @returns {number} Maximum drawdown percentage
    */
   static calculateMaxDrawdown(strategyProvider, closedOrders) {
-    const initialBalance = parseFloat(strategyProvider.wallet_balance || 0);
-    
-    if (initialBalance <= 0 || closedOrders.length === 0) return 0;
+    if (closedOrders.length === 0) return 0;
 
+    // Use provider initial investment as starting balance
+    const initialBalance = parseFloat(strategyProvider.provider_initial_investment || 0);
+    
+    if (initialBalance <= 0) return 0;
+    
     let runningBalance = initialBalance;
     let peakBalance = initialBalance;
     let maxDrawdownValue = 0;

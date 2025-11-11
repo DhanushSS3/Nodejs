@@ -224,7 +224,16 @@ class ProtobufMarketListener:
                         async with self.market_service.redis.pipeline() as pipe:
                             ts = int(time.time() * 1000)
                             for symbol, bid, ask in updates:
-                                pipe.hset(f"market:{symbol}", mapping={"bid": bid, "ask": ask, "ts": ts})
+                                # Build mapping with only valid values
+                                mapping = {"ts": ts}
+                                if bid is not None:
+                                    mapping["bid"] = bid
+                                if ask is not None:
+                                    mapping["ask"] = ask
+                                
+                                # Only update if we have at least one price
+                                if "bid" in mapping or "ask" in mapping:
+                                    pipe.hset(f"market:{symbol}", mapping=mapping)
                             await pipe.execute()
                         
                         log_pipeline_operation("cluster", f"market_data_batch_{len(updates)}", len(updates), data_operation_id)
@@ -309,9 +318,23 @@ class ProtobufMarketListener:
                 market_data = decoded_data.get('data', {}).get('market_prices', {})
                 now_ms = int(time.time() * 1000)
                 for symbol, price_data in market_data.items():
-                    bid = float(price_data.get('sell', 0)) if 'sell' in price_data else None
-                    ask = float(price_data.get('buy', 0)) if 'buy' in price_data else None
-                    # Only enqueue if at least one price exists
+                    # Extract bid/ask, ensuring we have valid numeric values
+                    bid = None
+                    ask = None
+                    
+                    if 'sell' in price_data and price_data['sell'] is not None:
+                        try:
+                            bid = float(price_data['sell'])
+                        except (ValueError, TypeError):
+                            bid = None
+                    
+                    if 'buy' in price_data and price_data['buy'] is not None:
+                        try:
+                            ask = float(price_data['buy'])
+                        except (ValueError, TypeError):
+                            ask = None
+                    
+                    # Only enqueue if at least one valid price exists
                     if bid is not None or ask is not None:
                         prev = self.last_values.get(symbol)
                         updated = False

@@ -1292,6 +1292,12 @@ async function getCopyTradingOverview(req, res) {
         }
       }
 
+      // Calculate individual return for this copy follower account
+      // Return = (Current Equity - Investment) / Investment * 100
+      const currentEquity = walletBalance + netProfit;
+      const individualReturn = currentInvestment > 0 ? 
+        ((currentEquity - currentInvestment) / currentInvestment * 100) : 0;
+
       followingStrategies.push({
         copy_follower_account_id: account.id,
         copy_follower_account_name: account.account_name,
@@ -1304,6 +1310,7 @@ async function getCopyTradingOverview(req, res) {
         current_wallet_balance: walletBalance,
         net_profit: netProfit,
         current_equity_ratio: parseFloat(account.current_equity_ratio || 1.0),
+        return_percentage: parseFloat(individualReturn.toFixed(2)),
         copy_status: account.copy_status,
         account_status: account.status, // 1 = active, 0 = inactive
         is_active: account.is_active, // 1 = active, 0 = inactive
@@ -1314,6 +1321,12 @@ async function getCopyTradingOverview(req, res) {
     // Get count of active strategies being followed
     const activeStrategiesCount = followingStrategies.filter(s => s.copy_status === 'active').length;
 
+    // Calculate overall return percentage
+    // Total Return = (Total Current Equity - Total Investment) / Total Investment * 100
+    const totalCurrentEquity = totalWalletBalance + totalNetProfit;
+    const totalReturnPercentage = totalCurrentInvestment > 0 ? 
+      ((totalCurrentEquity - totalCurrentInvestment) / totalCurrentInvestment * 100) : 0;
+
     const overview = {
       user_id: userId,
       total_strategies_following: followingStrategies.length,
@@ -1322,8 +1335,7 @@ async function getCopyTradingOverview(req, res) {
       total_initial_investment: totalInitialInvestment,
       total_wallet_balance: totalWalletBalance,
       total_net_profit: totalNetProfit,
-      total_return_percentage: totalInitialInvestment > 0 ? 
-        ((totalWalletBalance + totalNetProfit - totalInitialInvestment) / totalInitialInvestment * 100) : 0,
+      total_return_percentage: parseFloat(totalReturnPercentage.toFixed(2)),
       following_strategies: followingStrategies
     };
 
