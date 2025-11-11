@@ -1159,8 +1159,13 @@ async function logoutStrategyProvider(req, res) {
 }
 
 /**
- * Get strategy provider performance fee earnings overview
+ * Get strategy provider performance fee earnings overview with date filtering and daily aggregation
  * GET /api/strategy-providers/performance-fee-earnings
+ * Query parameters:
+ * - strategy_provider_id: Strategy provider ID (required if not using strategy provider JWT)
+ * - from_date: Start date (YYYY-MM-DD format, optional)
+ * - to_date: End date (YYYY-MM-DD format, optional)
+ * - aggregation: 'daily' (default) or 'raw' for individual transactions
  */
 async function getPerformanceFeeEarnings(req, res) {
   try {
@@ -1208,75 +1213,181 @@ async function getPerformanceFeeEarnings(req, res) {
       strategyProviderId = parsedStrategyId;
     }
 
+    // Parse query parameters for date filtering
+    const { from_date, to_date, aggregation = 'daily' } = req.query;
+    
+    // Validate date parameters
+    let fromDate = null;
+    let toDate = null;
+    
+    if (from_date) {
+      fromDate = new Date(from_date);
+      if (isNaN(fromDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid from_date format. Use YYYY-MM-DD format.'
+        });
+      }
+      // Set to start of day
+      fromDate.setHours(0, 0, 0, 0);
+    }
+    
+    if (to_date) {
+      toDate = new Date(to_date);
+      if (isNaN(toDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid to_date format. Use YYYY-MM-DD format.'
+        });
+      }
+      // Set to end of day
+      toDate.setHours(23, 59, 59, 999);
+    }
+    
+    // If no date range specified, default to last 1000 days for daily aggregation
+    if (!fromDate && !toDate && aggregation === 'daily') {
+      toDate = new Date();
+      toDate.setHours(23, 59, 59, 999);
+      fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - 1000);
+      fromDate.setHours(0, 0, 0, 0);
+    }
+
     logger.info('Getting performance fee earnings for strategy provider', { 
-      strategyProviderId 
+      strategyProviderId,
+      fromDate: fromDate?.toISOString(),
+      toDate: toDate?.toISOString(),
+      aggregation
     });
 
-    // Single efficient query to get all performance fee transactions
-    // Only select essential fields for chart: amount and date
+    // Build where clause for performance fee transactions
+    const performanceFeeWhere = {
+      user_id: strategyProviderId,
+      user_type: 'strategy_provider',
+      type: 'performance_fee_earned',
+      status: 'completed'
+    };
+    
+    // Add date filters if specified
+    if (fromDate || toDate) {
+      performanceFeeWhere.created_at = {};
+      if (fromDate) performanceFeeWhere.created_at[Op.gte] = fromDate;
+      if (toDate) performanceFeeWhere.created_at[Op.lte] = toDate;
+    }
+
+    // Query performance fee transactions
     const performanceFeeTransactions = await UserTransaction.findAll({
-      where: {
-        user_id: strategyProviderId,
-        user_type: 'strategy_provider',
-        type: 'performance_fee_earned',
-        status: 'completed'
-      },
+      where: performanceFeeWhere,
       attributes: [
         'amount',
         'created_at'
       ],
-      order: [['created_at', 'ASC']], // Chronological order for frontend processing
+      order: [['created_at', 'ASC']],
       raw: true
     });
 
-    // Calculate totals efficiently in JavaScript (faster than separate DB query)
-    let totalEarnings = 0;
-    const totalTransactions = performanceFeeTransactions.length;
+    // Build where clause for copy follower investments
+    const investmentWhere = {
+      strategy_provider_id: strategyProviderId,
+      copy_status: 'active',
+      is_active: 1
+    };
+    
+    // Add date filters for investments if specified
+    if (fromDate || toDate) {
+      investmentWhere.created_at = {};
+      if (fromDate) investmentWhere.created_at[Op.gte] = fromDate;
+      if (toDate) investmentWhere.created_at[Op.lte] = toDate;
+    }
 
-    // Format all transactions for frontend chart - minimal data
-    const chartTransactions = performanceFeeTransactions.map(txn => {
-      const amount = parseFloat(txn.amount || 0);
-      totalEarnings += amount; // Calculate total while mapping
-      
-      return {
-        amount: amount,
-        date: txn.created_at
-      };
-    });
-
-    // Get active copy follower investments for this strategy provider
+    // Query copy follower investments
     const copyFollowerInvestments = await CopyFollowerAccount.findAll({
-      where: {
-        strategy_provider_id: strategyProviderId,
-        copy_status: 'active',
-        is_active: 1
-      },
+      where: investmentWhere,
       attributes: [
         'investment_amount',
         'created_at'
       ],
-      order: [['created_at', 'ASC']], // Chronological order for frontend processing
+      order: [['created_at', 'ASC']],
       raw: true
     });
 
-    // Format copy follower investments for chart
-    const investmentTransactions = copyFollowerInvestments.map(investment => ({
-      amount: parseFloat(investment.investment_amount || 0),
-      date: investment.created_at
-    }));
+    let totalEarnings = 0;
+    let chartTransactions = [];
+    let investmentTransactions = [];
+
+    if (aggregation === 'daily') {
+      // Aggregate performance fees by day
+      const dailyEarnings = {};
+      performanceFeeTransactions.forEach(txn => {
+        const amount = parseFloat(txn.amount || 0);
+        totalEarnings += amount;
+        
+        const dateKey = new Date(txn.created_at).toISOString().split('T')[0]; // YYYY-MM-DD
+        if (!dailyEarnings[dateKey]) {
+          dailyEarnings[dateKey] = 0;
+        }
+        dailyEarnings[dateKey] += amount;
+      });
+
+      // Convert to array format for frontend
+      chartTransactions = Object.entries(dailyEarnings).map(([date, amount]) => ({
+        date: date,
+        amount: parseFloat(amount.toFixed(2))
+      }));
+
+      // Aggregate investments by day
+      const dailyInvestments = {};
+      copyFollowerInvestments.forEach(investment => {
+        const amount = parseFloat(investment.investment_amount || 0);
+        const dateKey = new Date(investment.created_at).toISOString().split('T')[0]; // YYYY-MM-DD
+        if (!dailyInvestments[dateKey]) {
+          dailyInvestments[dateKey] = 0;
+        }
+        dailyInvestments[dateKey] += amount;
+      });
+
+      // Convert to array format for frontend
+      investmentTransactions = Object.entries(dailyInvestments).map(([date, amount]) => ({
+        date: date,
+        amount: parseFloat(amount.toFixed(2))
+      }));
+    } else {
+      // Raw transactions (individual records)
+      chartTransactions = performanceFeeTransactions.map(txn => {
+        const amount = parseFloat(txn.amount || 0);
+        totalEarnings += amount;
+        
+        return {
+          amount: amount,
+          date: txn.created_at
+        };
+      });
+
+      investmentTransactions = copyFollowerInvestments.map(investment => ({
+        amount: parseFloat(investment.investment_amount || 0),
+        date: investment.created_at
+      }));
+    }
 
     const response = {
       strategy_provider_id: strategyProviderId,
       total_performance_fee_earned: parseFloat(totalEarnings.toFixed(2)),
-      total_fee_transactions: totalTransactions,
-      performance_fee_transactions: chartTransactions, // Performance fee earnings with date
-      copy_follower_investments: investmentTransactions // Copy follower investments with date
+      total_fee_transactions: performanceFeeTransactions.length,
+      aggregation: aggregation,
+      date_range: {
+        from_date: fromDate?.toISOString().split('T')[0] || null,
+        to_date: toDate?.toISOString().split('T')[0] || null
+      },
+      performance_fee_transactions: chartTransactions,
+      copy_follower_investments: investmentTransactions
     };
 
     logger.info('Performance fee earnings retrieved successfully', {
       strategyProviderId,
       totalEarnings: totalEarnings.toFixed(2),
-      totalTransactions,
+      totalTransactions: performanceFeeTransactions.length,
+      aggregation,
+      dateRange: response.date_range,
       performanceFeeTransactions: chartTransactions.length,
       copyFollowerInvestments: investmentTransactions.length
     });

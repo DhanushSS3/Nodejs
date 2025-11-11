@@ -780,6 +780,7 @@ async function closeStrategyProviderOrder(req, res) {
       order_status: incomingOrderStatus,
       close_id,
       order_quantity: parseFloat(order.order_quantity), // Include quantity from existing order
+      close_message: body.close_message || 'User closed', // Add close message for manual closes
     };
     if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
     if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;

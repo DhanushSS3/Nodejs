@@ -1212,6 +1212,7 @@ class CopyTradingService {
         status: 'CLOSED',                     // Required by Python schema
         order_status: 'CLOSED',               // Required by Python schema
         close_id: String(close_id),           // Add close_id for copy follower order
+        close_message: masterOrder.close_message || null, // Add close message
         copy_trading: true
       };
 
@@ -1248,6 +1249,7 @@ class CopyTradingService {
           // Note: net_profit will be updated later with adjusted value after performance fee calculation
           if (result.swap != null) updateFields.swap = String(result.swap);
           if (result.total_commission != null) updateFields.commission = String(result.total_commission);
+          if (masterOrder.close_message) updateFields.close_message = masterOrder.close_message;
           
           // Update copy follower order in database
           await CopyFollowerOrder.update(updateFields, {
@@ -1292,8 +1294,10 @@ class CopyTradingService {
               let adjustedNetProfit = Number(result.net_profit) || 0;
               let performanceFeeResult = null;
               
-              if (adjustedNetProfit > 0) {
-                try {
+              // Always update net profit in order record, regardless of profit/loss
+              try {
+                if (adjustedNetProfit > 0) {
+                  // Try to apply performance fee for profitable orders
                   const { calculateAndApplyPerformanceFee } = require('./performanceFee.service');
                   performanceFeeResult = await calculateAndApplyPerformanceFee({
                     copyFollowerOrderId: copiedOrder.order_id,
@@ -1307,31 +1311,50 @@ class CopyTradingService {
                   if (performanceFeeResult && performanceFeeResult.performanceFeeCharged) {
                     adjustedNetProfit = performanceFeeResult.adjustedNetProfit;
                     
-                    // Update copy follower order with final net_profit after performance fee
-                    await CopyFollowerOrder.update({
-                      net_profit: String(adjustedNetProfit)
-                    }, {
-                      where: { order_id: copiedOrder.order_id }
-                    });
-                    
                     logger.info('Performance fee applied for copy follower local close', {
                       copiedOrderId: copiedOrder.order_id,
                       originalNetProfit: result.net_profit,
                       performanceFeeAmount: performanceFeeResult.performanceFeeAmount,
                       adjustedNetProfit
                     });
-                  } else {
-                    // No performance fee, use original net profit
-                    await CopyFollowerOrder.update({
-                      net_profit: String(adjustedNetProfit)
-                    }, {
-                      where: { order_id: copiedOrder.order_id }
-                    });
                   }
-                } catch (performanceFeeError) {
-                  logger.error('Failed to apply performance fee for copy follower local close', {
+                }
+                
+                // Update copy follower order with net_profit (for both profit and loss)
+                await CopyFollowerOrder.update({
+                  net_profit: String(adjustedNetProfit)
+                }, {
+                  where: { order_id: copiedOrder.order_id }
+                });
+                
+                logger.info('Copy follower order net profit updated in database', {
+                  copiedOrderId: copiedOrder.order_id,
+                  net_profit: adjustedNetProfit,
+                  hasPerformanceFee: performanceFeeResult?.performanceFeeCharged || false
+                });
+                
+              } catch (performanceFeeError) {
+                logger.error('Failed to apply performance fee for copy follower local close', {
+                  copiedOrderId: copiedOrder.order_id,
+                  error: performanceFeeError.message
+                });
+                
+                // Still update net profit even if performance fee calculation fails
+                try {
+                  await CopyFollowerOrder.update({
+                    net_profit: String(adjustedNetProfit)
+                  }, {
+                    where: { order_id: copiedOrder.order_id }
+                  });
+                  
+                  logger.info('Copy follower order net profit updated (performance fee failed)', {
                     copiedOrderId: copiedOrder.order_id,
-                    error: performanceFeeError.message
+                    net_profit: adjustedNetProfit
+                  });
+                } catch (updateError) {
+                  logger.error('Failed to update copy follower order net profit', {
+                    copiedOrderId: copiedOrder.order_id,
+                    error: updateError.message
                   });
                 }
               }

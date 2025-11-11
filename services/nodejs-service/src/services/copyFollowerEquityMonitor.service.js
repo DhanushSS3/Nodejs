@@ -317,7 +317,8 @@ class CopyFollowerEquityMonitorService {
         close_price: null, // Will be determined by Python service
         close_time: new Date().toISOString(),
         net_profit: 0, // Will be calculated by Python service
-        close_reason: 'auto_stop_copying'
+        close_reason: 'auto_stop_copying',
+        close_message: 'Auto SL/TP' // Short close message
       };
       
       // Call the existing closeFollowerOrder method
