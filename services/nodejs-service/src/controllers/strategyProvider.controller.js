@@ -1418,6 +1418,208 @@ async function getPerformanceFeeEarnings(req, res) {
   }
 }
 
+/**
+ * Get copy follower investment details for strategy provider
+ * GET /api/strategy-providers/copy-follower-investments
+ * Returns: account number, copy status, net profit, total fees earned from each copy follower
+ */
+async function getCopyFollowerInvestments(req, res) {
+  try {
+    // Handle both strategy provider JWT and main account JWT
+    let strategyProviderId = req.user?.strategy_provider_id;
+    
+    // If not strategy provider JWT, check if it's main account accessing specific strategy
+    if (!strategyProviderId) {
+      const requestedStrategyId = req.query.strategy_provider_id || req.params.strategy_provider_id;
+      const userId = getUserId(req.user);
+      
+      if (!requestedStrategyId || !userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Strategy provider ID required or strategy provider authentication required'
+        });
+      }
+      
+      // Parse strategy provider ID as integer
+      const parsedStrategyId = parseInt(requestedStrategyId);
+      if (isNaN(parsedStrategyId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid strategy provider ID format'
+        });
+      }
+      
+      // Verify the user owns this strategy provider account
+      const strategyAccount = await StrategyProviderAccount.findOne({
+        where: {
+          id: parsedStrategyId,
+          user_id: userId,
+          status: 1,
+          is_active: 1
+        }
+      });
+      
+      if (!strategyAccount) {
+        return res.status(403).json({
+          success: false,
+          message: 'Strategy provider account not found or access denied'
+        });
+      }
+      
+      strategyProviderId = parsedStrategyId;
+    }
+
+    logger.info('Getting copy follower investments for strategy provider', { 
+      strategyProviderId
+    });
+
+    // Get all copy follower accounts for this strategy provider
+    const copyFollowerAccounts = await CopyFollowerAccount.findAll({
+      where: {
+        strategy_provider_id: strategyProviderId,
+        status: 1,
+        is_active: 1
+      },
+      attributes: [
+        'id',
+        'account_number',
+        'account_name',
+        'copy_status',
+        'net_profit',
+        'investment_amount',
+        'initial_investment',
+        'total_fees_paid',
+        'subscription_date',
+        'last_copy_date',
+        'user_id'
+      ],
+      order: [['subscription_date', 'DESC']]
+    });
+
+    // Get performance fees earned from each copy follower
+    const copyFollowerIds = copyFollowerAccounts.map(account => account.id);
+    
+    let performanceFeesEarned = [];
+    if (copyFollowerIds.length > 0) {
+      performanceFeesEarned = await UserTransaction.findAll({
+        where: {
+          user_id: strategyProviderId,
+          user_type: 'strategy_provider',
+          type: 'performance_fee_earned',
+          status: 'completed'
+        },
+        attributes: [
+          'metadata',
+          'amount',
+          'created_at'
+        ],
+        raw: true
+      });
+    }
+
+    // Group performance fees by copy follower user ID
+    const feesByFollower = {};
+    performanceFeesEarned.forEach(fee => {
+      try {
+        const metadata = typeof fee.metadata === 'string' ? JSON.parse(fee.metadata) : fee.metadata;
+        const copyFollowerUserId = metadata?.copy_follower_user_id;
+        
+        if (copyFollowerUserId) {
+          if (!feesByFollower[copyFollowerUserId]) {
+            feesByFollower[copyFollowerUserId] = {
+              total_fees_earned: 0,
+              fee_transactions: 0
+            };
+          }
+          feesByFollower[copyFollowerUserId].total_fees_earned += parseFloat(fee.amount || 0);
+          feesByFollower[copyFollowerUserId].fee_transactions += 1;
+        }
+      } catch (error) {
+        logger.warn('Failed to parse performance fee metadata', { 
+          feeId: fee.id,
+          error: error.message 
+        });
+      }
+    });
+
+    // Format response data
+    const copyFollowerInvestments = copyFollowerAccounts.map(account => {
+      const feesData = feesByFollower[account.user_id] || { 
+        total_fees_earned: 0, 
+        fee_transactions: 0 
+      };
+
+      return {
+        copy_follower_account_id: account.id,
+        account_number: account.account_number,
+        account_name: account.account_name,
+        copy_status: account.copy_status,
+        investment_amount: parseFloat(account.investment_amount || 0),
+        initial_investment: parseFloat(account.initial_investment || 0),
+        net_profit: parseFloat(account.net_profit || 0),
+        total_fees_paid_by_follower: parseFloat(account.total_fees_paid || 0),
+        total_fees_earned_from_follower: parseFloat(feesData.total_fees_earned.toFixed(2)),
+        fee_transactions_count: feesData.fee_transactions,
+        subscription_date: account.subscription_date,
+        last_copy_date: account.last_copy_date,
+        // Calculate performance metrics
+        roi_percentage: account.initial_investment > 0 
+          ? parseFloat(((parseFloat(account.net_profit || 0) / parseFloat(account.initial_investment || 0)) * 100).toFixed(2))
+          : 0,
+        current_equity: parseFloat((parseFloat(account.investment_amount || 0) + parseFloat(account.net_profit || 0)).toFixed(2))
+      };
+    });
+
+    // Calculate summary statistics
+    const totalInvestments = copyFollowerInvestments.reduce((sum, inv) => sum + inv.investment_amount, 0);
+    const totalFeesEarned = copyFollowerInvestments.reduce((sum, inv) => sum + inv.total_fees_earned_from_follower, 0);
+    const totalNetProfit = copyFollowerInvestments.reduce((sum, inv) => sum + inv.net_profit, 0);
+    const activeFollowers = copyFollowerInvestments.filter(inv => inv.copy_status === 'active').length;
+
+    const response = {
+      strategy_provider_id: strategyProviderId,
+      summary: {
+        total_copy_followers: copyFollowerInvestments.length,
+        active_copy_followers: activeFollowers,
+        total_investments: parseFloat(totalInvestments.toFixed(2)),
+        total_fees_earned: parseFloat(totalFeesEarned.toFixed(2)),
+        total_follower_net_profit: parseFloat(totalNetProfit.toFixed(2)),
+        average_investment: copyFollowerInvestments.length > 0 
+          ? parseFloat((totalInvestments / copyFollowerInvestments.length).toFixed(2))
+          : 0
+      },
+      copy_follower_investments: copyFollowerInvestments
+    };
+
+    logger.info('Copy follower investments retrieved successfully', {
+      strategyProviderId,
+      totalFollowers: copyFollowerInvestments.length,
+      activeFollowers,
+      totalInvestments: totalInvestments.toFixed(2),
+      totalFeesEarned: totalFeesEarned.toFixed(2)
+    });
+
+    res.json({
+      success: true,
+      message: 'Copy follower investments retrieved successfully',
+      data: response
+    });
+
+  } catch (error) {
+    logger.error('Failed to get copy follower investments', {
+      strategyProviderId: req.user?.strategy_provider_id,
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get copy follower investments',
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   createStrategyProviderAccount,
   getStrategyProviderAccount,
@@ -1431,5 +1633,6 @@ module.exports = {
   switchBackToLiveUser,
   refreshStrategyProviderToken,
   logoutStrategyProvider,
-  getPerformanceFeeEarnings
+  getPerformanceFeeEarnings,
+  getCopyFollowerInvestments
 };

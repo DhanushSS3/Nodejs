@@ -769,6 +769,7 @@ router.post('/', (req, res, next) => {
 }, strategyProviderController.createStrategyProviderAccount);
 router.get('/', strategyProviderController.getUserStrategyProviderAccounts);
 router.get('/performance-fee-earnings', strategyProviderController.getPerformanceFeeEarnings);
+router.get('/copy-follower-investments', strategyProviderController.getCopyFollowerInvestments);
 router.get('/:id', strategyProviderController.getStrategyProviderAccount);
 router.get('/:id/catalog-eligibility', strategyProviderController.checkCatalogEligibility);
 
