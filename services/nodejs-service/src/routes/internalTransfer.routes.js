@@ -432,4 +432,69 @@ router.get('/account/:accountType/:accountId/balance',
   InternalTransferController.getAccountBalance
 );
 
+/**
+ * @swagger
+ * /api/internal-transfers/refresh-cache:
+ *   post:
+ *     summary: Force refresh user balance in Redis cache
+ *     tags: [Internal Transfers]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - accountType
+ *             properties:
+ *               accountType:
+ *                 type: string
+ *                 enum: [main, strategy_provider, copy_follower]
+ *                 description: Account type to refresh
+ *               accountId:
+ *                 type: integer
+ *                 description: Account ID (not required for main account)
+ *     responses:
+ *       200:
+ *         description: Cache refreshed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     accountType:
+ *                       type: string
+ *                     accountId:
+ *                       type: integer
+ *       400:
+ *         description: Invalid request parameters
+ *       401:
+ *         description: Authentication required
+ *       500:
+ *         description: Failed to refresh cache
+ */
+router.post('/refresh-cache',
+  authenticateJWT,
+  [
+    body('accountType')
+      .isIn(['main', 'strategy_provider', 'copy_follower'])
+      .withMessage('Invalid accountType'),
+    body('accountId')
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage('accountId must be a positive integer')
+  ],
+  validateRequest,
+  InternalTransferController.refreshUserCache
+);
+
 module.exports = router;

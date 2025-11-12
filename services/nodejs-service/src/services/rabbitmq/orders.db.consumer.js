@@ -811,12 +811,23 @@ async function applyDbUpdate(msg) {
         if (String(type) === 'ORDER_PENDING_CANCEL') {
           wsPayload.reason = 'pending_cancelled';
         }
+        if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+          wsPayload.reason = 'order_opened';
+        }
         portfolioEvents.emitUserUpdate(String(user_type), String(user_id), wsPayload);
         // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
         if (String(type) === 'ORDER_REJECTED') {
           portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
             type: 'order_rejected',
             order_id: String(order_id),
+          });
+        }
+        // Emit immediate event for order opened to refresh UI instantly
+        if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'order_opened',
+            order_id: String(order_id),
+            update: updateForWs,
           });
         }
         // Emit immediate event for pending order triggers to refresh UI instantly

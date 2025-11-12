@@ -774,7 +774,29 @@ class InternalTransferService {
       pipeline.expire(sourceLegacyKey, 86400);
       pipeline.expire(destinationLegacyKey, 86400);
 
-      await pipeline.exec();
+      const results = await pipeline.exec();
+
+      // Check for Redis pipeline errors
+      let hasErrors = false;
+      const errorDetails = [];
+      
+      if (results) {
+        results.forEach((result, index) => {
+          if (result[0]) { // result[0] is error, result[1] is response
+            hasErrors = true;
+            errorDetails.push(`Pipeline step ${index}: ${result[0].message}`);
+          }
+        });
+      }
+
+      if (hasErrors) {
+        logger.error('Redis pipeline errors during balance update', {
+          errors: errorDetails,
+          sourceAccount: `${sourceAccount.type}:${sourceAccount.id}`,
+          destinationAccount: `${destinationAccount.type}:${destinationAccount.id}`
+        });
+        throw new Error(`Redis pipeline failed: ${errorDetails.join(', ')}`);
+      }
 
       logger.info('Redis balances updated comprehensively for portfolio calculator', {
         sourceAccount: {
@@ -788,8 +810,34 @@ class InternalTransferService {
           legacyKey: destinationLegacyKey,
           portfolioKey: destinationPortfolioKey,
           balanceAfter: destinationBalanceAfter
-        }
+        },
+        pipelineResults: results?.length || 0
       });
+
+      // Verify the update worked by reading back the values
+      try {
+        const sourceVerification = await redisCluster.hget(sourceConfigKey, 'wallet_balance');
+        const destinationVerification = await redisCluster.hget(destinationConfigKey, 'wallet_balance');
+        
+        logger.info('Redis balance update verification', {
+          sourceAccount: {
+            key: sourceConfigKey,
+            expectedBalance: sourceBalanceAfter,
+            actualBalance: sourceVerification,
+            updateSuccessful: Math.abs(parseFloat(sourceVerification || 0) - sourceBalanceAfter) < 0.01
+          },
+          destinationAccount: {
+            key: destinationConfigKey,
+            expectedBalance: destinationBalanceAfter,
+            actualBalance: destinationVerification,
+            updateSuccessful: Math.abs(parseFloat(destinationVerification || 0) - destinationBalanceAfter) < 0.01
+          }
+        });
+      } catch (verifyError) {
+        logger.error('Failed to verify Redis balance updates', {
+          error: verifyError.message
+        });
+      }
 
     } catch (error) {
       logger.error('Failed to update Redis account balances', {
@@ -1133,6 +1181,65 @@ class InternalTransferService {
     }
   }
 
+  /**
+   * Force refresh user balance in Redis (manual cache invalidation)
+   * @param {string} accountType - Account type (main, strategy_provider, copy_follower)
+   * @param {number} accountId - Account ID
+   * @returns {boolean} Success status
+   */
+  static async forceRefreshUserBalance(accountType, accountId) {
+    try {
+      // Get fresh balance from database
+      const account = await this.getAccountDetails(null, accountType, accountId);
+      if (!account) {
+        throw new Error('Account not found');
+      }
+
+      const pipeline = redisCluster.pipeline();
+      
+      // Update both config keys with fresh balance
+      const configKey = this.getPortfolioCalculatorConfigKey(accountType, accountId);
+      const legacyKey = this.getLegacyConfigKey(accountType, accountId);
+      
+      const balanceData = {
+        'balance': account.wallet_balance.toString(),
+        'wallet_balance': account.wallet_balance.toString(),
+        'leverage': (account.leverage || 100).toString(),
+        'group': account.group || 'Standard'
+      };
+      
+      pipeline.hset(configKey, balanceData);
+      pipeline.hset(legacyKey, balanceData);
+      
+      // Invalidate portfolio cache
+      const portfolioKey = this.getPortfolioKey(accountType, accountId);
+      pipeline.del(portfolioKey);
+      
+      // Mark user as dirty for recalculation
+      const dirtyKey = this.getDirtyUserKey(accountType);
+      pipeline.sadd(dirtyKey, accountId.toString());
+      
+      await pipeline.exec();
+      
+      logger.info('Force refreshed user balance in Redis', {
+        accountType,
+        accountId,
+        configKey,
+        legacyKey,
+        portfolioKey,
+        balance: account.wallet_balance
+      });
+      
+      return true;
+    } catch (error) {
+      logger.error('Failed to force refresh user balance', {
+        accountType,
+        accountId,
+        error: error.message
+      });
+      return false;
+    }
+  }
 }
 
 module.exports = InternalTransferService;

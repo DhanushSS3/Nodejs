@@ -355,6 +355,76 @@ class InternalTransferController {
       });
     }
   }
+
+  /**
+   * Force refresh user balance in Redis cache
+   * POST /api/internal-transfers/refresh-cache
+   */
+  static async refreshUserCache(req, res) {
+    try {
+      const user = req.user || {};
+      const userId = user.sub || user.user_id || user.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required'
+        });
+      }
+
+      const { accountType, accountId } = req.body;
+
+      if (!accountType) {
+        return res.status(400).json({
+          success: false,
+          message: 'accountType is required'
+        });
+      }
+
+      // For main account, use userId as accountId
+      const actualAccountId = accountType === 'main' ? userId : parseInt(accountId);
+
+      if (!actualAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: 'accountId is required for non-main accounts'
+        });
+      }
+
+      logger.info('Refreshing user cache', { userId, accountType, accountId: actualAccountId });
+
+      const success = await InternalTransferService.forceRefreshUserBalance(accountType, actualAccountId);
+
+      if (!success) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to refresh cache'
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Cache refreshed successfully',
+        data: {
+          accountType,
+          accountId: actualAccountId
+        }
+      });
+
+    } catch (error) {
+      logger.error('Failed to refresh user cache', {
+        userId: req.user?.id,
+        body: req.body,
+        error: error.message
+      });
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to refresh cache',
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = InternalTransferController;
