@@ -37,10 +37,15 @@ class InternalTransferService {
         attributes: ['id', 'strategy_name', 'wallet_balance', 'margin', 'net_profit', 'account_number']
       });
 
-      // Get copy follower accounts
+      // Get ALL copy follower accounts (active, inactive, closed)
       const copyFollowerAccounts = await CopyFollowerAccount.findAll({
-        where: { user_id: userId, status: 1, is_active: 1 },
-        attributes: ['id', 'account_name', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'strategy_provider_id']
+        where: { user_id: userId },
+        attributes: ['id', 'account_name', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'strategy_provider_id', 'status', 'is_active', 'created_at', 'updated_at'],
+        order: [
+          ['status', 'DESC'],    // Active (1) before inactive (0)
+          ['is_active', 'DESC'], // Active (1) before inactive (0)
+          ['created_at', 'DESC'] // Newest first within same status
+        ]
       });
 
       // Get strategy provider names for copy follower accounts
@@ -85,7 +90,12 @@ class InternalTransferService {
           margin: parseFloat(account.margin || 0),
           available_balance: parseFloat(account.wallet_balance || 0) - parseFloat(account.margin || 0),
           lifetime_profit_loss: parseFloat(account.net_profit || 0),
-          following_strategy: strategyProviderMap[account.strategy_provider_id] || 'Unknown Strategy'
+          following_strategy: strategyProviderMap[account.strategy_provider_id] || 'Unknown Strategy',
+          status: account.status,
+          is_active: account.is_active,
+          account_status: this.getAccountStatusLabel(account.status, account.is_active),
+          created_at: account.created_at,
+          updated_at: account.updated_at
         }))
       };
     } catch (error) {
@@ -94,6 +104,24 @@ class InternalTransferService {
         error: error.message
       });
       throw error;
+    }
+  }
+
+  /**
+   * Get human-readable account status label
+   * @param {number} status - Account status (0 = inactive, 1 = active)
+   * @param {number} is_active - Account active flag (0 = inactive, 1 = active)
+   * @returns {string} Status label
+   */
+  static getAccountStatusLabel(status, is_active) {
+    if (status === 1 && is_active === 1) {
+      return 'Active';
+    } else if (status === 1 && is_active === 0) {
+      return 'Inactive';
+    } else if (status === 0) {
+      return 'Closed';
+    } else {
+      return 'Unknown';
     }
   }
 
