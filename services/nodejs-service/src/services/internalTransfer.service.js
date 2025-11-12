@@ -769,12 +769,35 @@ class InternalTransferService {
       
       pipeline.sadd(sourceDirtyKey, sourceAccount.id.toString());
       pipeline.sadd(destinationDirtyKey, destinationAccount.id.toString());
+      
+      // Force immediate portfolio recalculation by publishing to portfolio calculator
+      const forceRecalcMessage = {
+        type: 'FORCE_PORTFOLIO_RECALC',
+        users: [
+          { user_type: sourceAccount.type === 'main' ? 'live' : sourceAccount.type, user_id: sourceAccount.id.toString() },
+          { user_type: destinationAccount.type === 'main' ? 'live' : destinationAccount.type, user_id: destinationAccount.id.toString() }
+        ],
+        reason: 'internal_transfer_completed',
+        timestamp: new Date().toISOString()
+      };
+      
+      // Publish to portfolio calculator channel for immediate processing
+      pipeline.publish('portfolio_force_recalc', JSON.stringify(forceRecalcMessage));
 
       // Set expiration for config keys (no expiration for portfolio calculator keys)
       pipeline.expire(sourceLegacyKey, 86400);
       pipeline.expire(destinationLegacyKey, 86400);
 
       const results = await pipeline.exec();
+
+      logger.info('Internal transfer Redis operations completed', {
+        sourceAccount: { type: sourceAccount.type, id: sourceAccount.id },
+        destinationAccount: { type: destinationAccount.type, id: destinationAccount.id },
+        portfolioKeysDeleted: [sourcePortfolioKey, destinationPortfolioKey],
+        dirtyUsersAdded: [sourceDirtyKey, destinationDirtyKey],
+        forceRecalcPublished: true,
+        pipelineOperations: results.length
+      });
 
       // Check for Redis pipeline errors
       let hasErrors = false;

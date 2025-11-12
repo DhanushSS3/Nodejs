@@ -630,9 +630,9 @@ async function switchToStrategyProvider(req, res) {
       })) : []
     };
 
-    // Generate access token (15 minutes expiry)
+    // Generate access token (7 days expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '30m', 
+      expiresIn: '7d', 
       jwtid: sessionId 
     });
 
@@ -787,9 +787,9 @@ async function switchBackToLiveUser(req, res) {
       account_type: 'live'
     };
 
-    // Generate access token (15 minutes expiry)
+    // Generate access token (7 days expiry)
     const token = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '30m', 
+      expiresIn: '7d', 
       jwtid: sessionId 
     });
 
@@ -929,7 +929,7 @@ async function refreshStrategyProviderToken(req, res) {
     };
     
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '30m', 
+      expiresIn: '7d', 
       jwtid: sessionId 
     });
 

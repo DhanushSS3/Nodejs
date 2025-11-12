@@ -318,8 +318,8 @@ async function login(req, res, next) {
     const sessionId = uuidv4();
     // Generate JWT payload using auth service
     const jwtPayload = LiveUserAuthService.generateJWTPayload(user, loginType, sessionId);
-    // Generate access token (15 min expiry)
-    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '30m', jwtid: sessionId });
+    // Generate access token (7 days expiry)
+    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: '7d', jwtid: sessionId });
     
     // Generate refresh token (7 days expiry)
     const refreshToken = jwt.sign(
@@ -469,9 +469,9 @@ async function refreshToken(req, res) {
       sessionType = 'live';
     }
 
-    // Generate new access token with 30 minutes expiry
+    // Generate new access token with 7 days expiry
     const newAccessToken = jwt.sign(jwtPayload, JWT_SECRET, { 
-      expiresIn: '30m', 
+      expiresIn: '7d', 
       jwtid: tokenData.sessionId 
     });
 

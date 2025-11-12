@@ -729,6 +729,33 @@ class CopyTradingService {
         throw new Error(`Cannot fetch live portfolio data for strategy provider ${masterOrder.order_user_id}: ${redisError.message}`);
       }
 
+      // If portfolio data is missing, wait briefly and try once more (portfolio might be recalculating)
+      if (!portfolioData || !portfolioData.equity) {
+        logger.info('Portfolio data missing, waiting for potential recalculation', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey
+        });
+        
+        // Wait 1 second for portfolio calculator to potentially update the key (increased from 500ms)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        try {
+          portfolioData = await redisCluster.hgetall(portfolioKey);
+          if (portfolioData && portfolioData.equity) {
+            logger.info('Portfolio data found after wait', {
+              strategyProviderId: masterOrder.order_user_id,
+              portfolioKey,
+              equity: portfolioData.equity
+            });
+          }
+        } catch (retryError) {
+          logger.warn('Retry fetch of portfolio data failed', {
+            strategyProviderId: masterOrder.order_user_id,
+            error: retryError.message
+          });
+        }
+      }
+
       let masterEquity;
       let equitySource;
       
@@ -744,7 +771,8 @@ class CopyTradingService {
             strategyProviderId: masterOrder.order_user_id,
             configKey,
             configBalance,
-            configFields: Object.keys(configData || {})
+            configFields: Object.keys(configData || {}),
+            rawConfigData: configData
           });
         } catch (configError) {
           logger.warn('Failed to fetch config balance from Redis', {
@@ -778,7 +806,9 @@ class CopyTradingService {
           strategyProviderId: masterOrder.order_user_id,
           portfolioKey,
           liveEquity: masterEquity,
-          portfolioFields: Object.keys(portfolioData)
+          portfolioFields: Object.keys(portfolioData),
+          portfolioLastUpdated: portfolioData.last_updated,
+          portfolioCalcStatus: portfolioData.calc_status
         });
       }
       
