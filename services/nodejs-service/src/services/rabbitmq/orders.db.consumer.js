@@ -814,6 +814,21 @@ async function applyDbUpdate(msg) {
         if (String(type) === 'ORDER_OPEN_CONFIRMED') {
           wsPayload.reason = 'order_opened';
         }
+        if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
+          wsPayload.reason = 'order_closed';
+        }
+        if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
+          wsPayload.reason = 'stoploss_triggered';
+        }
+        if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
+          wsPayload.reason = 'takeprofit_triggered';
+        }
+        if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
+          wsPayload.reason = 'stoploss_cancelled';
+        }
+        if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
+          wsPayload.reason = 'takeprofit_cancelled';
+        }
         portfolioEvents.emitUserUpdate(String(user_type), String(user_id), wsPayload);
         // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
         if (String(type) === 'ORDER_REJECTED') {
@@ -826,6 +841,46 @@ async function applyDbUpdate(msg) {
         if (String(type) === 'ORDER_OPEN_CONFIRMED') {
           portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
             type: 'order_opened',
+            order_id: String(order_id),
+            update: updateForWs,
+          });
+        }
+        // Emit immediate event for order closed to refresh UI instantly
+        if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'order_closed',
+            order_id: String(order_id),
+            update: updateForWs,
+          });
+        }
+        // Emit immediate event for stoploss triggered to refresh UI instantly
+        if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'stoploss_triggered',
+            order_id: String(order_id),
+            update: updateForWs,
+          });
+        }
+        // Emit immediate event for takeprofit triggered to refresh UI instantly
+        if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'takeprofit_triggered',
+            order_id: String(order_id),
+            update: updateForWs,
+          });
+        }
+        // Emit immediate event for stoploss cancelled to refresh UI instantly
+        if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'stoploss_cancelled',
+            order_id: String(order_id),
+            update: updateForWs,
+          });
+        }
+        // Emit immediate event for takeprofit cancelled to refresh UI instantly
+        if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
+          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+            type: 'takeprofit_cancelled',
             order_id: String(order_id),
             update: updateForWs,
           });

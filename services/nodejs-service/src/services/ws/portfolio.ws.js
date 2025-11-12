@@ -328,10 +328,15 @@ function startPortfolioWSServer(server) {
         const forceDbRefresh = (
           (evt && evt.type === 'order_rejected') ||
           (evt && evt.type === 'order_opened') ||
+          (evt && evt.type === 'order_closed') ||
+          (evt && evt.type === 'stoploss_triggered') ||
+          (evt && evt.type === 'takeprofit_triggered') ||
+          (evt && evt.type === 'stoploss_cancelled') ||
+          (evt && evt.type === 'takeprofit_cancelled') ||
           (evt && evt.type === 'order_rejection_created') ||
           (evt && evt.type === 'pending_cancelled') ||
-          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'local_pending_cancel' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered' || reasonStr === 'order_opened')) ||
-          (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED' || updateStatus === 'CANCELLED' || updateStatus === 'OPEN'))
+          (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'local_pending_cancel' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered' || reasonStr === 'order_opened' || reasonStr === 'order_closed' || reasonStr === 'stoploss_triggered' || reasonStr === 'takeprofit_triggered' || reasonStr === 'stoploss_cancelled' || reasonStr === 'takeprofit_cancelled')) ||
+          (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED' || updateStatus === 'CANCELLED' || updateStatus === 'OPEN' || updateStatus === 'CLOSED'))
         );
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           const dbOrders = await fetchOrdersFromDB(userType, userId);
