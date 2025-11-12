@@ -17,7 +17,7 @@ from app.config.redis_logging import (
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.portfolio.user_margin_service import compute_user_total_margin
 from app.services.orders.commission_calculator import compute_entry_commission
-from app.services.orders.order_repository import fetch_group_data, fetch_user_orders, place_order_atomic
+from app.services.orders.order_repository import fetch_group_data, fetch_user_orders, place_order_atomic_or_fallback
 from app.services.groups.group_config_helper import get_group_config_with_fallback
 from app.services.logging.provider_logger import (
     get_worker_open_logger,

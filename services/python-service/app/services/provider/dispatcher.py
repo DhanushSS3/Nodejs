@@ -350,6 +350,15 @@ class Dispatcher:
                     except Exception as holdings_error:
                         logger.debug("Failed to get user holdings status for %s: %s", canonical_order_id, holdings_error)
                 ord_status = str(report.get("ord_status") or "").upper().strip()
+                
+                # Skip ACK messages - they are just acknowledgments and don't need processing
+                if ord_status == "ACK":
+                    logger.debug(
+                        "[DISPATCH:IGNORED] order_id=%s ord_status=ACK reason=acknowledgment_only",
+                        canonical_order_id
+                    )
+                    return
+                
                 target_queue = None
                 # Pending cancel confirmations: route before generic CANCELLED branch
                 if redis_status == "PENDING-CANCEL" and ord_status in ("CANCELLED", "CANCELED", "PENDING", "MODIFY"):
