@@ -245,19 +245,56 @@ class GroupsCacheService {
    * Supports multiple lookup patterns for flexibility
    */
   async getGroup(groupName, symbol) {
+    const startTime = Date.now();
     try {
       const key = this.getGroupKey(groupName, symbol);
+      
+      logger.info('Group cache lookup started', {
+        groupName,
+        symbol,
+        redisKey: key,
+        timestamp: new Date().toISOString()
+      });
+      
       const hash = await redisCluster.hgetall(key);
+      const lookupTime = Date.now() - startTime;
       
       if (!hash || Object.keys(hash).length === 0) {
         // Cache miss - try to load from database
-        logger.warn(`Cache miss for group: ${groupName}:${symbol}`);
+        logger.warn('Group cache miss - falling back to database', {
+          groupName,
+          symbol,
+          redisKey: key,
+          lookupTimeMs: lookupTime,
+          hashKeys: Object.keys(hash || {}),
+          timestamp: new Date().toISOString()
+        });
         return await this.loadGroupFromDB(groupName, symbol);
       }
 
+      logger.info('Group cache hit', {
+        groupName,
+        symbol,
+        redisKey: key,
+        lookupTimeMs: lookupTime,
+        hasContractSize: !!hash.contract_size,
+        contractSize: hash.contract_size,
+        hasMargin: !!hash.margin,
+        margin: hash.margin,
+        timestamp: new Date().toISOString()
+      });
+
       return this.redisHashToGroup(hash);
     } catch (error) {
-      logger.error(`Failed to get group ${groupName}:${symbol}:`, error);
+      const lookupTime = Date.now() - startTime;
+      logger.error('Group cache lookup failed - falling back to database', {
+        groupName,
+        symbol,
+        error: error.message,
+        stack: error.stack,
+        lookupTimeMs: lookupTime,
+        timestamp: new Date().toISOString()
+      });
       // Fallback to database
       return await this.loadGroupFromDB(groupName, symbol);
     }
@@ -463,22 +500,59 @@ class GroupsCacheService {
    */
   async loadGroupFromDB(groupName, symbol) {
     try {
+      logger.info('Loading group from database (cache miss)', {
+        groupName,
+        symbol,
+        timestamp: new Date().toISOString(),
+        reason: 'redis_cache_miss'
+      });
+
       const group = await Group.findOne({
         where: { name: groupName, symbol: symbol }
       });
 
       if (group) {
+        logger.info('Group found in database, caching to Redis', {
+          groupName,
+          symbol,
+          groupId: group.id,
+          contractSize: group.contract_size,
+          margin: group.margin,
+          commission: group.commision,
+          swapBuy: group.swap_buy,
+          swapSell: group.swap_sell
+        });
+
         // Cache the loaded group
         const key = this.getGroupKey(group.name, group.symbol);
         const hash = this.groupToRedisHash(group);
         await redisCluster.hset(key, hash);
         
+        logger.info('Group successfully cached to Redis', {
+          groupName,
+          symbol,
+          redisKey: key,
+          timestamp: new Date().toISOString()
+        });
+        
         return this.redisHashToGroup(hash);
       }
 
+      logger.warn('Group not found in database', {
+        groupName,
+        symbol,
+        timestamp: new Date().toISOString()
+      });
+
       return null;
     } catch (error) {
-      logger.error(`Failed to load group from database ${groupName}:${symbol}:`, error);
+      logger.error(`Failed to load group from database ${groupName}:${symbol}:`, {
+        error: error.message,
+        stack: error.stack,
+        groupName,
+        symbol,
+        timestamp: new Date().toISOString()
+      });
       return null;
     }
   }

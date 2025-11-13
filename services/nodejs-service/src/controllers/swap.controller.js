@@ -113,10 +113,10 @@ class SwapController {
       const { orderType, orderId } = req.params;
       const { date } = req.query;
       
-      if (!['live', 'demo'].includes(orderType)) {
+      if (!['live', 'demo', 'copy_follower', 'strategy_provider'].includes(orderType)) {
         return res.status(400).json({
           success: false,
-          message: 'Order type must be either "live" or "demo"'
+          message: 'Order type must be one of: "live", "demo", "copy_follower", "strategy_provider"'
         });
       }
 

@@ -23,6 +23,8 @@ const copyTradingService = require('../copyTrading.service');
 const { calculateAndApplyPerformanceFee } = require('../performanceFee.service');
 // Strategy provider statistics service
 const StrategyProviderStatsService = require('../strategyProviderStats.service');
+// Sequelize for database transactions
+const sequelize = require('../../../config/db');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
@@ -224,6 +226,7 @@ async function handleCloseIdUpdate(msg) {
 }
 
 async function applyDbUpdate(msg) {
+  const updateStartTime = Date.now();
   const {
     type,
     order_id,
@@ -254,29 +257,66 @@ async function applyDbUpdate(msg) {
     // New fields from pending monitor
     symbol,
   } = msg || {};
+  
+  // Enhanced logging for DB update processing
+  logger.info('DB update processing started', {
+    messageType: type,
+    orderId: String(order_id),
+    userId: String(user_id),
+    userType: String(user_type),
+    orderStatus: order_status,
+    updateFields: {
+      hasClosePrice: close_price !== undefined && close_price !== null,
+      closePrice: close_price,
+      hasNetProfit: net_profit !== undefined && net_profit !== null,
+      netProfit: net_profit,
+      hasCommission: commission !== undefined && commission !== null,
+      commission: commission,
+      hasUsedMarginExecuted: used_margin_executed !== undefined && used_margin_executed !== null,
+      usedMarginExecuted: used_margin_executed,
+      hasSwap: swap !== undefined && swap !== null,
+      swap: swap,
+      closeMessage: close_message,
+      triggerLifecycleId: trigger_lifecycle_id
+    },
+    timestamp: new Date().toISOString()
+  });
+  
   if (!order_id || !user_id || !user_type) {
     throw new Error('Missing required fields in DB update message');
   }
 
-  // Deduplication for ORDER_PENDING_TRIGGERED to prevent continuous processing
-  if (String(type) === 'ORDER_PENDING_TRIGGERED') {
-    const dedupKey = `pending_triggered:${String(order_id)}`;
+  // Enhanced deduplication for critical message types to prevent race conditions
+  const criticalMessageTypes = ['ORDER_CLOSE_CONFIRMED', 'ORDER_PENDING_TRIGGERED', 'ORDER_OPEN_CONFIRMED'];
+  if (criticalMessageTypes.includes(String(type))) {
+    const dedupKey = `order_update_dedup:${String(order_id)}:${String(type)}`;
     try {
-      const alreadyProcessed = await redisCluster.set(dedupKey, '1', 'EX', 30, 'NX');
+      const alreadyProcessed = await redisCluster.set(dedupKey, '1', 'EX', 60, 'NX');
       if (!alreadyProcessed) {
-        logger.debug('Skipping duplicate ORDER_PENDING_TRIGGERED message', {
+        logger.warn('Skipping duplicate message to prevent race condition', {
+          messageType: String(type),
           order_id: String(order_id),
           user_id: String(user_id),
-          user_type: String(user_type)
+          user_type: String(user_type),
+          dedupKey,
+          timestamp: new Date().toISOString()
         });
         return; // Skip processing this duplicate message
       }
+      
+      logger.info('Message deduplication passed', {
+        messageType: String(type),
+        order_id: String(order_id),
+        dedupKey,
+        timestamp: new Date().toISOString()
+      });
     } catch (error) {
-      logger.warn('Failed to check deduplication for ORDER_PENDING_TRIGGERED', {
+      logger.warn('Failed to check message deduplication', {
+        messageType: String(type),
         order_id: String(order_id),
         error: error.message
       });
-      // Continue processing if Redis fails
+      // Continue processing if Redis fails (better to risk duplicate than lose message)
     }
   }
 
@@ -302,8 +342,24 @@ async function applyDbUpdate(msg) {
     take_profit,
   });
 
-  // Attempt to find existing row first
-  let row = await OrderModel.findOne({ where: { order_id: String(order_id) } });
+  // Start database transaction with row-level locking to prevent race conditions
+  const transaction = await sequelize.transaction();
+  let row = null;
+  
+  try {
+    logger.info('Starting database transaction for order update', {
+      orderId: String(order_id),
+      messageType: type,
+      transactionId: transaction.id,
+      timestamp: new Date().toISOString()
+    });
+
+    // Attempt to find existing row with row-level lock
+    row = await OrderModel.findOne({ 
+      where: { order_id: String(order_id) },
+      lock: transaction.LOCK.UPDATE, // Row-level lock to prevent concurrent updates
+      transaction
+    });
   if (!row) {
     // If missing, fetch minimal required fields from Redis canonical order_data:{order_id}
     try {
@@ -343,8 +399,8 @@ async function applyDbUpdate(msg) {
             margin: marginStr != null ? String(marginStr) : null,
             commission: commissionStr != null ? String(commissionStr) : null,
             placed_by: 'user'
-          });
-          logger.info('Created SQL order row from Redis canonical for DB update', { order_id });
+          }, { transaction }); // Add transaction to create operation
+          logger.info('Created SQL order row from Redis canonical for DB update', { order_id, transactionId: transaction.id });
         }
       }
     } catch (e) {
@@ -612,15 +668,35 @@ async function applyDbUpdate(msg) {
     } catch (_) {}
 
     if (Object.keys(updateFields).length > 0) {
+      const dbUpdateStartTime = Date.now();
       const before = {
         margin: row.margin != null ? row.margin.toString() : null,
         commission: row.commission != null ? row.commission.toString() : null,
         order_price: row.order_price != null ? row.order_price.toString() : null,
         order_status: row.order_status,
+        close_price: row.close_price != null ? row.close_price.toString() : null,
+        net_profit: row.net_profit != null ? row.net_profit.toString() : null,
+        swap: row.swap != null ? row.swap.toString() : null,
         stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
         take_profit: row.take_profit != null ? row.take_profit.toString() : null,
       };
-      await row.update(updateFields);
+      
+      logger.info('DB update about to execute with transaction', {
+        orderId: String(order_id),
+        messageType: type,
+        updateFields: updateFields,
+        beforeValues: before,
+        transactionId: transaction.id,
+        concurrentProcessing: {
+          userId: String(user_id),
+          userType: String(user_type),
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      await row.update(updateFields, { transaction });
+      const dbUpdateTime = Date.now() - dbUpdateStartTime;
+      
       const after = {
         margin: row.margin != null ? row.margin.toString() : null,
         commission: row.commission != null ? row.commission.toString() : null,
@@ -632,7 +708,28 @@ async function applyDbUpdate(msg) {
         stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
         take_profit: row.take_profit != null ? row.take_profit.toString() : null,
       };
-      logger.info('DB consumer applied order update', { order_id: String(order_id), before, updateFields, after });
+      
+      // Detect partial updates
+      const partialUpdateDetection = {
+        statusUpdated: before.order_status !== after.order_status,
+        financialsUpdated: (before.net_profit !== after.net_profit || 
+                           before.commission !== after.commission || 
+                           before.close_price !== after.close_price),
+        marginUpdated: before.margin !== after.margin,
+        isCloseMessage: type === 'ORDER_CLOSE_CONFIRMED',
+        hasAllCloseFields: !!(after.close_price && after.net_profit && after.commission)
+      };
+      
+      logger.info('DB consumer applied order update', { 
+        orderId: String(order_id), 
+        messageType: type,
+        before, 
+        updateFields, 
+        after,
+        dbUpdateTimeMs: dbUpdateTime,
+        partialUpdateDetection,
+        timestamp: new Date().toISOString()
+      });
       // Mirror updates into Redis except for pending cancel finalization (keys were deleted by worker)
       if (String(type) !== 'ORDER_PENDING_CANCEL') {
         try {
@@ -907,33 +1004,69 @@ async function applyDbUpdate(msg) {
   // Removing duplicate trigger that was causing double copy orders in provider flow
   // The replication should only happen once when the order is initially placed, not again on confirmation
 
-  // Update user's used margin in SQL, if provided
-  const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
-  if (mirrorUsedMargin != null) {
-    try {
-      logger.info('Updating user margin from DB consumer', {
-        order_id: String(order_id),
-        user_id: String(user_id),
-        user_type: String(user_type),
-        message_type: type,
-        mirrorUsedMargin,
-        used_margin_usd,
-        used_margin_executed
-      });
-      await updateUserUsedMargin({ userType: String(user_type), userId: parseInt(String(user_id), 10), usedMargin: mirrorUsedMargin });
-    } catch (e) {
-      logger.error('Failed to persist used margin in SQL', { error: e.message, user_id, user_type });
-      // Do not fail the message solely due to mirror write; treat as non-fatal
+    // Update user's used margin in SQL, if provided
+    const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
+    if (mirrorUsedMargin != null) {
+      try {
+        logger.info('Updating user margin from DB consumer', {
+          order_id: String(order_id),
+          user_id: String(user_id),
+          user_type: String(user_type),
+          message_type: type,
+          mirrorUsedMargin,
+          used_margin_usd,
+          used_margin_executed,
+          transactionId: transaction.id
+        });
+        await updateUserUsedMargin({ userType: String(user_type), userId: parseInt(String(user_id), 10), usedMargin: mirrorUsedMargin });
+      } catch (e) {
+        logger.error('Failed to persist used margin in SQL', { error: e.message, user_id, user_type });
+        // Do not fail the message solely due to mirror write; treat as non-fatal
+      }
+      // Emit separate event for margin change
+      try {
+        portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          type: 'user_margin_update',
+          used_margin_usd: mirrorUsedMargin,
+        });
+      } catch (e) {
+        logger.warn('Failed to emit portfolio event after user margin update', { error: e.message });
+      }
     }
-    // Emit separate event for margin change
+
+    // Commit transaction if all operations succeeded
+    await transaction.commit();
+    
+    logger.info('Database transaction committed successfully', {
+      orderId: String(order_id),
+      messageType: type,
+      transactionId: transaction.id,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (transactionError) {
+    // Rollback transaction on any error
     try {
-      portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
-        type: 'user_margin_update',
-        used_margin_usd: mirrorUsedMargin,
+      await transaction.rollback();
+      logger.error('Database transaction rolled back due to error', {
+        orderId: String(order_id),
+        messageType: type,
+        transactionId: transaction.id,
+        error: transactionError.message,
+        stack: transactionError.stack,
+        timestamp: new Date().toISOString()
       });
-    } catch (e) {
-      logger.warn('Failed to emit portfolio event after user margin update', { error: e.message });
+    } catch (rollbackError) {
+      logger.error('Failed to rollback transaction', {
+        orderId: String(order_id),
+        transactionError: transactionError.message,
+        rollbackError: rollbackError.message,
+        timestamp: new Date().toISOString()
+      });
     }
+    
+    // Re-throw the original error to trigger message requeue
+    throw transactionError;
   }
 }
 
@@ -942,15 +1075,33 @@ async function startOrdersDbConsumer() {
     const conn = await amqp.connect(RABBITMQ_URL);
     const ch = await conn.createChannel();
     await ch.assertQueue(ORDER_DB_UPDATE_QUEUE, { durable: true });
-    await ch.prefetch(32);
+    await ch.prefetch(1); // Reduced from 32 to 1 to prevent race conditions during concurrent processing
 
     logger.info(`Orders DB consumer connected. Listening on ${ORDER_DB_UPDATE_QUEUE}`);
 
     ch.consume(ORDER_DB_UPDATE_QUEUE, async (msg) => {
       if (!msg) return;
       let payload = null;
+      const messageStartTime = Date.now();
       try {
         payload = JSON.parse(msg.content.toString('utf8'));
+        
+        // Enhanced logging for message processing
+        logger.info('RabbitMQ message received', {
+          messageType: payload.type,
+          orderId: payload.order_id,
+          userId: payload.user_id,
+          userType: payload.user_type,
+          orderStatus: payload.order_status,
+          hasClosePrice: !!payload.close_price,
+          hasNetProfit: !!payload.net_profit,
+          hasCommission: !!payload.commission,
+          hasUsedMarginExecuted: !!payload.used_margin_executed,
+          closeMessage: payload.close_message,
+          triggerLifecycleId: payload.trigger_lifecycle_id,
+          messageSize: msg.content.length,
+          timestamp: new Date().toISOString()
+        });
         
         // Route different message types
         if (payload.type === 'ORDER_REJECTION_RECORD') {
@@ -961,12 +1112,27 @@ async function startOrdersDbConsumer() {
           await applyDbUpdate(payload);
         }
         
+        const processingTime = Date.now() - messageStartTime;
+        logger.info('RabbitMQ message processed successfully', {
+          messageType: payload.type,
+          orderId: payload.order_id,
+          processingTimeMs: processingTime,
+          timestamp: new Date().toISOString()
+        });
+        
         ch.ack(msg);
       } catch (err) {
+        const processingTime = Date.now() - messageStartTime;
         logger.error('Orders DB consumer failed to handle message', { 
-          error: err.message, 
+          error: err.message,
+          stack: err.stack,
           messageType: payload?.type || 'unknown',
-          rawMessage: msg.content.toString('utf8').substring(0, 200) // First 200 chars for debugging
+          orderId: payload?.order_id || 'unknown',
+          userId: payload?.user_id || 'unknown',
+          userType: payload?.user_type || 'unknown',
+          processingTimeMs: processingTime,
+          rawMessage: msg.content.toString('utf8').substring(0, 500), // More chars for debugging
+          timestamp: new Date().toISOString()
         });
         // Requeue to retry transient failures
         ch.nack(msg, false, true);

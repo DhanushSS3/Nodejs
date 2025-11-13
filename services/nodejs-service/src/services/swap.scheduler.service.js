@@ -2,8 +2,12 @@ const cron = require('node-cron');
 const { Op } = require('sequelize');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
+const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const swapCalculationService = require('./swap.calculation.service');
 const logger = require('../utils/logger');
 const sequelize = require('../config/db');
@@ -106,12 +110,18 @@ class SwapSchedulerService {
       
       // Process demo orders  
       const demoResults = await this.processOrdersSwap(DemoUserOrder, 'demo', targetDate);
+      
+      // Process copy follower orders
+      const copyFollowerResults = await this.processCopyTradingOrdersSwap(CopyFollowerOrder, CopyFollowerAccount, 'copy_follower', targetDate);
+      
+      // Process strategy provider orders
+      const strategyProviderResults = await this.processCopyTradingOrdersSwap(StrategyProviderOrder, StrategyProviderAccount, 'strategy_provider', targetDate);
 
-      const totalProcessed = liveResults.processed + demoResults.processed;
-      const totalUpdated = liveResults.updated + demoResults.updated;
-      const totalErrors = liveResults.errors + demoResults.errors;
-      const totalSkipped = liveResults.skipped + demoResults.skipped;
-      totalSwapAmount = liveResults.totalSwapAmount + demoResults.totalSwapAmount;
+      const totalProcessed = liveResults.processed + demoResults.processed + copyFollowerResults.processed + strategyProviderResults.processed;
+      const totalUpdated = liveResults.updated + demoResults.updated + copyFollowerResults.updated + strategyProviderResults.updated;
+      const totalErrors = liveResults.errors + demoResults.errors + copyFollowerResults.errors + strategyProviderResults.errors;
+      const totalSkipped = liveResults.skipped + demoResults.skipped + copyFollowerResults.skipped + strategyProviderResults.skipped;
+      totalSwapAmount = liveResults.totalSwapAmount + demoResults.totalSwapAmount + copyFollowerResults.totalSwapAmount + strategyProviderResults.totalSwapAmount;
       const processingTime = Date.now() - startTime;
 
       // Log comprehensive daily summary
@@ -132,6 +142,20 @@ class SwapSchedulerService {
           skipped: demoResults.skipped,
           swap_amount: demoResults.totalSwapAmount
         },
+        copy_follower_orders: {
+          processed: copyFollowerResults.processed,
+          updated: copyFollowerResults.updated,
+          errors: copyFollowerResults.errors,
+          skipped: copyFollowerResults.skipped,
+          swap_amount: copyFollowerResults.totalSwapAmount
+        },
+        strategy_provider_orders: {
+          processed: strategyProviderResults.processed,
+          updated: strategyProviderResults.updated,
+          errors: strategyProviderResults.errors,
+          skipped: strategyProviderResults.skipped,
+          swap_amount: strategyProviderResults.totalSwapAmount
+        },
         total_swap_amount: totalSwapAmount,
         successful_updates: totalUpdated,
         failed_updates: totalErrors,
@@ -149,6 +173,8 @@ class SwapSchedulerService {
         totalSwapAmount,
         liveOrders: liveResults,
         demoOrders: demoResults,
+        copyFollowerOrders: copyFollowerResults,
+        strategyProviderOrders: strategyProviderResults,
         processingTimeMs: processingTime
       });
 
@@ -212,6 +238,55 @@ class SwapSchedulerService {
   }
 
   /**
+   * Process swap charges for copy trading orders (copy follower or strategy provider)
+   */
+  async processCopyTradingOrdersSwap(OrderModel, AccountModel, orderType, targetDate) {
+    const results = {
+      processed: 0,
+      updated: 0,
+      errors: 0,
+      skipped: 0,
+      totalSwapAmount: 0
+    };
+
+    try {
+      logger.info(`Processing ${orderType} orders for swap charges`);
+
+      // Get all open copy trading orders with account associations
+      const openOrders = await this.getOpenCopyTradingOrders(OrderModel, AccountModel, orderType);
+      results.processed = openOrders.length;
+
+      if (openOrders.length === 0) {
+        logger.info(`No open ${orderType} orders found`);
+        return results;
+      }
+
+      logger.info(`Found ${openOrders.length} open ${orderType} orders`);
+
+      // Process orders in batches to avoid memory issues
+      const batchSize = 100;
+      for (let i = 0; i < openOrders.length; i += batchSize) {
+        const batch = openOrders.slice(i, i + batchSize);
+        const batchResults = await this.processBatch(OrderModel, batch, targetDate, orderType);
+        
+        results.updated += batchResults.updated;
+        results.errors += batchResults.errors;
+        results.skipped += batchResults.skipped;
+        results.totalSwapAmount += batchResults.totalSwapAmount;
+      }
+
+    } catch (error) {
+      swapDebugLogger.error(`[DEBUG] Error processing ${orderType} orders:`, error);
+      results.errors++;
+    }
+
+    if (results.updated > 0 || results.errors > 0) {
+      swapDebugLogger.info(`[DEBUG] ${orderType} results: ${results.updated} updated, ${results.skipped} skipped, ${results.errors} errors`);
+    }
+    return results;
+  }
+
+  /**
    * Get all open orders with user group information
    * NOTE: Orders are ALWAYS fetched from DATABASE (MySQL/PostgreSQL) using Sequelize ORM
    * This ensures we get the most up-to-date order information, not cached Redis data
@@ -258,6 +333,67 @@ class SwapSchedulerService {
     }
     
     return orders;
+  }
+
+  /**
+   * Get all open copy trading orders with account group information
+   * NOTE: Orders are ALWAYS fetched from DATABASE (MySQL/PostgreSQL) using Sequelize ORM
+   * This ensures we get the most up-to-date order information, not cached Redis data
+   */
+  async getOpenCopyTradingOrders(OrderModel, AccountModel, orderType) {
+    // Get order status distribution for monitoring
+    const statusCounts = await OrderModel.findAll({
+      attributes: [
+        'order_status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['order_status'],
+      raw: true
+    });
+    
+    // IMPORTANT: This query fetches orders directly from DATABASE, not Redis cache
+    // We need to join with the account table to get the group information
+    const orders = await OrderModel.findAll({
+      where: {
+        order_status: {
+          [Op.in]: ['OPEN', 'PENDING', 'PARTIAL_FILLED'] // Add other open statuses as needed
+        }
+      },
+      attributes: [
+        'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 'order_price',
+        'swap', 'order_user_id', 'created_at', 'updated_at', 'order_status',
+        'contract_value', 'margin', 'commission', 'stop_loss', 'take_profit'
+      ]
+    });
+    
+    // Get account information separately and add to orders
+    const enrichedOrders = [];
+    for (const order of orders) {
+      try {
+        const account = await AccountModel.findByPk(order.order_user_id, {
+          attributes: ['group']
+        });
+        
+        if (account && account.group) {
+          // Add group information to order for swap calculation
+          order.group_name = account.group;
+          order.user_type = orderType;
+          enrichedOrders.push(order);
+        } else {
+          swapDebugLogger.warn(`[DEBUG] Skipping order ${order.order_id} - missing account or group information`);
+        }
+      } catch (error) {
+        swapDebugLogger.error(`[DEBUG] Error getting account for order ${order.order_id}:`, error);
+      }
+    }
+    
+    if (enrichedOrders.length > 0) {
+      swapDebugLogger.info(`[DEBUG] Processing ${enrichedOrders.length} open ${orderType} orders`);
+    } else {
+      swapDebugLogger.info(`[DEBUG] No open ${orderType} orders found`);
+    }
+    
+    return enrichedOrders;
   }
 
   /**
@@ -475,36 +611,114 @@ class SwapSchedulerService {
    */
   async processSpecificOrder(orderType, orderId, targetDate = new Date()) {
     try {
-      const OrderModel = orderType === 'live' ? LiveUserOrder : DemoUserOrder;
-      const UserModel = orderType === 'live' ? LiveUser : DemoUser;
+      let OrderModel, AccountModel, order;
       
-      const order = await OrderModel.findOne({
-        where: { order_id: orderId },
-        attributes: [
-          'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
-          'swap', 'order_user_id', 'created_at'
-        ],
-        include: [{
-          model: UserModel,
-          as: 'user',
-          attributes: ['group'],
-          required: true
-        }]
-      });
+      // Determine models based on order type
+      if (orderType === 'live') {
+        OrderModel = LiveUserOrder;
+        const UserModel = LiveUser;
+        
+        order = await OrderModel.findOne({
+          where: { order_id: orderId },
+          attributes: [
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'swap', 'order_user_id', 'created_at'
+          ],
+          include: [{
+            model: UserModel,
+            as: 'user',
+            attributes: ['group'],
+            required: true
+          }]
+        });
+        
+        if (order) {
+          const userGroup = order.user?.group;
+          if (!userGroup) {
+            throw new Error(`User group not found for order ${orderId}`);
+          }
+          order.group_name = userGroup;
+          order.user_type = orderType;
+        }
+      } else if (orderType === 'demo') {
+        OrderModel = DemoUserOrder;
+        const UserModel = DemoUser;
+        
+        order = await OrderModel.findOne({
+          where: { order_id: orderId },
+          attributes: [
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'swap', 'order_user_id', 'created_at'
+          ],
+          include: [{
+            model: UserModel,
+            as: 'user',
+            attributes: ['group'],
+            required: true
+          }]
+        });
+        
+        if (order) {
+          const userGroup = order.user?.group;
+          if (!userGroup) {
+            throw new Error(`User group not found for order ${orderId}`);
+          }
+          order.group_name = userGroup;
+          order.user_type = orderType;
+        }
+      } else if (orderType === 'copy_follower') {
+        OrderModel = CopyFollowerOrder;
+        AccountModel = CopyFollowerAccount;
+        
+        order = await OrderModel.findOne({
+          where: { order_id: orderId },
+          attributes: [
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'swap', 'order_user_id', 'created_at'
+          ]
+        });
+        
+        if (order) {
+          const account = await AccountModel.findByPk(order.order_user_id, {
+            attributes: ['group']
+          });
+          
+          if (!account || !account.group) {
+            throw new Error(`Account or group not found for order ${orderId}`);
+          }
+          order.group_name = account.group;
+          order.user_type = orderType;
+        }
+      } else if (orderType === 'strategy_provider') {
+        OrderModel = StrategyProviderOrder;
+        AccountModel = StrategyProviderAccount;
+        
+        order = await OrderModel.findOne({
+          where: { order_id: orderId },
+          attributes: [
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'swap', 'order_user_id', 'created_at'
+          ]
+        });
+        
+        if (order) {
+          const account = await AccountModel.findByPk(order.order_user_id, {
+            attributes: ['group']
+          });
+          
+          if (!account || !account.group) {
+            throw new Error(`Account or group not found for order ${orderId}`);
+          }
+          order.group_name = account.group;
+          order.user_type = orderType;
+        }
+      } else {
+        throw new Error(`Invalid order type: ${orderType}. Must be one of: live, demo, copy_follower, strategy_provider`);
+      }
 
       if (!order) {
         throw new Error(`Order ${orderId} not found`);
       }
-
-      // Get group from user association
-      const userGroup = order.user?.group;
-      if (!userGroup) {
-        throw new Error(`User group not found for order ${orderId}`);
-      }
-
-      // Add group_name and user_type to order for swap calculation
-      order.group_name = userGroup;
-      order.user_type = orderType;
 
       const swapCharge = await swapCalculationService.calculateSwapCharge(order, targetDate);
       

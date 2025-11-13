@@ -293,18 +293,38 @@ async function placeStrategyProviderOrder(req, res) {
         error: err.message 
       };
 
+      // Enhanced error logging for group data and other issues
+      logger.error('Strategy provider order execution failed - detailed analysis', {
+        operationId,
+        order_id,
+        strategyProviderId: parseInt(tokenStrategyProviderId),
+        error: err.message,
+        errorCode: err.code,
+        statusCode: statusCode,
+        pyResponse: detail,
+        requestPayload: {
+          symbol: pyPayload.symbol,
+          order_type: pyPayload.order_type,
+          user_id: pyPayload.user_id,
+          user_type: pyPayload.user_type,
+          order_price: pyPayload.order_price,
+          order_quantity: pyPayload.order_quantity
+        },
+        groupDataIssue: detail?.reason === 'missing_group_data',
+        concurrentOrderProcessing: {
+          timestamp: new Date().toISOString(),
+          isMultipleOrderClose: false // This is order placement, not close
+        },
+        pythonServiceUrl: `${baseUrl}/api/orders/instant/execute`,
+        networkTimeout: err.timeout,
+        connectionError: err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT'
+      });
+
       // Update order status to REJECTED
       await masterOrder.update({
         order_status: 'REJECTED',
         close_message: detail?.reason || 'execution_failed',
         copy_distribution_status: 'failed'
-      });
-
-      logger.error('Strategy provider order execution failed', {
-        order_id,
-        strategyProviderId: parseInt(tokenStrategyProviderId),
-        error: err.message,
-        pyResponse: detail
       });
 
       return res.status(statusCode >= 400 && statusCode < 500 ? statusCode : 500).json({
@@ -642,7 +662,37 @@ async function closeStrategyProviderOrder(req, res) {
       });
     }
 
+    // Enhanced logging for order close attempts
+    logger.info('Strategy provider order close attempt', {
+      orderId: order_id,
+      strategyProviderId: parseInt(tokenStrategyProviderId),
+      currentStatus: order.order_status,
+      allowedStatuses: ['OPEN', 'PENDING'],
+      canClose: ['OPEN', 'PENDING'].includes(order.order_status),
+      orderDetails: {
+        symbol: order.symbol,
+        orderType: order.order_type,
+        orderPrice: order.order_price,
+        orderQuantity: order.order_quantity,
+        hasStopLoss: !!order.stop_loss,
+        hasTakeProfit: !!order.take_profit,
+        createdAt: order.created_at,
+        updatedAt: order.updated_at
+      },
+      concurrentProcessing: {
+        timestamp: new Date().toISOString(),
+        isMultipleOrderClose: true // This could be part of concurrent closes
+      }
+    });
+
     if (!['OPEN', 'PENDING'].includes(order.order_status)) {
+      logger.warn('Order close rejected due to invalid status', {
+        orderId: order_id,
+        currentStatus: order.order_status,
+        requiredStatuses: ['OPEN', 'PENDING'],
+        strategyProviderId: parseInt(tokenStrategyProviderId)
+      });
+      
       return res.status(400).json({ 
         success: false, 
         message: 'Order cannot be closed in current status' 
