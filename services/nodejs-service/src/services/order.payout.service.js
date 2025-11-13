@@ -138,8 +138,13 @@ async function applyOrderClosePayout({
       runningBalance = after;
     }
 
-    // Update user's wallet to final balance
-    await user.update({ wallet_balance: finalBalance }, { transaction: t });
+    // Update user's wallet balance and net_profit
+    const currentNetProfit = toNum(user.net_profit);
+    const newNetProfit = currentNetProfit + np;
+    await user.update({ 
+      wallet_balance: finalBalance,
+      net_profit: newNetProfit 
+    }, { transaction: t });
 
     logger.info('Applied order close payout', {
       userId: String(userId),

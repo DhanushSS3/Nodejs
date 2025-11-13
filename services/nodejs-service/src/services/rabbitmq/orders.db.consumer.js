@@ -423,57 +423,14 @@ async function applyDbUpdate(msg) {
         const symbolP = rowP?.symbol ?? undefined;
         const orderTypeP = rowP?.order_type ?? undefined;
 
-        // For copy followers, calculate performance fee before applying payout
-        let adjustedNetProfit = Number(net_profit) || 0;
-        let performanceFeeResult = null;
-        
-        if (String(user_type) === 'copy_follower' && adjustedNetProfit > 0) {
-          try {
-            // Get copy follower order to find strategy provider
-            const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
-            const copyFollowerOrder = await CopyFollowerOrder.findOne({
-              where: { order_id: String(order_id) }
-            });
-            
-            if (copyFollowerOrder && copyFollowerOrder.strategy_provider_id) {
-              performanceFeeResult = await calculateAndApplyPerformanceFee({
-                copyFollowerOrderId: String(order_id),
-                copyFollowerUserId: parseInt(String(user_id), 10),
-                strategyProviderId: copyFollowerOrder.strategy_provider_id,
-                orderNetProfit: adjustedNetProfit,
-                symbol: symbolP ? String(symbolP).toUpperCase() : undefined,
-                orderType: orderTypeP ? String(orderTypeP).toUpperCase() : undefined
-              });
-              
-              // Use adjusted net profit after performance fee deduction
-              if (performanceFeeResult.performanceFeeCharged) {
-                adjustedNetProfit = performanceFeeResult.adjustedNetProfit;
-                logger.info('Performance fee applied for copy follower order', {
-                  order_id: String(order_id),
-                  originalNetProfit: Number(net_profit) || 0,
-                  adjustedNetProfit,
-                  performanceFeeAmount: performanceFeeResult.performanceFeeAmount
-                });
-              }
-            }
-          } catch (performanceFeeError) {
-            logger.error('Failed to apply performance fee for copy follower', {
-              order_id: String(order_id),
-              user_id: String(user_id),
-              error: performanceFeeError.message
-            });
-            // Continue with original net profit if performance fee calculation fails
-          }
-        }
-
         // Apply payout for all user types (live, demo, strategy_provider, copy_follower)
-        // For copy followers, use adjusted net profit after performance fee
+        // Use original net profit - performance fee will be calculated after transaction
         await applyOrderClosePayout({
           userType: String(user_type),
           userId: parseInt(String(user_id), 10),
           orderPk,
           orderIdStr: String(order_id),
-          netProfit: adjustedNetProfit,
+          netProfit: Number(net_profit) || 0,
           commission: Number(commission) || 0,
           profitUsd: Number(msg.profit_usd) || 0,
           swap: Number(swap) || 0,
@@ -507,24 +464,8 @@ async function applyDbUpdate(msg) {
     logger.error('Failed to apply payout on close', { error: e.message, order_id: String(order_id) });
   }
 
-  // Increment user's aggregate net_profit for close confirmations (idempotent per order_id)
-  try {
-    if (type === 'ORDER_CLOSE_CONFIRMED' && net_profit != null && Number.isFinite(Number(net_profit))) {
-      const key = `close_np_applied:${String(order_id)}`;
-      // NX ensure we only apply once; expire after 7 days as a safety window
-      const setRes = await redisCluster.set(key, '1', 'EX', 7 * 24 * 3600, 'NX');
-      if (setRes) {
-        const np = Number(net_profit);
-        const UserModel = getUserModel(String(user_type));
-        await UserModel.increment({ net_profit: np }, { where: { id: parseInt(String(user_id), 10) } });
-        logger.info('Applied user net_profit increment from close', { user_id: String(user_id), user_type: String(user_type), order_id: String(order_id), net_profit: np });
-      } else {
-        logger.info('Skip user net_profit increment; already applied for order', { order_id: String(order_id) });
-      }
-    }
-  } catch (e) {
-    logger.error('Failed to increment user net_profit from DB consumer', { error: e.message, order_id: String(order_id) });
-  }
+  // User net_profit increment is now handled by applyOrderClosePayout service
+  // Removed from here to avoid double accounting
 
   // If still no row, nothing else we can do; avoid throwing to prevent poison messages
   if (!row) {
@@ -1043,6 +984,53 @@ async function applyDbUpdate(msg) {
       transactionId: transaction.id,
       timestamp: new Date().toISOString()
     });
+
+    // Calculate and apply performance fee AFTER transaction commit to avoid lock timeouts
+    if (type === 'ORDER_CLOSE_CONFIRMED' && String(user_type) === 'copy_follower' && (Number(net_profit) || 0) > 0) {
+      setImmediate(async () => {
+        try {
+          // Get copy follower order to find strategy provider
+          const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
+          const copyFollowerOrder = await CopyFollowerOrder.findOne({
+            where: { order_id: String(order_id) }
+          });
+          
+          if (copyFollowerOrder && copyFollowerOrder.strategy_provider_id) {
+            logger.info('Calculating performance fee', {
+              copyFollowerOrderId: String(order_id),
+              copyFollowerUserId: parseInt(String(user_id), 10),
+              strategyProviderId: copyFollowerOrder.strategy_provider_id,
+              orderNetProfit: Number(net_profit) || 0
+            });
+
+            const performanceFeeResult = await calculateAndApplyPerformanceFee({
+              copyFollowerOrderId: String(order_id),
+              copyFollowerUserId: parseInt(String(user_id), 10),
+              strategyProviderId: copyFollowerOrder.strategy_provider_id,
+              orderNetProfit: Number(net_profit) || 0,
+              symbol: copyFollowerOrder.symbol ? String(copyFollowerOrder.symbol).toUpperCase() : undefined,
+              orderType: copyFollowerOrder.order_type ? String(copyFollowerOrder.order_type).toUpperCase() : undefined
+            });
+            
+            if (performanceFeeResult.performanceFeeCharged) {
+              logger.info('Performance fee applied successfully', {
+                order_id: String(order_id),
+                originalNetProfit: Number(net_profit) || 0,
+                adjustedNetProfit: performanceFeeResult.adjustedNetProfit,
+                performanceFeeAmount: performanceFeeResult.performanceFeeAmount
+              });
+            }
+          }
+        } catch (performanceFeeError) {
+          logger.error('Failed to calculate and apply performance fee', {
+            copyFollowerOrderId: String(order_id),
+            copyFollowerUserId: parseInt(String(user_id), 10),
+            orderNetProfit: Number(net_profit) || 0,
+            error: performanceFeeError.message
+          });
+        }
+      });
+    }
 
   } catch (transactionError) {
     // Rollback transaction on any error

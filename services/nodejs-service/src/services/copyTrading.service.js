@@ -466,7 +466,7 @@ class CopyTradingService {
           });
 
           // Create Redis entries so Python portfolio calculator can find this copy follower
-          await this.createRedisEntries({
+          await this.createRedisOrderEntries({
             order_id: followerOrder.order_id,
             order_user_id: follower.id, // Use copy follower account ID
             symbol: followerOrder.symbol,
