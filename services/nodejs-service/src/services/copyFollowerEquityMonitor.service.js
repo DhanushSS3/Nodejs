@@ -591,23 +591,58 @@ class CopyFollowerEquityMonitorService {
       }
 
       let backfilledCount = 0;
-      const copyTradingService = require('./copyTrading.service');
 
       for (const order of openOrders) {
         try {
-          // Create Redis entries for this order
-          await copyTradingService.createRedisEntries({
+          // Create Redis entries manually (avoiding circular dependency)
+          const hash_tag = `copy_follower:${copyFollowerAccountId}`;
+          const order_key = `user_holdings:{${hash_tag}}:${order.order_id}`;
+          const index_key = `user_orders_index:{${hash_tag}}`;
+          const symbol_holders_key = `symbol_holders:${order.symbol}:copy_follower`;
+          const order_data_key = `order_data:${order.order_id}`;
+
+          // Create order data entry (canonical)
+          await redisCluster.hset(order_data_key, {
             order_id: order.order_id,
-            order_user_id: copyFollowerAccountId,
             symbol: order.symbol,
             order_type: order.order_type,
             order_status: order.order_status,
-            order_price: order.order_price,
-            order_quantity: order.order_quantity,
-            stop_loss: order.stop_loss,
-            take_profit: order.take_profit,
+            order_price: order.order_price.toString(),
+            order_quantity: order.order_quantity.toString(),
+            user_type: 'copy_follower',
+            user_id: copyFollowerAccountId.toString(),
+            stop_loss: order.stop_loss ? order.stop_loss.toString() : '',
+            take_profit: order.take_profit ? order.take_profit.toString() : '',
+            status: order.order_status,
+            execution_status: order.order_status === 'QUEUED' ? 'PENDING' : 'EXECUTED',
             placed_by: 'copy_trading_backfill'
-          }, 'copy_follower');
+          });
+
+          // Create user holdings entry
+          const redisData = {
+            order_id: order.order_id,
+            symbol: order.symbol,
+            order_type: order.order_type,
+            order_status: order.order_status,
+            order_price: order.order_price.toString(),
+            order_quantity: order.order_quantity.toString(),
+            stop_loss: order.stop_loss ? order.stop_loss.toString() : '',
+            take_profit: order.take_profit ? order.take_profit.toString() : '',
+            margin: order.margin ? order.margin.toString() : '',
+            commission: order.commission ? order.commission.toString() : '',
+            contract_value: order.contract_value ? order.contract_value.toString() : '',
+            user_type: 'copy_follower',
+            user_id: copyFollowerAccountId.toString(),
+            placed_by: 'copy_trading_backfill'
+          };
+
+          await redisCluster.hset(order_key, redisData);
+
+          // Add to user orders index
+          await redisCluster.sadd(index_key, order.order_id);
+
+          // Add to symbol holders (CRITICAL for portfolio calculation)
+          await redisCluster.sadd(symbol_holders_key, hash_tag);
 
           backfilledCount++;
 
@@ -615,14 +650,22 @@ class CopyFollowerEquityMonitorService {
             copyFollowerAccountId,
             orderId: order.order_id,
             symbol: order.symbol,
-            orderStatus: order.order_status
+            orderStatus: order.order_status,
+            symbolHoldersKey: symbol_holders_key,
+            redisKeys: {
+              order_data: order_data_key,
+              user_holdings: order_key,
+              user_index: index_key,
+              symbol_holders: symbol_holders_key
+            }
           });
 
         } catch (orderError) {
           logger.error('Failed to backfill Redis entries for specific order', {
             copyFollowerAccountId,
             orderId: order.order_id,
-            error: orderError.message
+            error: orderError.message,
+            stack: orderError.stack
           });
         }
       }
