@@ -1587,12 +1587,14 @@ async function getCopyFollowerInvestments(req, res) {
     logger.info('Final feesByFollower object', {
       strategyProviderId,
       feesByFollower,
+      copyFollowerAccountIds: copyFollowerAccounts.map(a => a.id),
       copyFollowerUserIds: copyFollowerAccounts.map(a => a.user_id)
     });
 
     // Format response data
     const copyFollowerInvestments = copyFollowerAccounts.map(account => {
-      const feesData = feesByFollower[account.user_id] || { 
+      // Match against copy follower account ID, not live user ID
+      const feesData = feesByFollower[account.id] || { 
         total_fees_earned: 0, 
         fee_transactions: 0 
       };
