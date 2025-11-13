@@ -121,7 +121,7 @@ class CatalogEligibilityRealtimeService {
           trigger
         };
       } else {
-        logger.debug('Strategy provider catalog eligibility unchanged', {
+        logger.info('Strategy provider catalog eligibility unchanged', {
           strategyProviderId,
           strategyName: strategyProvider.strategy_name,
           trigger,
