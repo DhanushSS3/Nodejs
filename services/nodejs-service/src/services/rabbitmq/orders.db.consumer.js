@@ -444,15 +444,6 @@ async function applyDbUpdate(msg) {
             type: 'wallet_balance_update',
             order_id: String(order_id),
           });
-          
-          // If performance fee was applied, also emit update for strategy provider
-          if (performanceFeeResult && performanceFeeResult.performanceFeeCharged) {
-            portfolioEvents.emitUserUpdate('strategy_provider', String(performanceFeeResult.strategyProviderId), {
-              type: 'wallet_balance_update',
-              reason: 'performance_fee_earned',
-              order_id: String(order_id),
-            });
-          }
         } catch (e) {
           logger.warn('Failed to emit WS after payout', { error: e.message, order_id: String(order_id) });
         }
@@ -1019,6 +1010,21 @@ async function applyDbUpdate(msg) {
                 adjustedNetProfit: performanceFeeResult.adjustedNetProfit,
                 performanceFeeAmount: performanceFeeResult.performanceFeeAmount
               });
+
+              // Emit WebSocket update for strategy provider who earned the fee
+              try {
+                portfolioEvents.emitUserUpdate('strategy_provider', String(copyFollowerOrder.strategy_provider_id), {
+                  type: 'wallet_balance_update',
+                  reason: 'performance_fee_earned',
+                  order_id: String(order_id),
+                });
+              } catch (wsError) {
+                logger.warn('Failed to emit strategy provider WS update for performance fee', { 
+                  error: wsError.message, 
+                  order_id: String(order_id),
+                  strategyProviderId: copyFollowerOrder.strategy_provider_id
+                });
+              }
             }
           }
         } catch (performanceFeeError) {
@@ -1178,16 +1184,8 @@ async function handlePostCloseOperations(payload, row) {
       }
     }
 
-    // 2. Update net profit for user account (existing logic)
-    if (typeof net_profit === 'number' && Number.isFinite(net_profit)) {
-      const UserModel = getUserModel(user_type);
-      if (UserModel) {
-        await UserModel.increment(
-          { net_profit: net_profit }, 
-          { where: { id: parseInt(user_id, 10) } }
-        );
-      }
-    }
+    // 2. Net profit update is now handled by applyOrderClosePayout service
+    // Removed from here to avoid double accounting
 
     // 3. Update comprehensive statistics for strategy providers
     if (user_type === 'strategy_provider') {
