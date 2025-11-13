@@ -220,6 +220,16 @@ class CopyFollowerEquityMonitorService {
         timestamp: new Date().toISOString()
       });
 
+      // Attempt to backfill Redis entries for this copy follower if they have open orders
+      try {
+        await this.backfillCopyFollowerRedisEntries(userId);
+      } catch (backfillError) {
+        logger.error('Failed to backfill Redis entries for copy follower', {
+          userId,
+          error: backfillError.message
+        });
+      }
+
       return null;
     } catch (error) {
       logger.error('Failed to get user portfolio from Redis', {
@@ -548,6 +558,95 @@ class CopyFollowerEquityMonitorService {
         success: false,
         error: error.message
       };
+    }
+  }
+
+  /**
+   * Backfill Redis entries for copy follower with open orders
+   * @param {string} copyFollowerAccountId - Copy follower account ID
+   */
+  static async backfillCopyFollowerRedisEntries(copyFollowerAccountId) {
+    try {
+      const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      const { redisCluster } = require('../../config/redis');
+      
+      logger.info('Starting Redis backfill for copy follower', {
+        copyFollowerAccountId,
+        timestamp: new Date().toISOString()
+      });
+
+      // Get all open orders for this copy follower
+      const openOrders = await CopyFollowerOrder.findAll({
+        where: {
+          copy_follower_account_id: copyFollowerAccountId,
+          order_status: ['OPEN', 'QUEUED']
+        }
+      });
+
+      if (openOrders.length === 0) {
+        logger.info('No open orders found for copy follower backfill', {
+          copyFollowerAccountId
+        });
+        return { backfilled: 0, reason: 'no_open_orders' };
+      }
+
+      let backfilledCount = 0;
+      const copyTradingService = require('./copyTrading.service');
+
+      for (const order of openOrders) {
+        try {
+          // Create Redis entries for this order
+          await copyTradingService.createRedisEntries({
+            order_id: order.order_id,
+            order_user_id: copyFollowerAccountId,
+            symbol: order.symbol,
+            order_type: order.order_type,
+            order_status: order.order_status,
+            order_price: order.order_price,
+            order_quantity: order.order_quantity,
+            stop_loss: order.stop_loss,
+            take_profit: order.take_profit,
+            placed_by: 'copy_trading_backfill'
+          }, 'copy_follower');
+
+          backfilledCount++;
+
+          logger.info('Backfilled Redis entries for copy follower order', {
+            copyFollowerAccountId,
+            orderId: order.order_id,
+            symbol: order.symbol,
+            orderStatus: order.order_status
+          });
+
+        } catch (orderError) {
+          logger.error('Failed to backfill Redis entries for specific order', {
+            copyFollowerAccountId,
+            orderId: order.order_id,
+            error: orderError.message
+          });
+        }
+      }
+
+      logger.info('Completed Redis backfill for copy follower', {
+        copyFollowerAccountId,
+        totalOrders: openOrders.length,
+        backfilledCount,
+        timestamp: new Date().toISOString()
+      });
+
+      return { 
+        backfilled: backfilledCount, 
+        totalOrders: openOrders.length,
+        success: backfilledCount > 0
+      };
+
+    } catch (error) {
+      logger.error('Failed to backfill Redis entries for copy follower', {
+        copyFollowerAccountId,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
     }
   }
 }

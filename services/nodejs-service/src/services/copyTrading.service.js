@@ -455,6 +455,47 @@ class CopyTradingService {
       // Update follower order with execution results
       await this.updateFollowerOrderAfterExecution(followerOrder, executionResult);
 
+      // Create Redis entries for copy follower order (CRITICAL for portfolio calculation)
+      if (executionResult.success) {
+        try {
+          logger.info('Creating Redis entries for copy follower order', {
+            followerOrderId: followerOrder.order_id,
+            copyFollowerAccountId: follower.id,
+            symbol: followerOrder.symbol,
+            orderStatus: executionResult.data?.flow === 'provider' ? 'QUEUED' : 'OPEN'
+          });
+
+          // Create Redis entries so Python portfolio calculator can find this copy follower
+          await this.createRedisEntries({
+            order_id: followerOrder.order_id,
+            order_user_id: follower.id, // Use copy follower account ID
+            symbol: followerOrder.symbol,
+            order_type: followerOrder.order_type,
+            order_status: executionResult.data?.flow === 'provider' ? 'QUEUED' : 'OPEN',
+            order_price: executionResult.executionPrice || followerOrder.order_price,
+            order_quantity: followerOrder.order_quantity,
+            stop_loss: followerOrder.stop_loss,
+            take_profit: followerOrder.take_profit,
+            placed_by: 'copy_trading'
+          }, 'copy_follower');
+
+          logger.info('Redis entries created successfully for copy follower order', {
+            followerOrderId: followerOrder.order_id,
+            copyFollowerAccountId: follower.id,
+            symbolHoldersKey: `symbol_holders:${followerOrder.symbol}:copy_follower`
+          });
+
+        } catch (redisError) {
+          logger.error('Failed to create Redis entries for copy follower order', {
+            followerOrderId: followerOrder.order_id,
+            copyFollowerAccountId: follower.id,
+            error: redisError.message,
+            stack: redisError.stack
+          });
+          // Don't fail the entire operation, but this will cause portfolio calculation issues
+        }
+      }
+
       // Update copy follower margin for local execution (like regular users)
       if (executionResult.success && executionResult.data?.flow === 'local' && typeof executionResult.data.used_margin_executed === 'number') {
         try {
