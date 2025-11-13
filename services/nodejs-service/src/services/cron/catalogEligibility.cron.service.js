@@ -7,15 +7,27 @@ class CatalogEligibilityCronService {
   
   /**
    * Initialize and start the catalog eligibility cron job
-   * Runs daily at 2:00 AM to update is_catalog_eligible flags
+   * DEPRECATED: Now using real-time updates instead of daily cron job
+   * Only runs if CATALOG_ELIGIBILITY_CRON_ENABLED=true is set
    */
   static initializeCronJobs() {
-    // Run daily at 2:00 AM (0 2 * * *)
+    const cronEnabled = process.env.CATALOG_ELIGIBILITY_CRON_ENABLED === 'true';
+    
+    if (!cronEnabled) {
+      logger.info('Catalog eligibility cron job DISABLED - using real-time updates instead', {
+        reason: 'Real-time eligibility updates now handle catalog status changes',
+        enableWith: 'CATALOG_ELIGIBILITY_CRON_ENABLED=true'
+      });
+      return;
+    }
+
+    // Run daily at 2:00 AM (0 2 * * *) - only if explicitly enabled
     const cronExpression = process.env.CATALOG_ELIGIBILITY_CRON || '0 2 * * *';
     
-    logger.info('Initializing catalog eligibility cron job', {
+    logger.info('Initializing catalog eligibility cron job (LEGACY MODE)', {
       cronExpression,
-      timezone: 'UTC'
+      timezone: 'UTC',
+      warning: 'Consider using real-time updates instead'
     });
 
     cron.schedule(cronExpression, async () => {
@@ -25,7 +37,7 @@ class CatalogEligibilityCronService {
       timezone: 'UTC'
     });
 
-    logger.info('Catalog eligibility cron job scheduled successfully');
+    logger.info('Catalog eligibility cron job scheduled successfully (LEGACY MODE)');
   }
 
   /**

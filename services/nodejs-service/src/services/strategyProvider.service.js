@@ -595,44 +595,11 @@ class StrategyProviderService {
         };
       }
 
-      // Get order statistics
-      const orderStats = await this.getStrategyOrderStatistics(strategyProviderId);
+      // Simplified eligibility check - only equity requirement
       const requirements = this.getCatalogRequirements();
-      const now = new Date();
       const failures = [];
 
-      // Check minimum closed trades
-      if (orderStats.closed_trades < requirements.min_closed_trades) {
-        failures.push(`Minimum ${requirements.min_closed_trades} closed trades required (current: ${orderStats.closed_trades})`);
-      }
-
-      // Check 30 days since first trade
-      if (orderStats.first_trade_date) {
-        const daysSinceFirstTrade = Math.floor((now - new Date(orderStats.first_trade_date)) / (1000 * 60 * 60 * 24));
-        if (daysSinceFirstTrade < requirements.min_days_since_first_trade) {
-          failures.push(`Must complete ${requirements.min_days_since_first_trade} days after first trade (current: ${daysSinceFirstTrade} days)`);
-        }
-      } else {
-        failures.push('No trades found - first trade required');
-      }
-
-      // Check last trade within 7 days
-      if (orderStats.last_trade_date) {
-        const daysSinceLastTrade = Math.floor((now - new Date(orderStats.last_trade_date)) / (1000 * 60 * 60 * 24));
-        if (daysSinceLastTrade > requirements.max_days_since_last_trade) {
-          failures.push(`Last trade must be within ${requirements.max_days_since_last_trade} days (current: ${daysSinceLastTrade} days ago)`);
-        }
-      } else {
-        failures.push('No recent trades - must have traded within 7 days');
-      }
-
-      // Check return percentage >= 0%
-      const totalReturn = parseFloat(strategyProvider.total_return_percentage || 0);
-      if (totalReturn < requirements.min_return_percentage) {
-        failures.push(`Return must be >= ${requirements.min_return_percentage}% (current: ${totalReturn.toFixed(2)}%)`);
-      }
-
-      // Check minimum equity requirement
+      // Check minimum equity requirement (only requirement for real-time updates)
       const currentEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
       if (currentEquity < requirements.min_equity) {
         failures.push(`Minimum equity of $${requirements.min_equity} required (current: $${currentEquity.toFixed(2)})`);
@@ -645,18 +612,12 @@ class StrategyProviderService {
         reason: isEligible ? 'All catalog requirements met' : failures.join(', '),
         requirements,
         current: {
-          closed_trades: orderStats.closed_trades,
-          total_trades: orderStats.total_trades,
-          first_trade_date: orderStats.first_trade_date,
-          last_trade_date: orderStats.last_trade_date,
-          days_since_first_trade: orderStats.first_trade_date ? 
-            Math.floor((now - new Date(orderStats.first_trade_date)) / (1000 * 60 * 60 * 24)) : 0,
-          days_since_last_trade: orderStats.last_trade_date ? 
-            Math.floor((now - new Date(orderStats.last_trade_date)) / (1000 * 60 * 60 * 24)) : 999,
-          total_return_percentage: totalReturn,
-          current_equity: parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0),
+          current_equity: currentEquity,
+          wallet_balance: parseFloat(strategyProvider.wallet_balance || 0),
+          net_profit: parseFloat(strategyProvider.net_profit || 0),
           status: strategyProvider.status,
-          is_active: strategyProvider.is_active
+          is_active: strategyProvider.is_active,
+          meets_equity_requirement: currentEquity >= requirements.min_equity
         }
       };
 
@@ -754,11 +715,14 @@ class StrategyProviderService {
    */
   getCatalogRequirements() {
     return {
-      min_closed_trades: 10,
-      min_days_since_first_trade: 30,
-      max_days_since_last_trade: 7,
-      min_return_percentage: 0,
-      min_equity: 100.00
+      // Simplified to only equity requirement for real-time updates
+      min_equity: 100.00,
+      
+      // Legacy requirements (kept for reference but not enforced)
+      // min_closed_trades: 10,
+      // min_days_since_first_trade: 30,
+      // max_days_since_last_trade: 7,
+      // min_return_percentage: 0,
     };
   }
 

@@ -8,6 +8,7 @@ const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
 const logger = require('./logger.service');
 const { redisCluster } = require('../../config/redis');
+const CatalogEligibilityRealtimeService = require('./catalogEligibilityRealtime.service');
 
 /**
  * Internal Transfer Service
@@ -554,13 +555,55 @@ class InternalTransferService {
         });
       }
 
+      // Update catalog eligibility for strategy provider accounts in real-time
+      const eligibilityUpdates = [];
+      
+      if (sourceAccount.type === 'strategy_provider') {
+        try {
+          const eligibilityResult = await CatalogEligibilityRealtimeService.updateStrategyProviderEligibility(
+            sourceAccount.id, 
+            'internal_transfer_out'
+          );
+          eligibilityUpdates.push({
+            account: 'source',
+            strategyProviderId: sourceAccount.id,
+            ...eligibilityResult
+          });
+        } catch (eligibilityError) {
+          logger.error('Failed to update catalog eligibility for source strategy provider', {
+            strategyProviderId: sourceAccount.id,
+            error: eligibilityError.message
+          });
+        }
+      }
+      
+      if (destinationAccount.type === 'strategy_provider') {
+        try {
+          const eligibilityResult = await CatalogEligibilityRealtimeService.updateStrategyProviderEligibility(
+            destinationAccount.id, 
+            'internal_transfer_in'
+          );
+          eligibilityUpdates.push({
+            account: 'destination',
+            strategyProviderId: destinationAccount.id,
+            ...eligibilityResult
+          });
+        } catch (eligibilityError) {
+          logger.error('Failed to update catalog eligibility for destination strategy provider', {
+            strategyProviderId: destinationAccount.id,
+            error: eligibilityError.message
+          });
+        }
+      }
+
       logger.info('Internal transfer completed successfully', {
         userId,
         sourceTransactionId,
         destinationTransactionId,
         amount,
         fromAccount: `${sourceAccount.type}:${sourceAccount.id}`,
-        toAccount: `${destinationAccount.type}:${destinationAccount.id}`
+        toAccount: `${destinationAccount.type}:${destinationAccount.id}`,
+        catalogEligibilityUpdates: eligibilityUpdates.length > 0 ? eligibilityUpdates : 'none_required'
       });
 
       return {
@@ -579,7 +622,8 @@ class InternalTransferService {
           id: destinationAccount.id,
           name: destinationAccount.name,
           balanceAfter: destinationAccount.wallet_balance + amount
-        }
+        },
+        catalogEligibilityUpdates: eligibilityUpdates
       };
 
     } catch (error) {

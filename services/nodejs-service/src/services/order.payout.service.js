@@ -8,6 +8,7 @@ const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
 const { redisCluster } = require('../../config/redis');
 const { logOrderClosureSwap } = require('../utils/swap.logger');
+const CatalogEligibilityRealtimeService = require('./catalogEligibilityRealtime.service');
 
 function getUserModel(userType) {
   switch (userType) {
@@ -192,6 +193,33 @@ async function applyOrderClosePayout({
     }
   } catch (e) {
     logger.warn('Failed to sync Redis wallet_balance after payout', { error: e.message, userId: String(userId), userType: String(userType) });
+  }
+
+  // Update catalog eligibility for strategy providers after profit/loss payout
+  if (String(userType) === 'strategy_provider') {
+    try {
+      const eligibilityResult = await CatalogEligibilityRealtimeService.updateStrategyProviderEligibility(
+        parseInt(String(userId), 10), 
+        `order_payout_${profitLossType}`
+      );
+      
+      logger.info('Catalog eligibility updated after order payout', {
+        strategyProviderId: parseInt(String(userId), 10),
+        trigger: `order_payout_${profitLossType}`,
+        orderIdStr: String(orderIdStr),
+        netProfit: np,
+        balanceAfter: txResult.balance_after,
+        eligibilityResult
+      });
+    } catch (eligibilityError) {
+      logger.error('Failed to update catalog eligibility after order payout', {
+        strategyProviderId: parseInt(String(userId), 10),
+        trigger: `order_payout_${profitLossType}`,
+        orderIdStr: String(orderIdStr),
+        error: eligibilityError.message
+      });
+      // Don't fail the payout if eligibility update fails
+    }
   }
 
   return txResult;
