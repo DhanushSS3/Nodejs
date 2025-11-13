@@ -1509,11 +1509,44 @@ async function getCopyFollowerInvestments(req, res) {
           status: 'completed'
         },
         attributes: [
+          'id',
           'metadata',
           'amount',
           'created_at'
         ],
         raw: true
+      });
+
+      logger.info('Performance fee transactions found', {
+        strategyProviderId,
+        transactionCount: performanceFeesEarned.length,
+        transactions: performanceFeesEarned.map(t => ({
+          id: t.id,
+          amount: t.amount,
+          metadata: t.metadata
+        }))
+      });
+
+      // Also check for any copy follower orders to see if there have been profitable closures
+      const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      const copyFollowerOrders = await CopyFollowerOrder.findAll({
+        where: {
+          strategy_provider_id: strategyProviderId,
+          order_status: 'CLOSED'
+        },
+        attributes: ['order_id', 'net_profit', 'performance_fee_amount', 'fee_status'],
+        raw: true
+      });
+
+      logger.info('Copy follower closed orders found', {
+        strategyProviderId,
+        closedOrderCount: copyFollowerOrders.length,
+        orders: copyFollowerOrders.map(o => ({
+          order_id: o.order_id,
+          net_profit: o.net_profit,
+          performance_fee_amount: o.performance_fee_amount,
+          fee_status: o.fee_status
+        }))
       });
     }
 
@@ -1523,6 +1556,15 @@ async function getCopyFollowerInvestments(req, res) {
       try {
         const metadata = typeof fee.metadata === 'string' ? JSON.parse(fee.metadata) : fee.metadata;
         const copyFollowerUserId = metadata?.copy_follower_user_id;
+        
+        logger.info('Processing performance fee metadata', {
+          feeId: fee.id,
+          amount: fee.amount,
+          metadataType: typeof fee.metadata,
+          parsedMetadata: metadata,
+          copyFollowerUserId,
+          willAddToFees: !!copyFollowerUserId
+        });
         
         if (copyFollowerUserId) {
           if (!feesByFollower[copyFollowerUserId]) {
@@ -1540,6 +1582,12 @@ async function getCopyFollowerInvestments(req, res) {
           error: error.message 
         });
       }
+    });
+
+    logger.info('Final feesByFollower object', {
+      strategyProviderId,
+      feesByFollower,
+      copyFollowerUserIds: copyFollowerAccounts.map(a => a.user_id)
     });
 
     // Format response data
