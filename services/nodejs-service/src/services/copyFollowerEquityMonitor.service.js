@@ -158,7 +158,24 @@ class CopyFollowerEquityMonitorService {
       // Portfolio calculator writes to: user_portfolio:{user_type:user_id}
       const portfolioKey = `user_portfolio:{${userType}:${userId}}`;
       
+      logger.info('Attempting to get portfolio data for copy follower', {
+        userType,
+        userId,
+        portfolioKey,
+        timestamp: new Date().toISOString()
+      });
+      
       const portfolioData = await redisCluster.hgetall(portfolioKey);
+      
+      logger.info('Portfolio data retrieved from Redis', {
+        userType,
+        userId,
+        portfolioKey,
+        hasData: portfolioData && Object.keys(portfolioData).length > 0,
+        dataKeys: portfolioData ? Object.keys(portfolioData) : [],
+        rawData: portfolioData,
+        timestamp: new Date().toISOString()
+      });
       
       if (portfolioData && Object.keys(portfolioData).length > 0) {
         // Convert string values to numbers where appropriate
@@ -173,15 +190,44 @@ class CopyFollowerEquityMonitorService {
           last_updated: portfolioData.last_updated || null
         };
         
+        logger.info('Portfolio data parsed successfully', {
+          userType,
+          userId,
+          portfolio,
+          timestamp: new Date().toISOString()
+        });
+        
         return portfolio;
       }
+
+      // Check if there's an error status
+      const errorStatus = portfolioData?.calc_status;
+      const errorCodes = portfolioData?.error_codes;
+      
+      logger.warn('Portfolio data missing or empty for copy follower', {
+        userType,
+        userId,
+        portfolioKey,
+        calcStatus: errorStatus,
+        errorCodes: errorCodes,
+        rawData: portfolioData,
+        possibleCauses: [
+          'Copy follower not in symbol_holders Redis set',
+          'Missing wallet_balance in copy_follower_accounts table',
+          'Portfolio calculation error in Python service',
+          'Copy follower has no open orders'
+        ],
+        timestamp: new Date().toISOString()
+      });
 
       return null;
     } catch (error) {
       logger.error('Failed to get user portfolio from Redis', {
         userType,
         userId,
-        error: error.message
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
       });
       return null;
     }

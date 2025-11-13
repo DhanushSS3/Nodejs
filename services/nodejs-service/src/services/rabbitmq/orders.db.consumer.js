@@ -24,7 +24,7 @@ const { calculateAndApplyPerformanceFee } = require('../performanceFee.service')
 // Strategy provider statistics service
 const StrategyProviderStatsService = require('../strategyProviderStats.service');
 // Sequelize for database transactions
-const sequelize = require('../../../config/db');
+const sequelize = require('../../config/db');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
