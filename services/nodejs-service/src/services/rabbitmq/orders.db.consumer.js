@@ -1218,22 +1218,25 @@ async function startOrdersDbConsumer() {
 }
 
 /**
- * Handle post-close operations for all user types
- * Follows SOLID principles - Single Responsibility for post-close processing
+ * Handle post-close and cancellation operations for all user types
+ * Follows SOLID principles - Single Responsibility for order completion processing
  * @param {Object} payload - Order update payload
  * @param {Object} row - Updated order row
  */
 async function handlePostCloseOperations(payload, row) {
   const { type, user_type, user_id, order_id, used_margin_executed, net_profit } = payload;
   
-  // Only process for close confirmations
-  if (type !== 'ORDER_CLOSE_CONFIRMED') {
+  // Process for close confirmations and cancellations
+  if (type !== 'ORDER_CLOSE_CONFIRMED' && type !== 'ORDER_PENDING_CANCEL') {
     return;
   }
 
   try {
-    // 1. Update user margin for all user types (existing logic)
-    if (typeof used_margin_executed === 'number') {
+    const isCloseConfirmed = type === 'ORDER_CLOSE_CONFIRMED';
+    const isCancellation = type === 'ORDER_PENDING_CANCEL';
+    
+    // 1. Update user margin for all user types (only for closures, not cancellations)
+    if (isCloseConfirmed && typeof used_margin_executed === 'number') {
       await updateUserUsedMargin({ 
         userType: user_type, 
         userId: parseInt(user_id, 10), 
@@ -1259,16 +1262,39 @@ async function handlePostCloseOperations(payload, row) {
       }
     }
 
+    // Emit cancellation events
+    if (isCancellation) {
+      try {
+        portfolioEvents.emitUserUpdate(user_type, user_id, { 
+          type: 'order_update', 
+          order_id, 
+          update: { order_status: 'CANCELLED' } 
+        });
+      } catch (eventErr) {
+        logger.warn('Failed to emit cancellation events', { 
+          order_id, 
+          error: eventErr.message 
+        });
+      }
+    }
+
     // 2. Net profit update is now handled by applyOrderClosePayout service
     // Removed from here to avoid double accounting
 
-    // 3. Update comprehensive statistics for strategy providers
-    if (user_type === 'strategy_provider') {
+    // 3. Update comprehensive statistics for strategy providers (only for closures)
+    if (isCloseConfirmed && user_type === 'strategy_provider') {
       await updateStrategyProviderStatistics(user_id, order_id);
     }
 
-    // 4. Handle copy trading distribution for strategy providers (NEW)
+    // 4. Handle copy trading distribution for strategy providers (for both closures AND cancellations)
     if (user_type === 'strategy_provider' && row) {
+      logger.info('Processing strategy provider order for copy trading', {
+        orderId: order_id,
+        orderStatus: row.order_status,
+        messageType: type,
+        isCloseConfirmed,
+        isCancellation
+      });
       await handleStrategyProviderCopyTrading(row);
     }
 
