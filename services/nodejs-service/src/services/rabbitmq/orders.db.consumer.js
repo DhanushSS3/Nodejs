@@ -29,6 +29,11 @@ const sequelize = require('../../config/db');
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
 
+// Performance monitoring for throughput tracking
+let messageCount = 0;
+let lastLogTime = Date.now();
+const PERFORMANCE_LOG_INTERVAL = 60000; // Log performance every 60 seconds
+
 function getOrderModel(userType) {
   switch (userType) {
     case 'live':
@@ -1107,9 +1112,15 @@ async function startOrdersDbConsumer() {
     const conn = await amqp.connect(RABBITMQ_URL);
     const ch = await conn.createChannel();
     await ch.assertQueue(ORDER_DB_UPDATE_QUEUE, { durable: true });
-    await ch.prefetch(1); // Process one message at a time to prevent database lock conflicts
+    // SCALABILITY: Optimized for 100 orders/second with order-level locking
+    const prefetchCount = process.env.RABBITMQ_PREFETCH_COUNT || 25;
+    await ch.prefetch(parseInt(prefetchCount)); // Allow concurrent processing while preventing same-order conflicts
 
-    logger.info(`Orders DB consumer connected. Listening on ${ORDER_DB_UPDATE_QUEUE}`);
+    logger.info(`Orders DB consumer connected. Listening on ${ORDER_DB_UPDATE_QUEUE}`, {
+      prefetchCount: parseInt(prefetchCount),
+      targetThroughput: '100 orders/second',
+      optimizations: ['order_level_locking', 'deferred_model_hooks', 'separate_redis_pipelines']
+    });
 
     ch.consume(ORDER_DB_UPDATE_QUEUE, async (msg) => {
       if (!msg) return;
@@ -1145,12 +1156,34 @@ async function startOrdersDbConsumer() {
         }
         
         const processingTime = Date.now() - messageStartTime;
-        logger.info('RabbitMQ message processed successfully', {
+        logger.info('Orders DB consumer processed message successfully', {
           messageType: payload.type,
           orderId: payload.order_id,
           processingTimeMs: processingTime,
           timestamp: new Date().toISOString()
         });
+        
+        // Performance monitoring - track throughput
+        messageCount++;
+        const currentTime = Date.now();
+        if (currentTime - lastLogTime >= PERFORMANCE_LOG_INTERVAL) {
+          const timeElapsed = (currentTime - lastLogTime) / 1000; // seconds
+          const messagesPerSecond = messageCount / timeElapsed;
+          
+          logger.info('RabbitMQ Consumer Performance Metrics', {
+            messagesProcessed: messageCount,
+            timeElapsedSeconds: timeElapsed,
+            messagesPerSecond: messagesPerSecond.toFixed(2),
+            targetThroughput: 100,
+            performanceRatio: `${((messagesPerSecond / 100) * 100).toFixed(1)}%`,
+            prefetchCount: parseInt(process.env.RABBITMQ_PREFETCH_COUNT || 25),
+            timestamp: new Date().toISOString()
+          });
+          
+          // Reset counters
+          messageCount = 0;
+          lastLogTime = currentTime;
+        }
         
         ch.ack(msg);
       } catch (err) {
@@ -1383,9 +1416,4 @@ function getUserModel(userType) {
   }
 }
 
-module.exports = { 
-  startOrdersDbConsumer,
-  applyDbUpdate,
-  handleOrderRejectionRecord,
-  handleCloseIdUpdate
-};
+module.exports = { startOrdersDbConsumer };
