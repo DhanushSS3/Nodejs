@@ -1014,6 +1014,16 @@ async function applyDbUpdate(msg) {
         }
         portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), wsPayload);
         
+        logger.info('WebSocket event emitted for order update', {
+          messageType: String(type),
+          orderId: String(order_id),
+          userType: String(resolvedUserType),
+          userId: String(resolvedUserId || user_id),
+          wsPayloadType: wsPayload.type,
+          wsPayloadReason: wsPayload.reason,
+          updateFields: Object.keys(updateForWs)
+        });
+        
         // Emit dedicated events for specific order state changes to trigger immediate UI updates
         if (String(type) === 'ORDER_PENDING_CONFIRMED') {
           portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
@@ -1021,6 +1031,14 @@ async function applyDbUpdate(msg) {
             order_id: String(order_id),
             update: updateForWs,
             reason: 'pending_confirmed'
+          });
+          
+          logger.info('Dedicated WebSocket event emitted for pending confirmation', {
+            orderId: String(order_id),
+            userType: String(resolvedUserType),
+            userId: String(resolvedUserId || user_id),
+            eventType: 'order_pending_confirmed',
+            updateFields: Object.keys(updateForWs)
           });
         }
         if (String(type) === 'ORDER_PENDING_CANCEL') {

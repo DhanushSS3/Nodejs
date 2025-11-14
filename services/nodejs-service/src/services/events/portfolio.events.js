@@ -26,6 +26,29 @@ class PortfolioEventBus extends EventEmitter {
   emitUserUpdate(userType, userId, payload = {}) {
     const key = this.makeUserKey(userType, userId);
     const evt = { userType, userId, ...payload };
+    
+    // Debug logging for pending order events
+    if (payload.type === 'order_update' && payload.reason === 'pending_confirmed') {
+      logger && logger.info && logger.info('Portfolio event emitting pending confirmation', {
+        userKey: key,
+        userType,
+        userId,
+        payloadType: payload.type,
+        reason: payload.reason,
+        orderId: payload.order_id
+      });
+    }
+    
+    if (payload.type === 'order_pending_confirmed') {
+      logger && logger.info && logger.info('Portfolio event emitting dedicated pending confirmation', {
+        userKey: key,
+        userType,
+        userId,
+        payloadType: payload.type,
+        orderId: payload.order_id
+      });
+    }
+    
     // Emit locally (same-process listeners)
     this.emit(`user:${key}`, evt);
     // Publish cross-process via Redis Pub/Sub

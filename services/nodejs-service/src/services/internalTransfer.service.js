@@ -775,7 +775,6 @@ class InternalTransferService {
       const sourceConfigKey = this.getPortfolioCalculatorConfigKey(sourceAccount.type, sourceAccount.id);
       const sourceLegacyKey = this.getLegacyConfigKey(sourceAccount.type, sourceAccount.id);
       const sourcePortfolioKey = this.getPortfolioKey(sourceAccount.type, sourceAccount.id);
-      const sourceDirtyKey = this.getDirtyUserKey(sourceAccount.type);
       
       sourcePipeline.hset(sourceConfigKey, {
         'balance': sourceBalanceAfter.toString(),
@@ -788,7 +787,6 @@ class InternalTransferService {
         'wallet_balance': sourceBalanceAfter.toString()
       });
       sourcePipeline.del(sourcePortfolioKey);
-      sourcePipeline.sadd(sourceDirtyKey, sourceAccount.id.toString());
       sourcePipeline.expire(sourceLegacyKey, 86400);
       
       // Pipeline 2: Update destination account keys (all belong to same slot)
@@ -796,7 +794,6 @@ class InternalTransferService {
       const destinationConfigKey = this.getPortfolioCalculatorConfigKey(destinationAccount.type, destinationAccount.id);
       const destinationLegacyKey = this.getLegacyConfigKey(destinationAccount.type, destinationAccount.id);
       const destinationPortfolioKey = this.getPortfolioKey(destinationAccount.type, destinationAccount.id);
-      const destinationDirtyKey = this.getDirtyUserKey(destinationAccount.type);
       
       destinationPipeline.hset(destinationConfigKey, {
         'balance': destinationBalanceAfter.toString(),
@@ -809,13 +806,22 @@ class InternalTransferService {
         'wallet_balance': destinationBalanceAfter.toString()
       });
       destinationPipeline.del(destinationPortfolioKey);
-      destinationPipeline.sadd(destinationDirtyKey, destinationAccount.id.toString());
       destinationPipeline.expire(destinationLegacyKey, 86400);
       
-      // Execute both pipelines in parallel
+      // Execute account-specific pipelines in parallel
       const [sourceResults, destinationResults] = await Promise.all([
         sourcePipeline.exec(),
         destinationPipeline.exec()
+      ]);
+      
+      // Handle dirty user keys separately (they may be in different hash slots)
+      const sourceDirtyKey = this.getDirtyUserKey(sourceAccount.type);
+      const destinationDirtyKey = this.getDirtyUserKey(destinationAccount.type);
+      
+      // Update dirty user keys individually to avoid cross-slot errors
+      await Promise.all([
+        redisCluster.sadd(sourceDirtyKey, sourceAccount.id.toString()),
+        redisCluster.sadd(destinationDirtyKey, destinationAccount.id.toString())
       ]);
       
       // Combine results for error checking
@@ -843,7 +849,7 @@ class InternalTransferService {
         sourcePipelineOperations: sourceResults?.length || 0,
         destinationPipelineOperations: destinationResults?.length || 0,
         totalOperations: results.length,
-        pipelineStrategy: 'separate_pipelines_for_cluster_compatibility'
+        pipelineStrategy: 'separate_pipelines_and_individual_dirty_keys_for_cluster_compatibility'
       });
 
       // Check for Redis pipeline errors

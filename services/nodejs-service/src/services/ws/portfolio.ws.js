@@ -335,9 +335,35 @@ function startPortfolioWSServer(server) {
           (evt && evt.type === 'takeprofit_cancelled') ||
           (evt && evt.type === 'order_rejection_created') ||
           (evt && evt.type === 'pending_cancelled') ||
+          (evt && evt.type === 'order_pending_confirmed') ||
           (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'local_pending_cancel' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered' || reasonStr === 'order_opened' || reasonStr === 'order_closed' || reasonStr === 'stoploss_triggered' || reasonStr === 'takeprofit_triggered' || reasonStr === 'stoploss_cancelled' || reasonStr === 'takeprofit_cancelled')) ||
           (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED' || updateStatus === 'CANCELLED' || updateStatus === 'OPEN' || updateStatus === 'CLOSED'))
         );
+        
+        // Debug logging for pending confirmation events
+        if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
+          logger.info('WebSocket processing pending confirmation - force refresh check', {
+            userId,
+            userType,
+            eventType: evt.type,
+            reason: evt.reason,
+            orderId: evt.order_id,
+            forceDbRefresh,
+            isOrderUpdate,
+            reasonStr,
+            updateStatus
+          });
+        }
+        
+        if (evt && evt.type === 'order_pending_confirmed') {
+          logger.info('WebSocket processing dedicated pending confirmation - force refresh check', {
+            userId,
+            userType,
+            eventType: evt.type,
+            orderId: evt.order_id,
+            forceDbRefresh
+          });
+        }
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           const dbOrders = await fetchOrdersFromDB(userType, userId);
           ws._lastPending = dbOrders.pending;
@@ -351,6 +377,31 @@ function startPortfolioWSServer(server) {
           pendingOrders: ws._lastPending || [],
           rejectedOrders: ws._lastRejected || [],
         });
+        
+        // Debug logging for pending confirmation WebSocket sends
+        if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
+          logger.info('WebSocket sending pending confirmation update to client', {
+            userId,
+            userType,
+            eventType: evt.type,
+            eventReason: evt.reason,
+            orderId: evt.order_id,
+            pendingOrdersCount: (ws._lastPending || []).length,
+            snapshotReason: reason
+          });
+        }
+        
+        if (evt && evt.type === 'order_pending_confirmed') {
+          logger.info('WebSocket sending dedicated pending confirmation update to client', {
+            userId,
+            userType,
+            eventType: evt.type,
+            orderId: evt.order_id,
+            pendingOrdersCount: (ws._lastPending || []).length,
+            snapshotReason: reason
+          });
+        }
+        
         ws.send(JSON.stringify(payload));
       } catch (e) {
         logger.error('WS sendSnapshot failed', { error: e.message, userId, userType, reason, evt });
@@ -363,6 +414,27 @@ function startPortfolioWSServer(server) {
     // Event-driven updates: subscribe to user events
     const unsubscribe = portfolioEvents.onUserUpdate(userType, userId, async (evt) => {
       if (!alive) return;
+      
+      // Debug logging for pending order events
+      if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
+        logger.info('WebSocket received pending confirmation event', {
+          userId,
+          userType,
+          eventType: evt.type,
+          reason: evt.reason,
+          orderId: evt.order_id
+        });
+      }
+      
+      if (evt && evt.type === 'order_pending_confirmed') {
+        logger.info('WebSocket received dedicated pending confirmation event', {
+          userId,
+          userType,
+          eventType: evt.type,
+          orderId: evt.order_id
+        });
+      }
+      
       await sendSnapshot('event', evt);
     });
 
