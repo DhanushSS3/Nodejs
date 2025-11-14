@@ -34,6 +34,10 @@ let messageCount = 0;
 let lastLogTime = Date.now();
 const PERFORMANCE_LOG_INTERVAL = 60000; // Log performance every 60 seconds
 
+// Global connection references for graceful shutdown
+let rabbitConnection = null;
+let rabbitChannel = null;
+
 function getOrderModel(userType) {
   switch (userType) {
     case 'live':
@@ -1109,12 +1113,12 @@ async function applyDbUpdate(msg) {
 
 async function startOrdersDbConsumer() {
   try {
-    const conn = await amqp.connect(RABBITMQ_URL);
-    const ch = await conn.createChannel();
-    await ch.assertQueue(ORDER_DB_UPDATE_QUEUE, { durable: true });
+    rabbitConnection = await amqp.connect(RABBITMQ_URL);
+    rabbitChannel = await rabbitConnection.createChannel();
+    await rabbitChannel.assertQueue(ORDER_DB_UPDATE_QUEUE, { durable: true });
     // SCALABILITY: Optimized for 100 orders/second with order-level locking
     const prefetchCount = process.env.RABBITMQ_PREFETCH_COUNT || 25;
-    await ch.prefetch(parseInt(prefetchCount)); // Allow concurrent processing while preventing same-order conflicts
+    await rabbitChannel.prefetch(parseInt(prefetchCount)); // Allow concurrent processing while preventing same-order conflicts
 
     logger.info(`Orders DB consumer connected. Listening on ${ORDER_DB_UPDATE_QUEUE}`, {
       prefetchCount: parseInt(prefetchCount),
@@ -1122,7 +1126,7 @@ async function startOrdersDbConsumer() {
       optimizations: ['order_level_locking', 'deferred_model_hooks', 'separate_redis_pipelines']
     });
 
-    ch.consume(ORDER_DB_UPDATE_QUEUE, async (msg) => {
+    rabbitChannel.consume(ORDER_DB_UPDATE_QUEUE, async (msg) => {
       if (!msg) return;
       let payload = null;
       const messageStartTime = Date.now();
@@ -1185,7 +1189,7 @@ async function startOrdersDbConsumer() {
           lastLogTime = currentTime;
         }
         
-        ch.ack(msg);
+        rabbitChannel.ack(msg);
       } catch (err) {
         const processingTime = Date.now() - messageStartTime;
         logger.error('Orders DB consumer failed to handle message', { 
@@ -1200,13 +1204,13 @@ async function startOrdersDbConsumer() {
           timestamp: new Date().toISOString()
         });
         // Requeue to retry transient failures
-        ch.nack(msg, false, true);
+        rabbitChannel.nack(msg, false, true);
       }
     }, { noAck: false });
 
     // Handle connection errors
-    conn.on('error', (e) => logger.error('AMQP connection error', { error: e.message }));
-    conn.on('close', () => logger.warn('AMQP connection closed'));
+    rabbitConnection.on('error', (e) => logger.error('AMQP connection error', { error: e.message }));
+    rabbitConnection.on('close', () => logger.warn('AMQP connection closed'));
   } catch (err) {
     logger.error('Failed to start Orders DB consumer', { error: err.message });
     // Let the process continue; a supervisor can retry or we can add a backoff/retry here
@@ -1416,4 +1420,26 @@ function getUserModel(userType) {
   }
 }
 
-module.exports = { startOrdersDbConsumer };
+// Graceful shutdown function for RabbitMQ connections
+async function shutdownOrdersDbConsumer() {
+  try {
+    logger.info('🔄 Shutting down Orders DB consumer...');
+    
+    if (rabbitChannel) {
+      await rabbitChannel.close();
+      logger.info('✅ RabbitMQ channel closed');
+    }
+    
+    if (rabbitConnection) {
+      await rabbitConnection.close();
+      logger.info('✅ RabbitMQ connection closed');
+    }
+    
+    logger.info('✅ Orders DB consumer shutdown completed');
+  } catch (err) {
+    logger.error('❌ Error during Orders DB consumer shutdown:', err.message);
+    throw err;
+  }
+}
+
+module.exports = { startOrdersDbConsumer, shutdownOrdersDbConsumer };

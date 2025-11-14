@@ -5,13 +5,18 @@ const app = require('./src/app');
 const sequelize = require('./src/config/db');
 const { redisCluster, redisReadyPromise } = require('./config/redis');
 const startupCacheService = require('./src/services/startup.cache.service');
-const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
+const { startOrdersDbConsumer, shutdownOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
 const swapSchedulerService = require('./src/services/swap.scheduler.service');
 const CatalogEligibilityCronService = require('./src/services/cron/catalogEligibility.cron.service');
 const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEquityMonitor.worker');
 
 const PORT = process.env.PORT || 3000;
 const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
+
+// Global references for graceful shutdown
+let server = null;
+let rabbitConnection = null;
+let wsServer = null;
 
 (async () => {
   try {
@@ -59,7 +64,7 @@ const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
     });
     
     // 4. Start server
-    const server = app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
 
@@ -100,3 +105,104 @@ const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
     process.exit(1);
   }
 })();
+
+// Graceful shutdown handler
+async function gracefulShutdown(signal) {
+  console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+  
+  const shutdownTimeout = setTimeout(() => {
+    console.error('❌ Graceful shutdown timeout. Force exiting...');
+    process.exit(1);
+  }, 10000); // 10 second timeout
+  
+  try {
+    // 1. Stop accepting new connections
+    if (server) {
+      console.log('🔄 Closing HTTP server...');
+      await new Promise((resolve) => {
+        server.close(resolve);
+      });
+      console.log('✅ HTTP server closed');
+    }
+
+    // 2. Stop WebSocket server
+    if (wsServer) {
+      console.log('🔄 Closing WebSocket server...');
+      // WebSocket server should close with HTTP server
+      console.log('✅ WebSocket server closed');
+    }
+
+    // 3. Stop RabbitMQ consumer
+    try {
+      console.log('🔄 Closing RabbitMQ connections...');
+      await shutdownOrdersDbConsumer();
+      console.log('✅ RabbitMQ connections closed');
+    } catch (mqErr) {
+      console.error('❌ Error closing RabbitMQ:', mqErr.message);
+    }
+
+    // 4. Stop cron jobs and workers
+    try {
+      console.log('🔄 Stopping scheduled services...');
+      
+      // Stop swap scheduler
+      if (swapSchedulerService && swapSchedulerService.stop) {
+        swapSchedulerService.stop();
+      }
+      
+      // Stop copy follower equity monitor
+      if (copyFollowerEquityMonitorWorker && copyFollowerEquityMonitorWorker.stop) {
+        copyFollowerEquityMonitorWorker.stop();
+      }
+      
+      console.log('✅ Scheduled services stopped');
+    } catch (cronErr) {
+      console.error('❌ Error stopping scheduled services:', cronErr.message);
+    }
+
+    // 5. Close Redis connections
+    try {
+      console.log('🔄 Closing Redis connections...');
+      if (redisCluster && redisCluster.disconnect) {
+        await redisCluster.disconnect();
+      }
+      console.log('✅ Redis connections closed');
+    } catch (redisErr) {
+      console.error('❌ Error closing Redis:', redisErr.message);
+    }
+
+    // 6. Close database connections
+    try {
+      console.log('🔄 Closing database connections...');
+      await sequelize.close();
+      console.log('✅ Database connections closed');
+    } catch (dbErr) {
+      console.error('❌ Error closing database:', dbErr.message);
+    }
+
+    clearTimeout(shutdownTimeout);
+    console.log('✅ Graceful shutdown completed successfully');
+    process.exit(0);
+    
+  } catch (err) {
+    console.error('❌ Error during graceful shutdown:', err);
+    clearTimeout(shutdownTimeout);
+    process.exit(1);
+  }
+}
+
+// Register shutdown handlers
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // For nodemon
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
+});
