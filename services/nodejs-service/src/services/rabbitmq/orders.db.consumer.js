@@ -291,8 +291,20 @@ async function applyDbUpdate(msg) {
     timestamp: new Date().toISOString()
   });
   
-  if (!order_id || !user_id || !user_type) {
-    throw new Error('Missing required fields in DB update message');
+  // Validate required fields - order_id is always required
+  if (!order_id) {
+    throw new Error('Missing order_id in DB update message');
+  }
+  
+  // For some message types (like ORDER_PENDING_CANCEL), user_id and user_type might be empty
+  // We'll look them up from the database if needed
+  if (!user_id || !user_type) {
+    logger.warn('Missing user_id or user_type in message, will attempt database lookup', {
+      messageType: String(type),
+      order_id: String(order_id),
+      user_id: String(user_id || 'empty'),
+      user_type: String(user_type || 'empty')
+    });
   }
 
   // Enhanced deduplication for ALL message types to prevent race conditions and database locks
@@ -361,12 +373,53 @@ async function applyDbUpdate(msg) {
     }
   };
 
-  const OrderModel = getOrderModel(String(user_type));
+  // If user_type is missing, try to get it from Redis canonical data
+  let resolvedUserType = user_type;
+  let resolvedUserId = user_id;
+  
+  if (!user_type || !user_id) {
+    try {
+      const canonicalKey = `order_data:${String(order_id)}`;
+      const canonical = await redisCluster.hgetall(canonicalKey);
+      
+      if (canonical && Object.keys(canonical).length > 0) {
+        resolvedUserType = resolvedUserType || canonical.user_type;
+        resolvedUserId = resolvedUserId || canonical.user_id;
+        
+        logger.info('Resolved missing user info from Redis canonical data', {
+          order_id: String(order_id),
+          originalUserType: String(user_type || 'empty'),
+          originalUserId: String(user_id || 'empty'),
+          resolvedUserType: String(resolvedUserType || 'empty'),
+          resolvedUserId: String(resolvedUserId || 'empty')
+        });
+      } else {
+        logger.warn('Could not resolve user info - canonical data not found', {
+          order_id: String(order_id),
+          canonicalKey
+        });
+      }
+    } catch (redisError) {
+      logger.error('Failed to lookup canonical data for missing user info', {
+        order_id: String(order_id),
+        error: redisError.message
+      });
+    }
+  }
+  
+  // Final validation after attempted resolution
+  if (!resolvedUserType) {
+    throw new Error(`Cannot determine user_type for order ${order_id}. Message user_type: "${user_type}", Redis lookup failed.`);
+  }
+  
+  const OrderModel = getOrderModel(String(resolvedUserType));
   logger.info('DB consumer received message', {
     type,
     order_id: String(order_id),
-    user_id: String(user_id),
-    user_type: String(user_type),
+    user_id: String(resolvedUserId || user_id),
+    user_type: String(resolvedUserType),
+    originalUserId: String(user_id || 'empty'),
+    originalUserType: String(user_type || 'empty'),
     order_status,
     order_price,
     order_quantity,
@@ -899,17 +952,17 @@ async function applyDbUpdate(msg) {
         if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
           wsPayload.reason = 'takeprofit_cancelled';
         }
-        portfolioEvents.emitUserUpdate(String(user_type), String(user_id), wsPayload);
+        portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), wsPayload);
         // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
         if (String(type) === 'ORDER_REJECTED') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'order_rejected',
             order_id: String(order_id),
           });
         }
         // Emit immediate event for order opened to refresh UI instantly
         if (String(type) === 'ORDER_OPEN_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'order_opened',
             order_id: String(order_id),
             update: updateForWs,
@@ -917,7 +970,7 @@ async function applyDbUpdate(msg) {
         }
         // Emit immediate event for order closed to refresh UI instantly
         if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'order_closed',
             order_id: String(order_id),
             update: updateForWs,
@@ -925,7 +978,7 @@ async function applyDbUpdate(msg) {
         }
         // Emit immediate event for stoploss triggered to refresh UI instantly
         if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'stoploss_triggered',
             order_id: String(order_id),
             update: updateForWs,
@@ -933,7 +986,7 @@ async function applyDbUpdate(msg) {
         }
         // Emit immediate event for takeprofit triggered to refresh UI instantly
         if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'takeprofit_triggered',
             order_id: String(order_id),
             update: updateForWs,
@@ -941,7 +994,7 @@ async function applyDbUpdate(msg) {
         }
         // Emit immediate event for stoploss cancelled to refresh UI instantly
         if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'stoploss_cancelled',
             order_id: String(order_id),
             update: updateForWs,
@@ -949,7 +1002,7 @@ async function applyDbUpdate(msg) {
         }
         // Emit immediate event for takeprofit cancelled to refresh UI instantly
         if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'takeprofit_cancelled',
             order_id: String(order_id),
             update: updateForWs,
@@ -957,7 +1010,7 @@ async function applyDbUpdate(msg) {
         }
         // Emit immediate event for pending order triggers to refresh UI instantly
         if (String(type) === 'ORDER_PENDING_TRIGGERED') {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
             type: 'order_update',
             order_id: String(order_id),
             reason: 'pending_triggered',
@@ -971,7 +1024,13 @@ async function applyDbUpdate(msg) {
   }
 
   // Handle post-close operations (margin updates, copy trading, etc.)
-  await handlePostCloseOperations(msg, row);
+  // Use resolved user info for post-close operations
+  const msgWithResolvedUser = {
+    ...msg,
+    user_id: resolvedUserId || user_id,
+    user_type: resolvedUserType
+  };
+  await handlePostCloseOperations(msgWithResolvedUser, row);
 
   // NOTE: Copy trading replication is handled in the controller when the order is placed
   // Removing duplicate trigger that was causing double copy orders in provider flow
@@ -983,22 +1042,22 @@ async function applyDbUpdate(msg) {
       try {
         logger.info('Updating user margin from DB consumer', {
           order_id: String(order_id),
-          user_id: String(user_id),
-          user_type: String(user_type),
+          user_id: String(resolvedUserId || user_id),
+          user_type: String(resolvedUserType),
           message_type: type,
           mirrorUsedMargin,
           used_margin_usd,
           used_margin_executed,
           transactionId: transaction.id
         });
-        await updateUserUsedMargin({ userType: String(user_type), userId: parseInt(String(user_id), 10), usedMargin: mirrorUsedMargin });
+        await updateUserUsedMargin({ userType: String(resolvedUserType), userId: parseInt(String(resolvedUserId || user_id), 10), usedMargin: mirrorUsedMargin });
       } catch (e) {
-        logger.error('Failed to persist used margin in SQL', { error: e.message, user_id, user_type });
+        logger.error('Failed to persist used margin in SQL', { error: e.message, user_id: resolvedUserId || user_id, user_type: resolvedUserType });
         // Do not fail the message solely due to mirror write; treat as non-fatal
       }
       // Emit separate event for margin change
       try {
-        portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+        portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
           type: 'user_margin_update',
           used_margin_usd: mirrorUsedMargin,
         });
