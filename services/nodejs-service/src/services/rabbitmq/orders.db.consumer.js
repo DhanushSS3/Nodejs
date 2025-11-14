@@ -394,10 +394,70 @@ async function applyDbUpdate(msg) {
           resolvedUserId: String(resolvedUserId || 'empty')
         });
       } else {
-        logger.warn('Could not resolve user info - canonical data not found', {
+        logger.warn('Could not resolve user info from Redis - canonical data not found', {
           order_id: String(order_id),
           canonicalKey
         });
+        
+        // Fallback: Try to determine user_type from order_id pattern or database lookup
+        // Copy follower orders typically have specific patterns or we can query the database
+        try {
+          // Try to find the order in copy follower table first (most likely case for missing canonical data)
+          const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
+          const copyFollowerOrder = await CopyFollowerOrder.findOne({
+            where: { order_id: String(order_id) },
+            attributes: ['order_user_id']
+          });
+          
+          if (copyFollowerOrder) {
+            resolvedUserType = 'copy_follower';
+            resolvedUserId = String(copyFollowerOrder.order_user_id);
+            logger.info('Resolved user info from copy follower database lookup', {
+              order_id: String(order_id),
+              resolvedUserType,
+              resolvedUserId
+            });
+          } else {
+            // Try strategy provider table
+            const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
+            const strategyProviderOrder = await StrategyProviderOrder.findOne({
+              where: { order_id: String(order_id) },
+              attributes: ['order_user_id']
+            });
+            
+            if (strategyProviderOrder) {
+              resolvedUserType = 'strategy_provider';
+              resolvedUserId = String(strategyProviderOrder.order_user_id);
+              logger.info('Resolved user info from strategy provider database lookup', {
+                order_id: String(order_id),
+                resolvedUserType,
+                resolvedUserId
+              });
+            } else {
+              // Try live user table as final fallback
+              const LiveUserOrder = require('../../models/liveUserOrder.model');
+              const liveUserOrder = await LiveUserOrder.findOne({
+                where: { order_id: String(order_id) },
+                attributes: ['order_user_id']
+              });
+              
+              if (liveUserOrder) {
+                resolvedUserType = 'live';
+                resolvedUserId = String(liveUserOrder.order_user_id);
+                logger.info('Resolved user info from live user database lookup', {
+                  order_id: String(order_id),
+                  resolvedUserType,
+                  resolvedUserId
+                });
+              }
+            }
+          }
+        } catch (dbError) {
+          logger.error('Failed to resolve user info from database lookup', {
+            order_id: String(order_id),
+            error: dbError.message
+          });
+        }
       }
     } catch (redisError) {
       logger.error('Failed to lookup canonical data for missing user info', {
