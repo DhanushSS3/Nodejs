@@ -1013,6 +1013,24 @@ async function applyDbUpdate(msg) {
           wsPayload.reason = 'takeprofit_cancelled';
         }
         portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), wsPayload);
+        
+        // Emit dedicated events for specific order state changes to trigger immediate UI updates
+        if (String(type) === 'ORDER_PENDING_CONFIRMED') {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+            type: 'order_pending_confirmed',
+            order_id: String(order_id),
+            update: updateForWs,
+            reason: 'pending_confirmed'
+          });
+        }
+        if (String(type) === 'ORDER_PENDING_CANCEL') {
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+            type: 'order_pending_cancelled',
+            order_id: String(order_id),
+            update: updateForWs,
+            reason: 'pending_cancelled'
+          });
+        }
         // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
         if (String(type) === 'ORDER_REJECTED') {
           portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
