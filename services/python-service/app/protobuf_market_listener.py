@@ -251,9 +251,31 @@ class ProtobufMarketListener:
                             logger.error(f"Failed to write market data after {max_retries} attempts: {e}")
                             
                     except Exception as e:
+                        # Detailed error logging to identify exact failure points
+                        import traceback
+                        error_details = {
+                            "updates_count": len(updates),
+                            "symbols": [symbol for symbol, _, _ in updates[:5]],  # First 5 symbols for context
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                            "operation_id": data_operation_id,
+                            "attempt": attempt + 1,
+                            "max_retries": max_retries
+                        }
+                        
                         log_connection_error("cluster", f"market_data_batch_{len(updates)}", str(e), data_operation_id)
                         connection_tracker.end_operation(data_operation_id, success=False, error=str(e))
-                        logger.error(f"Redis writer pipeline error: {e}")
+                        
+                        logger.error(
+                            f"❌ PROTOBUF_LISTENER: Redis writer error - "
+                            f"UpdatesCount: {len(updates)}, "
+                            f"Symbols: {[symbol for symbol, _, _ in updates[:3]]}, "  # First 3 symbols
+                            f"ErrorType: {type(e).__name__}, "
+                            f"ErrorMsg: {str(e)}, "
+                            f"Attempt: {attempt + 1}/{max_retries}, "
+                            f"OpId: {data_operation_id}"
+                        )
+                        logger.debug(f"Full traceback for Redis writer error: {traceback.format_exc()}")
                         break
                 
                 # Publish updated symbols to notify portfolio calculator and other subscribers
@@ -287,9 +309,31 @@ class ProtobufMarketListener:
                                 logger.warning(f"Failed to publish market_price_updates after {max_retries} attempts: {e}")
                                 
                         except Exception as pub_err:
+                            # Detailed error logging for pub/sub failures
+                            import traceback
+                            error_details = {
+                                "symbols_count": len(unique_symbols),
+                                "symbols": unique_symbols[:5],  # First 5 symbols for context
+                                "error_type": type(pub_err).__name__,
+                                "error_message": str(pub_err),
+                                "operation_id": pubsub_operation_id,
+                                "attempt": attempt + 1,
+                                "max_retries": max_retries
+                            }
+                            
                             log_connection_error("pubsub", f"publish_batch_{len(unique_symbols)}", str(pub_err), pubsub_operation_id)
                             connection_tracker.end_operation(pubsub_operation_id, success=False, error=str(pub_err))
-                            logger.warning(f"Failed to publish market_price_updates: {pub_err}")
+                            
+                            logger.error(
+                                f"❌ PROTOBUF_LISTENER: Pub/sub publish error - "
+                                f"SymbolsCount: {len(unique_symbols)}, "
+                                f"Symbols: {unique_symbols[:3]}, "  # First 3 symbols
+                                f"ErrorType: {type(pub_err).__name__}, "
+                                f"ErrorMsg: {str(pub_err)}, "
+                                f"Attempt: {attempt + 1}/{max_retries}, "
+                                f"OpId: {pubsub_operation_id}"
+                            )
+                            logger.debug(f"Full traceback for pub/sub error: {traceback.format_exc()}")
                             break
                             
             # Periodic debug (every ~1s): queue size and last msg age

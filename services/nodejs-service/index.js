@@ -6,6 +6,7 @@ const sequelize = require('./src/config/db');
 const { redisCluster, redisReadyPromise } = require('./config/redis');
 const startupCacheService = require('./src/services/startup.cache.service');
 const { startOrdersDbConsumer } = require('./src/services/rabbitmq/orders.db.consumer');
+const { ScalableOrdersConsumer } = require('./src/services/rabbitmq/scalable.orders.consumer');
 const swapSchedulerService = require('./src/services/swap.scheduler.service');
 const CatalogEligibilityCronService = require('./src/services/cron/catalogEligibility.cron.service');
 const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEquityMonitor.worker');
@@ -47,7 +48,10 @@ const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
     // 3b. Start RabbitMQ consumer for order DB updates (from Python workers)
     try {
       console.log("Starting Orders DB consumer...");
-      startOrdersDbConsumer();
+      
+      // Always use the original single consumer for now
+      // The scalable consumer will be implemented as a separate service
+      await startOrdersDbConsumer();
       console.log("✅ Orders DB consumer started");
     } catch (mqErr) {
       console.error("❌ Failed to start Orders DB consumer:", mqErr);

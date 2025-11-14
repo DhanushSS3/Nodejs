@@ -286,39 +286,71 @@ async function applyDbUpdate(msg) {
     throw new Error('Missing required fields in DB update message');
   }
 
-  // Enhanced deduplication for critical message types to prevent race conditions
-  const criticalMessageTypes = ['ORDER_CLOSE_CONFIRMED', 'ORDER_PENDING_TRIGGERED', 'ORDER_OPEN_CONFIRMED'];
-  if (criticalMessageTypes.includes(String(type))) {
-    const dedupKey = `order_update_dedup:${String(order_id)}:${String(type)}`;
-    try {
-      const alreadyProcessed = await redisCluster.set(dedupKey, '1', 'EX', 60, 'NX');
-      if (!alreadyProcessed) {
-        logger.warn('Skipping duplicate message to prevent race condition', {
-          messageType: String(type),
-          order_id: String(order_id),
-          user_id: String(user_id),
-          user_type: String(user_type),
-          dedupKey,
-          timestamp: new Date().toISOString()
-        });
-        return; // Skip processing this duplicate message
-      }
-      
-      logger.info('Message deduplication passed', {
+  // Enhanced deduplication for ALL message types to prevent race conditions and database locks
+  const processingKey = `order_processing:${String(order_id)}`;
+  let processingId = null;
+  let lockAcquired = false;
+  
+  try {
+    // Check if this order is currently being processed
+    const isProcessing = await redisCluster.get(processingKey);
+    if (isProcessing) {
+      logger.warn('Order is currently being processed, skipping to prevent database lock', {
         messageType: String(type),
         order_id: String(order_id),
-        dedupKey,
+        user_id: String(user_id),
+        user_type: String(user_type),
+        processingKey,
+        currentProcessor: isProcessing,
         timestamp: new Date().toISOString()
       });
-    } catch (error) {
-      logger.warn('Failed to check message deduplication', {
-        messageType: String(type),
-        order_id: String(order_id),
-        error: error.message
-      });
-      // Continue processing if Redis fails (better to risk duplicate than lose message)
+      return; // Skip processing to prevent database lock conflicts
     }
+    
+    // Mark order as being processed (with 60-second timeout)
+    processingId = `${process.pid}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await redisCluster.setex(processingKey, 60, processingId);
+    lockAcquired = true;
+    
+    logger.info('Order processing lock acquired', {
+      messageType: String(type),
+      order_id: String(order_id),
+      processingId,
+      processingKey,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.warn('Failed to check order processing status', {
+      messageType: String(type),
+      order_id: String(order_id),
+      error: error.message
+    });
+    // Continue processing if Redis fails (better to risk duplicate than lose message)
   }
+  
+  // Helper function to release processing lock
+  const releaseProcessingLock = async () => {
+    if (lockAcquired && processingId) {
+      try {
+        const currentProcessor = await redisCluster.get(processingKey);
+        if (currentProcessor === processingId) {
+          await redisCluster.del(processingKey);
+          logger.info('Order processing lock released', {
+            order_id: String(order_id),
+            processingId,
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to release processing lock', {
+          order_id: String(order_id),
+          processingId,
+          error: error.message
+        });
+      }
+    }
+  };
 
   const OrderModel = getOrderModel(String(user_type));
   logger.info('DB consumer received message', {
@@ -975,6 +1007,9 @@ async function applyDbUpdate(msg) {
       transactionId: transaction.id,
       timestamp: new Date().toISOString()
     });
+    
+    // Release processing lock after successful completion
+    await releaseProcessingLock();
 
     // Calculate and apply performance fee AFTER transaction commit to avoid lock timeouts
     if (type === 'ORDER_CLOSE_CONFIRMED' && String(user_type) === 'copy_follower' && (Number(net_profit) || 0) > 0) {
@@ -1059,6 +1094,9 @@ async function applyDbUpdate(msg) {
       });
     }
     
+    // Release processing lock on error
+    await releaseProcessingLock();
+    
     // Re-throw the original error to trigger message requeue
     throw transactionError;
   }
@@ -1069,7 +1107,7 @@ async function startOrdersDbConsumer() {
     const conn = await amqp.connect(RABBITMQ_URL);
     const ch = await conn.createChannel();
     await ch.assertQueue(ORDER_DB_UPDATE_QUEUE, { durable: true });
-    await ch.prefetch(1); // Reduced from 32 to 1 to prevent race conditions during concurrent processing
+    await ch.prefetch(1); // Process one message at a time to prevent database lock conflicts
 
     logger.info(`Orders DB consumer connected. Listening on ${ORDER_DB_UPDATE_QUEUE}`);
 
@@ -1345,4 +1383,9 @@ function getUserModel(userType) {
   }
 }
 
-module.exports = { startOrdersDbConsumer };
+module.exports = { 
+  startOrdersDbConsumer,
+  applyDbUpdate,
+  handleOrderRejectionRecord,
+  handleCloseIdUpdate
+};

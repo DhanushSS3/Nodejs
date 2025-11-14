@@ -1018,20 +1018,23 @@ class PortfolioCalculatorListener:
     
     async def _fetch_symbol_holders(self, symbol: str, user_type: str) -> Set[str]:
         """
-        Fetch all users holding positions in a specific symbol
+        Fetch all users holding positions in a specific symbol with proper connection management
         
         Args:
             symbol: The trading symbol (e.g., 'EURUSD')
-            user_type: 'live' or 'demo'
+            user_type: Type of user ('live', 'demo', 'strategy_provider', 'copy_follower')
             
         Returns:
             Set of user identifiers in format 'user_type:user_id'
         """
+        redis_key = f"symbol_holders:{symbol}:{user_type}"
+        
         try:
-            redis_key = f"symbol_holders:{symbol}:{user_type}"
-            
-            # Use Redis SMEMBERS to get all users holding this symbol
-            user_ids = await redis_cluster.smembers(redis_key)
+            # Use proper connection management with pipeline to prevent connection leaks
+            async with redis_cluster.pipeline() as pipe:
+                pipe.smembers(redis_key)
+                results = await pipe.execute()
+                user_ids = results[0] if results else set()
             
             if user_ids:
                 # Convert to set and ensure proper format
@@ -1049,9 +1052,26 @@ class PortfolioCalculatorListener:
             return set()
             
         except Exception as e:
+            # Detailed error logging to identify exact failure points
+            import traceback
+            error_details = {
+                "symbol": symbol,
+                "user_type": user_type,
+                "redis_key": redis_key,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": traceback.format_exc()
+            }
+            
             self.logger.error(
-                f"Error fetching symbol holders for {symbol}:{user_type}: {e}"
+                f"❌ PORTFOLIO_CALC: Failed to fetch symbol holders - "
+                f"Symbol: {symbol}, UserType: {user_type}, "
+                f"RedisKey: {redis_key}, "
+                f"ErrorType: {type(e).__name__}, "
+                f"ErrorMsg: {str(e)}"
             )
+            self.logger.debug(f"Full traceback for symbol_holders error: {traceback.format_exc()}")
+            
             return set()
     
     def _add_to_dirty_users(self, user_ids: Set[str], user_type: str) -> int:

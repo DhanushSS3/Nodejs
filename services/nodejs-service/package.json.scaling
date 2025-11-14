@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "start": "node index.js",
+    "start:consumer": "node consumer.js",
+    "start:scaled": "concurrently \"npm run start\" \"npm run start:consumer\"",
+    "dev": "nodemon index.js",
+    "test": "jest"
+  }
+}

@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
+const logger = require('../services/logger.service');
 
 const StrategyProviderOrder = sequelize.define('StrategyProviderOrder', {
   id: { 
@@ -212,15 +213,44 @@ const StrategyProviderOrder = sequelize.define('StrategyProviderOrder', {
         await order.save({ hooks: false });
       }
     },
-    afterUpdate: async (order) => {
-      // Update copy distribution when order status changes
+    afterUpdate: async (order, options) => {
+      // FIXED: Defer copy distribution updates to prevent deadlocks
+      // Use setImmediate to execute outside the current transaction
       if (order.changed('order_status')) {
         if (['CLOSED', 'CANCELLED', 'REJECTED'].includes(order.order_status)) {
           // Mark distribution as completed when order is closed
           if (order.copy_distribution_status === 'distributing') {
-            order.copy_distribution_status = 'completed';
-            order.copy_distribution_completed_at = new Date();
-            await order.save({ hooks: false });
+            // Execute outside current transaction to prevent deadlocks
+            setImmediate(async () => {
+              try {
+                // Use a separate transaction to avoid deadlocks
+                const { transaction: currentTx } = options || {};
+                if (currentTx) {
+                  // Wait for current transaction to complete before updating
+                  await new Promise(resolve => currentTx.afterCommit(() => resolve()));
+                }
+                
+                // Update in separate transaction
+                await order.update({
+                  copy_distribution_status: 'completed',
+                  copy_distribution_completed_at: new Date()
+                }, { 
+                  hooks: false,
+                  // Use new transaction to prevent deadlock
+                  transaction: null 
+                });
+                
+                logger.info('Copy distribution status updated after order close', {
+                  orderId: order.order_id,
+                  status: 'completed'
+                });
+              } catch (error) {
+                logger.error('Failed to update copy distribution status', {
+                  orderId: order.order_id,
+                  error: error.message
+                });
+              }
+            });
           }
         }
       }

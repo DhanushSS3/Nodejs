@@ -763,58 +763,65 @@ class InternalTransferService {
    */
   static async updateRedisBalances(sourceAccount, destinationAccount, amount) {
     try {
-      const pipeline = redisCluster.pipeline();
-
       // Calculate new balances
       const sourceBalanceAfter = sourceAccount.wallet_balance - amount;
       const destinationBalanceAfter = destinationAccount.wallet_balance + amount;
 
-      // Update source account - use Python portfolio calculator's key format
+      // FIXED: Separate pipelines for different accounts to avoid Redis Cluster slot group errors
+      // Each account's keys belong to different hash slots, so they must be in separate pipelines
+      
+      // Pipeline 1: Update source account keys (all belong to same slot)
+      const sourcePipeline = redisCluster.pipeline();
       const sourceConfigKey = this.getPortfolioCalculatorConfigKey(sourceAccount.type, sourceAccount.id);
-      pipeline.hset(sourceConfigKey, {
-        'balance': sourceBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
-        'wallet_balance': sourceBalanceAfter.toString(), // Keep for backward compatibility
+      const sourceLegacyKey = this.getLegacyConfigKey(sourceAccount.type, sourceAccount.id);
+      const sourcePortfolioKey = this.getPortfolioKey(sourceAccount.type, sourceAccount.id);
+      const sourceDirtyKey = this.getDirtyUserKey(sourceAccount.type);
+      
+      sourcePipeline.hset(sourceConfigKey, {
+        'balance': sourceBalanceAfter.toString(),
+        'wallet_balance': sourceBalanceAfter.toString(),
         'leverage': (sourceAccount.leverage || 100).toString(),
         'group': sourceAccount.group || 'Standard'
       });
-
-      // Update destination account - use Python portfolio calculator's key format  
+      sourcePipeline.hset(sourceLegacyKey, {
+        'balance': sourceBalanceAfter.toString(),
+        'wallet_balance': sourceBalanceAfter.toString()
+      });
+      sourcePipeline.del(sourcePortfolioKey);
+      sourcePipeline.sadd(sourceDirtyKey, sourceAccount.id.toString());
+      sourcePipeline.expire(sourceLegacyKey, 86400);
+      
+      // Pipeline 2: Update destination account keys (all belong to same slot)
+      const destinationPipeline = redisCluster.pipeline();
       const destinationConfigKey = this.getPortfolioCalculatorConfigKey(destinationAccount.type, destinationAccount.id);
-      pipeline.hset(destinationConfigKey, {
-        'balance': destinationBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
-        'wallet_balance': destinationBalanceAfter.toString(), // Keep for backward compatibility
+      const destinationLegacyKey = this.getLegacyConfigKey(destinationAccount.type, destinationAccount.id);
+      const destinationPortfolioKey = this.getPortfolioKey(destinationAccount.type, destinationAccount.id);
+      const destinationDirtyKey = this.getDirtyUserKey(destinationAccount.type);
+      
+      destinationPipeline.hset(destinationConfigKey, {
+        'balance': destinationBalanceAfter.toString(),
+        'wallet_balance': destinationBalanceAfter.toString(),
         'leverage': (destinationAccount.leverage || 100).toString(),
         'group': destinationAccount.group || 'Standard'
       });
-
-      // Also update legacy keys for backward compatibility
-      const sourceLegacyKey = this.getLegacyConfigKey(sourceAccount.type, sourceAccount.id);
-      const destinationLegacyKey = this.getLegacyConfigKey(destinationAccount.type, destinationAccount.id);
-      
-      pipeline.hset(sourceLegacyKey, {
-        'balance': sourceBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
-        'wallet_balance': sourceBalanceAfter.toString() // Keep for backward compatibility
+      destinationPipeline.hset(destinationLegacyKey, {
+        'balance': destinationBalanceAfter.toString(),
+        'wallet_balance': destinationBalanceAfter.toString()
       });
-      pipeline.hset(destinationLegacyKey, {
-        'balance': destinationBalanceAfter.toString(), // Fixed: Use 'balance' field that Python reads
-        'wallet_balance': destinationBalanceAfter.toString() // Keep for backward compatibility
-      });
-
-      // Invalidate portfolio cache to force recalculation
-      const sourcePortfolioKey = this.getPortfolioKey(sourceAccount.type, sourceAccount.id);
-      const destinationPortfolioKey = this.getPortfolioKey(destinationAccount.type, destinationAccount.id);
+      destinationPipeline.del(destinationPortfolioKey);
+      destinationPipeline.sadd(destinationDirtyKey, destinationAccount.id.toString());
+      destinationPipeline.expire(destinationLegacyKey, 86400);
       
-      pipeline.del(sourcePortfolioKey);
-      pipeline.del(destinationPortfolioKey);
-
-      // Mark users as dirty for portfolio recalculation (for Python portfolio calculator)
-      const sourceDirtyKey = this.getDirtyUserKey(sourceAccount.type);
-      const destinationDirtyKey = this.getDirtyUserKey(destinationAccount.type);
+      // Execute both pipelines in parallel
+      const [sourceResults, destinationResults] = await Promise.all([
+        sourcePipeline.exec(),
+        destinationPipeline.exec()
+      ]);
       
-      pipeline.sadd(sourceDirtyKey, sourceAccount.id.toString());
-      pipeline.sadd(destinationDirtyKey, destinationAccount.id.toString());
+      // Combine results for error checking
+      const results = [...(sourceResults || []), ...(destinationResults || [])];
       
-      // Force immediate portfolio recalculation by publishing to portfolio calculator
+      // Publish force recalc message separately (doesn't need to be in pipeline)
       const forceRecalcMessage = {
         type: 'FORCE_PORTFOLIO_RECALC',
         users: [
@@ -825,14 +832,7 @@ class InternalTransferService {
         timestamp: new Date().toISOString()
       };
       
-      // Publish to portfolio calculator channel for immediate processing
-      pipeline.publish('portfolio_force_recalc', JSON.stringify(forceRecalcMessage));
-
-      // Set expiration for config keys (no expiration for portfolio calculator keys)
-      pipeline.expire(sourceLegacyKey, 86400);
-      pipeline.expire(destinationLegacyKey, 86400);
-
-      const results = await pipeline.exec();
+      await redisCluster.publish('portfolio_force_recalc', JSON.stringify(forceRecalcMessage));
 
       logger.info('Internal transfer Redis operations completed', {
         sourceAccount: { type: sourceAccount.type, id: sourceAccount.id },
@@ -840,7 +840,10 @@ class InternalTransferService {
         portfolioKeysDeleted: [sourcePortfolioKey, destinationPortfolioKey],
         dirtyUsersAdded: [sourceDirtyKey, destinationDirtyKey],
         forceRecalcPublished: true,
-        pipelineOperations: results.length
+        sourcePipelineOperations: sourceResults?.length || 0,
+        destinationPipelineOperations: destinationResults?.length || 0,
+        totalOperations: results.length,
+        pipelineStrategy: 'separate_pipelines_for_cluster_compatibility'
       });
 
       // Check for Redis pipeline errors
