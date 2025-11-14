@@ -365,10 +365,52 @@ function startPortfolioWSServer(server) {
           });
         }
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
+          // Add small delay for pending confirmations to ensure database consistency
+          if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
+            logger.info('Adding delay for pending confirmation database fetch to ensure consistency', {
+              userId,
+              userType,
+              orderId: evt.order_id
+            });
+            await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+          }
+          
+          if (evt && evt.type === 'order_pending_confirmed') {
+            logger.info('Adding delay for dedicated pending confirmation database fetch to ensure consistency', {
+              userId,
+              userType,
+              orderId: evt.order_id
+            });
+            await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+          }
+          
           const dbOrders = await fetchOrdersFromDB(userType, userId);
           ws._lastPending = dbOrders.pending;
           ws._lastRejected = dbOrders.rejected;
           ws._lastPendingFetch = now;
+          
+          // Debug logging for pending confirmation database fetch results
+          if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
+            logger.info('Database fetch completed for pending confirmation', {
+              userId,
+              userType,
+              orderId: evt.order_id,
+              pendingOrdersFound: dbOrders.pending.length,
+              rejectedOrdersFound: dbOrders.rejected.length,
+              pendingOrderIds: dbOrders.pending.map(o => o.order_id)
+            });
+          }
+          
+          if (evt && evt.type === 'order_pending_confirmed') {
+            logger.info('Database fetch completed for dedicated pending confirmation', {
+              userId,
+              userType,
+              orderId: evt.order_id,
+              pendingOrdersFound: dbOrders.pending.length,
+              rejectedOrdersFound: dbOrders.rejected.length,
+              pendingOrderIds: dbOrders.pending.map(o => o.order_id)
+            });
+          }
         }
         const payload = buildPayload({
           balance: summary.balance,
