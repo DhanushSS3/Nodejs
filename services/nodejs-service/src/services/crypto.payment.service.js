@@ -353,6 +353,8 @@ class CryptoPaymentService {
       });
 
       const { status, baseAmountReceived, settledAmountReceived, settledAmountCredited, commission } = webhookData;
+      // Capture previous value *before* we mutate the instance so duplicate detection is accurate
+      const previousBaseAmountReceived = payment.baseAmountReceived;
       
       // Map Tylt status to internal status
       const internalStatus = this.mapTyltStatusToInternal(status);
@@ -407,7 +409,8 @@ class CryptoPaymentService {
       // SIMPLE DUPLICATE DETECTION: Since we create only ONE record per payment request,
       // any subsequent webhook for the same payment record is a duplicate if wallet was already credited
       const isEligibleForCredit = ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived;
-      const hasAlreadyBeenCredited = payment.baseAmountReceived !== null && payment.baseAmountReceived > 0;
+      // Use previous value captured *before* update
+      const hasAlreadyBeenCredited = previousBaseAmountReceived !== null && previousBaseAmountReceived > 0;
       const shouldCreditWallet = isEligibleForCredit && !hasAlreadyBeenCredited;
 
       logger.info('Duplicate detection check', {

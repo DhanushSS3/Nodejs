@@ -105,7 +105,7 @@ class PortfolioEventBus extends EventEmitter {
     
     // Check if we already have too many listeners for this user
     const currentCount = this.listenerCount(eventName);
-    if (currentCount >= 5) {
+    if (currentCount >= 7) { // Slightly above WebSocket limit of 5 to allow for cleanup timing
       logger && logger.warn ? logger.warn(`Too many listeners for ${eventName} (${currentCount}), cleaning up old ones`) : null;
       this.removeAllListeners(eventName);
       this.listenerRegistry.set(eventName, new Set());
@@ -255,9 +255,9 @@ setInterval(() => {
       logger && logger.warn ? logger.warn('High listener count detected, consider cleanup', stats) : null;
     }
     
-    // Auto-cleanup users with excessive listeners (>10)
+    // Auto-cleanup users with excessive listeners (>8)
     for (const [userKey, count] of Object.entries(stats.userBreakdown)) {
-      if (count > 10) {
+      if (count > 8) {
         const [userType, userId] = userKey.split(':');
         logger && logger.warn ? logger.warn(`Auto-cleaning excessive listeners for user ${userKey} (${count} listeners)`) : null;
         bus.cleanupUserListeners(userType, userId);

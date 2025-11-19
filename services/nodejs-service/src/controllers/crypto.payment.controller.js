@@ -294,6 +294,18 @@ class CryptoPaymentController {
         stack: error.stack 
       });
 
+      // If payment was not found we don’t want Tylt to keep retrying the
+      // webhook (they treat non-2xx as failure and will retry up to N times).
+      // Therefore respond with 200 OK but include a body that indicates we
+      // ignored the webhook.
+      if (error.message && error.message.includes('Payment not found')) {
+        logger.warn('Webhook ignored – no matching payment record', {
+          merchantOrderId: req.body.merchantOrderId || 'unknown',
+          orderId: req.body.orderId || 'unknown'
+        });
+        return res.status(200).json({ status: true, message: 'Webhook ignored – payment not found' });
+      }
+
       res.status(500).send('Failed to process webhook');
     }
   }

@@ -12,13 +12,69 @@ const StrategyProviderAccount = require('../../models/strategyProviderAccount.mo
 const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
 
-// Connection tracking for logging purposes only (no limits)
+// Connection tracking and limits
 const userConnCounts = new Map(); // key: user_type:user_id -> count
+const userConnections = new Map(); // key: user_type:user_id -> array of WebSocket objects
+const MAX_CONNECTIONS_PER_USER = 5; // Maximum WebSocket connections per user
 
 function getUserKey(userType, userId) {
   return `${String(userType).toLowerCase()}:${String(userId)}`;
 }
 
+function addConnection(userKey, ws) {
+  // Add to connections array
+  if (!userConnections.has(userKey)) {
+    userConnections.set(userKey, []);
+  }
+  userConnections.get(userKey).push(ws);
+  
+  // Update count
+  const c = userConnCounts.get(userKey) || 0;
+  userConnCounts.set(userKey, c + 1);
+  return c + 1;
+}
+
+function removeConnection(userKey, ws) {
+  // Remove from connections array
+  if (userConnections.has(userKey)) {
+    const connections = userConnections.get(userKey);
+    const index = connections.indexOf(ws);
+    if (index > -1) {
+      connections.splice(index, 1);
+    }
+    if (connections.length === 0) {
+      userConnections.delete(userKey);
+    }
+  }
+  
+  // Update count
+  const c = userConnCounts.get(userKey) || 0;
+  const n = Math.max(0, c - 1);
+  if (n === 0) userConnCounts.delete(userKey);
+  else userConnCounts.set(userKey, n);
+  return n;
+}
+
+function closeOldestConnection(userKey) {
+  if (userConnections.has(userKey)) {
+    const connections = userConnections.get(userKey);
+    if (connections.length > 0) {
+      const oldestWs = connections[0]; // First connection is oldest
+      logger.info('Closing oldest WebSocket connection due to limit', {
+        userKey,
+        totalConnections: connections.length,
+        maxAllowed: MAX_CONNECTIONS_PER_USER
+      });
+      try {
+        oldestWs.close(1000, 'Connection replaced by newer connection');
+      } catch (e) {
+        logger.warn('Failed to close oldest connection', { error: e.message, userKey });
+      }
+    }
+  }
+}
+
+// Legacy functions for backward compatibility
 function incConn(userKey) {
   const c = userConnCounts.get(userKey) || 0;
   userConnCounts.set(userKey, c + 1);
@@ -30,6 +86,7 @@ function decConn(userKey) {
   const n = Math.max(0, c - 1);
   if (n === 0) userConnCounts.delete(userKey);
   else userConnCounts.set(userKey, n);
+  return n;
 }
 
 // Safely convert various timestamp representations to ISO string
@@ -286,16 +343,32 @@ function startPortfolioWSServer(server) {
     
     const userKey = getUserKey(userType, userId);
 
-    // Track connections for logging (no limits enforced)
-    const cnt = incConn(userKey);
+    // Check connection limit and close oldest if needed
+    const currentCount = userConnCounts.get(userKey) || 0;
+    if (currentCount >= MAX_CONNECTIONS_PER_USER) {
+      logger.info('WebSocket connection limit reached, closing oldest connection', { 
+        userId, 
+        userType, 
+        currentConnections: currentCount, 
+        maxAllowed: MAX_CONNECTIONS_PER_USER 
+      });
+      closeOldestConnection(userKey);
+    }
 
-    logger.info('WS portfolio connected', { userId, userType, connections: cnt });
+    // Add new connection
+    const cnt = addConnection(userKey, ws);
+
+    logger.info('WS portfolio connected', { userId, userType, connections: cnt, maxAllowed: MAX_CONNECTIONS_PER_USER });
 
     let alive = true;
     ws.on('close', () => {
       alive = false;
-      decConn(userKey);
-      logger.info('WS portfolio closed', { userId, userType });
+      removeConnection(userKey, ws);
+      logger.info('WS portfolio closed', { 
+        userId, 
+        userType, 
+        remainingConnections: userConnCounts.get(userKey) || 0 
+      });
     });
 
     // Ping-pong keepalive
