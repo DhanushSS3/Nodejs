@@ -61,7 +61,15 @@ async def _get_user_cutoff_level(user_type: str, user_id: str) -> float:
     return 50.0  # Fallback
 
 
-async def _clear_flags(user_type: str, user_id: str):
+async def _clear_liquidation_flag(user_type: str, user_id: str):
+    """Remove only the in-progress liquidation marker so we don't spam alerts."""
+    try:
+        await redis_cluster.delete(f"autocutoff:liquidating:{user_type}:{user_id}")
+    except Exception:
+        pass
+
+async def _clear_all_flags(user_type: str, user_id: str):
+    """Emergency cleanup of both liquidation and alert flags (rarely used)."""
     try:
         pipe = redis_cluster.pipeline()
         pipe.delete(f"autocutoff:liquidating:{user_type}:{user_id}")
@@ -91,7 +99,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
     if ml > cutoff_level:
         logger.debug("AutoCutoffWatcher: user %s:%s is safe (margin_level=%.2f > cutoff_level=%.2f)",
                     user_type, user_id, ml, cutoff_level)
-        await _clear_flags(user_type, user_id)
+        await _clear_liquidation_flag(user_type, user_id)
         return
 
     # ALERT zone (≤ cutoff but above liquidation)

@@ -86,6 +86,7 @@ class EmailNotifier:
         for i, d in enumerate(delays):
             try:
                 await self._send(user_type=user_type, user_id=user_id, email=email, margin_level=margin_level, threshold=threshold)
+                logger.info("[AutoCutoff OTP] WARNING email sent | user=%s:%s | to=%s | ml=%.2f | thr=%.0f", user_type, user_id, email, margin_level, threshold)
                 logger.info("[AutoCutoff Email] sent to=%s user=%s:%s ml=%.2f thr=%.0f", email, user_type, user_id, margin_level, threshold)
                 return True
             except Exception as e:
