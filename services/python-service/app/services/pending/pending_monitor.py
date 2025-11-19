@@ -123,6 +123,20 @@ class PendingMonitor:
             cfg = await fetch_user_config(user_type, user_id)
             leverage = float(cfg.get("leverage") or 0.0)
             balance = float(cfg.get("wallet_balance") or 0.0)
+            if user_type == "copy_follower":
+                try:
+                    logger.info(
+                        "PENDING_MARGIN_CONTEXT copy_follower %s:%s %s %s qty=%s wallet_balance=%s leverage=%s",
+                        user_type,
+                        user_id,
+                        symbol,
+                        side,
+                        qty,
+                        cfg.get("wallet_balance"),
+                        cfg.get("leverage"),
+                    )
+                except Exception:
+                    logger.exception("Failed to log margin context for %s:%s", user_type, user_id)
             if leverage <= 0:
                 return False, None
             g = await fetch_group_data(symbol, group)
@@ -161,6 +175,22 @@ class PendingMonitor:
             except (TypeError, ValueError):
                 used_all = 0.0
             free = balance - used_all
+            if user_type == "copy_follower":
+                try:
+                    logger.info(
+                        "PENDING_MARGIN_EVAL copy_follower %s:%s %s %s qty=%s margin_required=%s balance=%s used_all=%s free_margin=%s",
+                        user_type,
+                        user_id,
+                        symbol,
+                        side,
+                        qty,
+                        single_margin,
+                        balance,
+                        used_all,
+                        free,
+                    )
+                except Exception:
+                    logger.exception("Failed to log margin evaluation for %s:%s", user_type, user_id)
             return (free >= float(single_margin)), float(single_margin)
         except Exception:
             logger.exception("validate_margin failed for %s:%s %s %s", user_type, user_id, symbol, side)
@@ -333,11 +363,37 @@ class PendingMonitor:
                     order_qty = float(meta.get("order_quantity")) if meta.get("order_quantity") is not None else 0.0
                     group = str(meta.get("group") or "Standard")
                     side = _side_from_type(order_type)
+                    if user_type == "copy_follower":
+                        try:
+                            logger.info(
+                                "PENDING_CANDIDATE copy_follower %s:%s %s %s qty=%s group=%s",
+                                user_type,
+                                user_id,
+                                symbol,
+                                order_type,
+                                order_qty,
+                                group,
+                            )
+                        except Exception:
+                            logger.exception("Failed to log pending candidate for %s:%s", user_type, user_id)
                     # Check free margin using ask+half_spread pricing for all pending types
                     # Use ask as base for margin preview
                     mkt_px = ask or 0.0
                     ok_margin, needed = await self._validate_margin(user_type, user_id, group, symbol, side, order_qty, mkt_px)
                     if not ok_margin:
+                        if user_type == "copy_follower":
+                            try:
+                                logger.info(
+                                    "PENDING_MARGIN_REJECT copy_follower %s:%s %s %s qty=%s needed=%s",
+                                    user_type,
+                                    user_id,
+                                    symbol,
+                                    order_type,
+                                    order_qty,
+                                    needed,
+                                )
+                            except Exception:
+                                logger.exception("Failed to log margin reject for %s:%s", user_type, user_id)
                         await self.remove_pending(symbol, order_type, oid)
                         await self._reject_pending(oid, user_type, user_id, reason="insufficient_margin_pretrigger")
                         continue

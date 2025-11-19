@@ -1663,6 +1663,36 @@ class CopyTradingService {
         isProviderFlow = false;
       }
 
+      try {
+        const followerConfigKey = `user:{copy_follower:${follower.id}}:config`;
+        const followerConfig = await redisCluster.hgetall(followerConfigKey);
+        const followerPortfolioKey = `user_portfolio:{copy_follower:${follower.id}}`;
+        const followerPortfolio = await redisCluster.hgetall(followerPortfolioKey);
+
+        logger.info('Copy follower pending placement margin context', {
+          followerOrderId: followerOrder.order_id,
+          followerId: follower.id,
+          strategyProviderId: followerOrder.strategy_provider_id,
+          flow: isProviderFlow ? 'provider' : 'local',
+          followerConfigKey,
+          followerConfigWalletBalance: followerConfig && followerConfig.wallet_balance,
+          followerConfigBalance: followerConfig && followerConfig.balance,
+          followerConfigLeverage: followerConfig && followerConfig.leverage,
+          followerConfigGroup: followerConfig && followerConfig.group,
+          followerConfigSendingOrders: followerConfig && followerConfig.sending_orders,
+          followerPortfolioKey,
+          followerPortfolioUsedMarginAll: followerPortfolio && followerPortfolio.used_margin_all,
+          followerPortfolioEquity: followerPortfolio && followerPortfolio.equity,
+          followerPortfolioRaw: followerPortfolio
+        });
+      } catch (debugErr) {
+        logger.warn('Failed to log copy follower pending placement margin context', {
+          followerOrderId: followerOrder.order_id,
+          followerId: follower.id,
+          error: debugErr.message
+        });
+      }
+
       if (isProviderFlow) {
         // PROVIDER FLOW: Send to Python service
         const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';

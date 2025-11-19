@@ -53,6 +53,11 @@ const swapDebugLogger = winston.createLogger({
 
 class SwapSchedulerService {
   constructor() {
+    // Cron expression to determine when daily swap processing runs.
+    // Configure via environment variable SWAP_SCHEDULER_CRON.
+    // Example default (runs at 22:00 UTC every day): '0 22 * * *'
+    this.cronExpression = process.env.SWAP_SCHEDULER_CRON || '0 22 * * *';
+
     this.isRunning = false;
     this.cronJob = null;
   }
@@ -67,15 +72,18 @@ class SwapSchedulerService {
       return;
     }
 
-    // Schedule to run daily at 00:01 UTC
-    this.cronJob = cron.schedule('0 22 * * *', async () => {
+    // Schedule to run daily based on configured cron expression (UTC)
+    this.cronJob = cron.schedule(this.cronExpression, async () => {
       await this.processDaily();
     }, {
       scheduled: true,
       timezone: 'UTC'
     });
 
-    logger.info('Swap scheduler started - will run daily at 00:01 UTC');
+    logger.info('Swap scheduler started', {
+      cronExpression: this.cronExpression,
+      timezone: 'UTC'
+    });
   }
 
   /**
@@ -602,6 +610,7 @@ class SwapSchedulerService {
     return {
       isScheduled: !!this.cronJob,
       isRunning: this.isRunning,
+      cronExpression: this.cronExpression,
       nextRun: this.cronJob ? this.cronJob.nextDate() : null
     };
   }

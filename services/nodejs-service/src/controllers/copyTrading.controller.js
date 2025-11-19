@@ -7,6 +7,7 @@ const logger = require('../services/logger.service');
 const strategyProviderService = require('../services/strategyProvider.service');
 const InternalTransferService = require('../services/internalTransfer.service');
 const sequelize = require('../config/db');
+const { redisCluster } = require('../../config/redis');
 
 /**
  * Create a copy follower account to follow a strategy provider
@@ -411,6 +412,33 @@ async function createFollowerAccount(req, res) {
         sourceBalance: sourceAccount.wallet_balance - investmentAmountFloat,
         destinationBalance: investmentAmountFloat
       });
+
+      try {
+        const followerConfigKey = `user:{copy_follower:${followerAccount.id}}:config`;
+        const followerConfig = await redisCluster.hgetall(followerConfigKey);
+        const followerPortfolioKey = `user_portfolio:{copy_follower:${followerAccount.id}}`;
+        const followerPortfolio = await redisCluster.hgetall(followerPortfolioKey);
+
+        logger.info('Copy follower Redis state after account creation', {
+          userId,
+          followerId: followerAccount.id,
+          followerConfigKey,
+          followerConfigWalletBalance: followerConfig && followerConfig.wallet_balance,
+          followerConfigBalance: followerConfig && followerConfig.balance,
+          followerConfigLeverage: followerConfig && followerConfig.leverage,
+          followerConfigGroup: followerConfig && followerConfig.group,
+          followerConfigSendingOrders: followerConfig && followerConfig.sending_orders,
+          followerPortfolioKey,
+          followerPortfolioFields: followerPortfolio ? Object.keys(followerPortfolio) : null,
+          followerPortfolioSnapshot: followerPortfolio
+        });
+      } catch (debugError) {
+        logger.warn('Failed to read copy follower Redis state after account creation', {
+          userId,
+          followerId: followerAccount.id,
+          error: debugError.message
+        });
+      }
     } catch (redisError) {
       // Log Redis error but don't fail the operation since DB transaction already committed
       logger.error('Failed to update Redis balances after copy follower account creation', {

@@ -16,7 +16,7 @@ const { handleValidationErrors } = require('../middlewares/error.middleware');
  *       properties:
  *         userType:
  *           type: string
- *           enum: [live, demo]
+ *           enum: [live, demo, strategy_provider]
  *           description: Type of user account (optional - if not provided, searches both live and demo users)
  *         amount:
  *           type: number
@@ -193,7 +193,7 @@ router.post('/users/:userId/withdraw',
  *         required: false
  *         schema:
  *           type: string
- *           enum: [live, demo]
+ *           enum: [live, demo, strategy_provider]
  *         description: Type of user account (optional - if not provided, searches both live and demo users)
  *     responses:
  *       200:
@@ -217,7 +217,7 @@ router.post('/users/:userId/withdraw',
  *                       enum: [cache, database]
  *                     userType:
  *                       type: string
- *                       enum: [live, demo]
+ *                       enum: [live, demo, strategy_provider]
  *                     user:
  *                       type: object
  *                       properties:
@@ -264,7 +264,7 @@ router.get('/users/:userId/balance',
  *         required: false
  *         schema:
  *           type: string
- *           enum: [live, demo]
+ *           enum: [live, demo, strategy_provider]
  *         description: Type of user account (optional - if not provided, searches both live and demo users)
  *       - in: query
  *         name: limit
@@ -367,7 +367,7 @@ router.get('/users/:userId/transactions',
  *         name: userType
  *         schema:
  *           type: string
- *           enum: [live, demo]
+ *           enum: [live, demo, strategy_provider]
  *         description: Filter by user type (optional)
  *       - in: query
  *         name: days
@@ -429,6 +429,22 @@ router.get('/transactions/stats',
   authenticateAdmin, 
   requirePermissions(['transaction:stats']), 
   superadminTransactionController.getTransactionStats
+);
+
+// Strategy Provider deposit
+router.post('/strategy-providers/:accountId/deposit',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  handleValidationErrors,
+  superadminTransactionController.processStrategyProviderDeposit
+);
+
+// Strategy Provider withdrawal
+router.post('/strategy-providers/:accountId/withdraw',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  handleValidationErrors,
+  superadminTransactionController.processStrategyProviderWithdrawal
 );
 
 module.exports = router;

@@ -1,4 +1,5 @@
 const { LiveUser, DemoUser, UserTransaction } = require('../models');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const sequelize = require('../config/db');
 const { redisCluster } = require('../../config/redis');
 const logger = require('../utils/logger');
@@ -20,7 +21,16 @@ class SuperadminTransactionService {
    * @returns {Object} Sequelize model
    */
   getUserModel(userType) {
-    return userType === 'live' ? LiveUser : DemoUser;
+    switch (userType) {
+      case 'live':
+        return LiveUser;
+      case 'demo':
+        return DemoUser;
+      case 'strategy_provider':
+        return StrategyProviderAccount;
+      default:
+        throw new Error(`Invalid user type: ${userType}`);
+    }
   }
 
   /**
@@ -76,8 +86,8 @@ class SuperadminTransactionService {
       throw new Error('Missing required parameters: userId, userType, amount, adminId');
     }
 
-    if (!['live', 'demo'].includes(userType)) {
-      throw new Error('Invalid user type. Must be "live" or "demo"');
+    if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
+      throw new Error('Invalid user type. Must be "live", "demo", or "strategy_provider"');
     }
 
     const depositAmount = parseFloat(amount);
@@ -197,8 +207,8 @@ class SuperadminTransactionService {
       throw new Error('Missing required parameters: userId, userType, amount, adminId');
     }
 
-    if (!['live', 'demo'].includes(userType)) {
-      throw new Error('Invalid user type. Must be "live" or "demo"');
+    if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
+      throw new Error('Invalid user type. Must be "live", "demo", or "strategy_provider"');
     }
 
     const withdrawalAmount = parseFloat(amount);

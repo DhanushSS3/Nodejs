@@ -6,6 +6,28 @@ const sequelize = require('../config/db');
 
 class SuperadminTransactionController {
   /**
+   * Deposit for Strategy Provider account shorthand endpoint
+   * POST /api/superadmin/strategy-providers/:accountId/deposit
+   */
+  async processStrategyProviderDeposit(req, res) {
+    req.body = req.body || {};
+    req.body.userType = 'strategy_provider';
+    req.params.userId = req.params.accountId; // reuse existing logic
+    return this.processDeposit(req, res);
+  }
+
+  /**
+   * Withdrawal for Strategy Provider account shorthand endpoint
+   * POST /api/superadmin/strategy-providers/:accountId/withdraw
+   */
+  async processStrategyProviderWithdrawal(req, res) {
+    req.body = req.body || {};
+    req.body.userType = 'strategy_provider';
+    req.params.userId = req.params.accountId;
+    return this.processWithdrawal(req, res);
+  }
+
+  /**
    * Process deposit for a user
    * POST /api/superadmin/users/:userId/deposit
    */
@@ -24,10 +46,10 @@ class SuperadminTransactionController {
       }
 
       // Validate userType
-      if (!['live', 'demo'].includes(userType)) {
+      if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live" or "demo"'
+          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
         });
       }
 
@@ -128,10 +150,10 @@ class SuperadminTransactionController {
       }
 
       // Validate userType
-      if (!['live', 'demo'].includes(userType)) {
+      if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live" or "demo"'
+          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
         });
       }
 
@@ -223,10 +245,10 @@ class SuperadminTransactionController {
       const { userType } = req.query;
 
       // Validate userType if provided
-      if (userType && !['live', 'demo'].includes(userType)) {
+      if (userType && !['live', 'demo', 'strategy_provider'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live" or "demo"'
+          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
         });
       }
 
@@ -266,10 +288,10 @@ class SuperadminTransactionController {
       const { userType, limit = 50, offset = 0, type } = req.query;
 
       // Validate userType if provided
-      if (userType && !['live', 'demo'].includes(userType)) {
+      if (userType && !['live', 'demo', 'strategy_provider'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live" or "demo"'
+          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
         });
       }
 
@@ -341,10 +363,10 @@ class SuperadminTransactionController {
       const { userType, days = 30 } = req.query;
 
       // Validate userType if provided
-      if (userType && !['live', 'demo'].includes(userType)) {
+      if (userType && !['live', 'demo', 'strategy_provider'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live" or "demo"'
+          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
         });
       }
 
