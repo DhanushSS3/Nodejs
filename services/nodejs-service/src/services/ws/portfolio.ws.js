@@ -21,6 +21,21 @@ function getUserKey(userType, userId) {
   return `${String(userType).toLowerCase()}:${String(userId)}`;
 }
 
+function shouldRemovePendingImmediately(evt) {
+  if (!evt) return false;
+  if (evt.type === 'order_opened') {
+    return true;
+  }
+  if (evt.type === 'order_update') {
+    const reason = String(evt.reason || '').toLowerCase();
+    const status = String(evt.update && evt.update.order_status ? evt.update.order_status : '').toUpperCase();
+    if (reason === 'order_opened' || reason === 'pending_triggered' || status === 'OPEN') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function addConnection(userKey, ws) {
   // Add to connections array
   if (!userConnections.has(userKey)) {
@@ -437,6 +452,23 @@ function startPortfolioWSServer(server) {
             forceDbRefresh
           });
         }
+        const shouldDropPending = shouldRemovePendingImmediately(evt);
+        const resolvedOrderId = shouldDropPending && evt && evt.order_id ? String(evt.order_id) : null;
+
+        if (resolvedOrderId && ws._lastPending && ws._lastPending.length) {
+          const beforeCount = ws._lastPending.length;
+          ws._lastPending = ws._lastPending.filter(o => String(o.order_id) !== resolvedOrderId);
+          if (beforeCount !== ws._lastPending.length) {
+            logger.info('Removed pending order from cached snapshot due to open transition', {
+              userId,
+              userType,
+              orderId: resolvedOrderId,
+              beforeCount,
+              afterCount: ws._lastPending.length,
+            });
+          }
+        }
+
         if (forceDbRefresh || !ws._lastPendingFetch || (now - ws._lastPendingFetch) > 10000) {
           // Add small delay for pending confirmations to ensure database consistency
           if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
@@ -461,7 +493,21 @@ function startPortfolioWSServer(server) {
           ws._lastPending = dbOrders.pending;
           ws._lastRejected = dbOrders.rejected;
           ws._lastPendingFetch = now;
-          
+
+          if (resolvedOrderId && ws._lastPending && ws._lastPending.length) {
+            const beforeCount = ws._lastPending.length;
+            ws._lastPending = ws._lastPending.filter(o => String(o.order_id) !== resolvedOrderId);
+            if (beforeCount !== ws._lastPending.length) {
+              logger.info('Filtered pending order from DB snapshot due to open transition', {
+                userId,
+                userType,
+                orderId: resolvedOrderId,
+                beforeCount,
+                afterCount: ws._lastPending.length,
+              });
+            }
+          }
+
           // Debug logging for pending confirmation database fetch results
           if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
             logger.info('Database fetch completed for pending confirmation', {
