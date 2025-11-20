@@ -627,6 +627,23 @@ class CopyTradingService {
       
       const placementResult = await this.placeFollowerOrder(followerOrder, follower);
       
+      if (placementResult.success) {
+        try {
+          portfolioEvents.emitUserUpdate('copy_follower', follower.id, {
+            type: 'order_pending_created',
+            order_id: followerOrder.order_id,
+            flow: placementResult.flow,
+            strategy_provider_id: masterOrder.order_user_id
+          });
+        } catch (emitErr) {
+          logger.warn('Failed to emit copy follower pending creation event', {
+            followerOrderId: followerOrder.order_id,
+            followerId: follower.id,
+            error: emitErr.message
+          });
+        }
+      }
+
       logger.info('Follower pending order placement result', {
         followerOrderId: followerOrder.order_id,
         success: placementResult.success,
@@ -1476,17 +1493,18 @@ class CopyTradingService {
           }
 
           // Update copy follower net profit (same as strategy providers)
-          if (typeof result.net_profit === 'number') {
+          const followerNetProfitToRecord = Number(adjustedNetProfit);
+          if (typeof followerNetProfitToRecord === 'number') {
             try {
               await CopyFollowerAccount.increment(
-                { net_profit: result.net_profit },
+                { net_profit: followerNetProfitToRecord },
                 { where: { id: parseInt(copiedOrder.order_user_id) } }
               );
               
               logger.info('Copy follower net profit updated after local close', {
                 copiedOrderId: copiedOrder.order_id,
                 user_id: copiedOrder.order_user_id,
-                net_profit: result.net_profit
+                net_profit: followerNetProfitToRecord
               });
             } catch (netProfitError) {
               logger.error('Failed to update copy follower net profit', {
