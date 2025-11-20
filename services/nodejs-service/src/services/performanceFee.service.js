@@ -26,7 +26,8 @@ async function calculateAndApplyPerformanceFee({
   orderNetProfit,
   symbol,
   orderType
-}) {
+}, options = {}) {
+  const { adjustAccountNetProfit = false } = options;
   // Only charge performance fee on profitable orders
   if (!orderNetProfit || orderNetProfit <= 0) {
     logger.info('No performance fee - order not profitable', {
@@ -94,12 +95,22 @@ async function calculateAndApplyPerformanceFee({
       }
 
       const followerBalanceBefore = parseFloat(copyFollower.wallet_balance || 0);
+      const followerNetProfitBefore = parseFloat(copyFollower.net_profit || 0);
       const followerBalanceAfter = followerBalanceBefore - performanceFeeAmount;
+      const followerNetProfitAfter = adjustAccountNetProfit
+        ? followerNetProfitBefore - performanceFeeAmount
+        : followerNetProfitBefore;
 
-      // Update copy follower balance
-      await copyFollower.update({ 
-        wallet_balance: followerBalanceAfter 
-      }, { transaction: t });
+      // Update copy follower balance (and net profit if requested)
+      const copyFollowerUpdate = {
+        wallet_balance: followerBalanceAfter
+      };
+
+      if (adjustAccountNetProfit) {
+        copyFollowerUpdate.net_profit = followerNetProfitAfter;
+      }
+
+      await copyFollower.update(copyFollowerUpdate, { transaction: t });
 
       // 2. Add performance fee to strategy provider
       const providerBalanceBefore = parseFloat(strategyProvider.wallet_balance || 0);
