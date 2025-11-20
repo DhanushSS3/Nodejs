@@ -10,6 +10,7 @@ const idGenerator = require('./idGenerator.service');
 const groupsCache = require('./groups.cache.service');
 const { updateUserUsedMargin } = require('./user.margin.service');
 const portfolioEvents = require('./events/portfolio.events');
+const orderLifecycleService = require('./orderLifecycle.service');
 // CopyFollowerSlTpService removed - equity monitoring now handled by background worker
 const { redisCluster } = require('../../config/redis');
 const axios = require('axios');
@@ -641,6 +642,65 @@ class CopyTradingService {
             followerId: follower.id,
             error: emitErr.message
           });
+        }
+
+        if (placementResult.flow === 'provider') {
+          try {
+            await this.createRedisOrderEntries({
+              order_id: followerOrder.order_id,
+              order_user_id: follower.id,
+              symbol: followerOrder.symbol,
+              order_type: followerOrder.order_type,
+              order_status: 'PENDING-QUEUED',
+              order_price: followerOrder.order_price,
+              order_quantity: followerOrder.order_quantity,
+              stop_loss: followerOrder.stop_loss,
+              take_profit: followerOrder.take_profit,
+              master_order_id: masterOrder.order_id,
+              placed_by: 'copy_trading'
+            }, 'copy_follower');
+
+            try {
+              await orderLifecycleService.addLifecycleId(
+                followerOrder.order_id,
+                'order_id',
+                followerOrder.order_id,
+                'copy_follower_provider_pending'
+              );
+            } catch (lifecycleError) {
+              logger.warn('Failed to register lifecycle id for copy follower pending order', {
+                followerOrderId: followerOrder.order_id,
+                followerId: follower.id,
+                error: lifecycleError.message
+              });
+            }
+          } catch (providerRedisError) {
+            logger.error('Failed to create Redis context for provider copy follower pending order', {
+              followerOrderId: followerOrder.order_id,
+              masterOrderId: masterOrder.order_id,
+              followerId: follower.id,
+              error: providerRedisError.message
+            });
+
+            await followerOrder.update({
+              copy_status: 'failed',
+              order_status: 'REJECTED',
+              failure_reason: 'redis_entry_failed'
+            });
+
+            try {
+              await CopyFollowerAccount.increment('failed_copies', {
+                where: { id: follower.id }
+              });
+            } catch (failedMetricError) {
+              logger.warn('Failed to increment copy follower failed_copies metric after redis sync failure', {
+                followerId: follower.id,
+                error: failedMetricError.message
+              });
+            }
+
+            return { status: 'failed', reason: 'redis_entry_failed' };
+          }
         }
       }
 
