@@ -1243,6 +1243,8 @@ async function placeStrategyProviderPendingOrder(req, res) {
     });
     mark('after_db_insert');
 
+    const createdAtMs = Date.now().toString();
+
     // For provider flow, send to Python service to forward to provider
     if (isProviderFlow) {
       try {
@@ -1304,7 +1306,7 @@ async function placeStrategyProviderPendingOrder(req, res) {
           order_price_compare: String(compare_price),
           order_quantity: String(parsed.order_quantity),
           status: 'PENDING',
-          created_at: Date.now().toString(),
+          created_at: createdAtMs,
           group: strategyProviderGroup,
         });
         
@@ -1333,7 +1335,7 @@ async function placeStrategyProviderPendingOrder(req, res) {
         order_price: String(parsed.order_price),
         order_quantity: String(parsed.order_quantity),
         group: strategyProviderGroup,
-        created_at: Date.now().toString(),
+        created_at: createdAtMs,
       });
       await pipe.exec();
     } catch (e3) {
@@ -1358,6 +1360,7 @@ async function placeStrategyProviderPendingOrder(req, res) {
         group: strategyProviderGroup,
         compare_price: String(compare_price),
         half_spread: String(hs),
+        created_at: createdAtMs,
       });
     } catch (e4) {
       logger.warn('Failed to write canonical order_data for pending', { error: e4.message, order_id });
