@@ -126,8 +126,8 @@ class CopyFollowerEquityMonitorService {
           // SL: equity drops by X amount from initial investment
           return initialInvestment - amountValue;
         } else if (type === 'take_profit') {
-          // TP: equity gains X amount above initial investment
-          return initialInvestment + amountValue;
+          // TP: equity target is the explicit amount entered (validated upstream)
+          return amountValue;
         }
       }
 
@@ -250,7 +250,7 @@ class CopyFollowerEquityMonitorService {
    * @param {string} thresholdType - 'stop_loss' or 'take_profit'
    * @returns {Object} Stop copying result
    */
-  static async triggerAutoStopCopying(copyFollowerAccount, reason, thresholdType) {
+  static async triggerAutoStopCopying(copyFollowerAccount, reason, thresholdType, thresholdValue = null) {
     try {
       // 1. Close all open orders for this copy follower account
       const closeOrdersResult = await this.closeAllCopyFollowerOrders(copyFollowerAccount.id);
@@ -261,7 +261,8 @@ class CopyFollowerEquityMonitorService {
         copy_status: 'stopped',
         stop_reason: `Auto ${thresholdType.replace('_', ' ')}: ${reason}`,
         is_active: 0,
-        status: 0
+        status: 0,
+        auto_stop_threshold_value: thresholdValue
       }, {
         where: { id: copyFollowerAccount.id }
       });
@@ -273,6 +274,7 @@ class CopyFollowerEquityMonitorService {
         strategyProviderId: copyFollowerAccount.strategy_provider_id,
         reason,
         thresholdType,
+        thresholdValue,
         ordersClosedCount: closeOrdersResult.closedCount
       });
 
@@ -280,6 +282,7 @@ class CopyFollowerEquityMonitorService {
         success: true,
         reason,
         thresholdType,
+        thresholdValue,
         ordersClosedCount: closeOrdersResult.closedCount
       };
 
@@ -512,10 +515,11 @@ class CopyFollowerEquityMonitorService {
           const thresholdCheck = await this.checkEquityThresholds(account);
           
           if (thresholdCheck.shouldStopCopying) {
-            const stopResult = await this.triggerAutoStopCopying(
+            const stopResult = await CopyFollowerEquityMonitorService.triggerAutoStopCopying(
               account,
               thresholdCheck.reason,
-              thresholdCheck.thresholdType
+              thresholdCheck.thresholdType,
+              thresholdCheck.thresholdValue
             );
             
             if (stopResult.success) {
