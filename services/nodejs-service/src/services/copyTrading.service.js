@@ -1434,12 +1434,14 @@ class CopyTradingService {
           }
 
           // Apply wallet payout for copy follower (same as strategy providers)
+          let adjustedNetProfit = Number(result.net_profit) || 0;
+          let payoutApplied = false;
           try {
             const payoutKey = `close_payout_applied:${String(copiedOrder.order_id)}`;
             const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
             if (nx) {
+              payoutApplied = true;
               // Calculate adjusted net profit after performance fee (if applicable)
-              let adjustedNetProfit = Number(result.net_profit) || 0;
               let performanceFeeResult = null;
               
               // Always update net profit in order record, regardless of profit/loss
@@ -1552,26 +1554,28 @@ class CopyTradingService {
             });
           }
 
-          // Update copy follower net profit (same as strategy providers)
-          const followerNetProfitToRecord = Number(adjustedNetProfit);
-          if (typeof followerNetProfitToRecord === 'number') {
-            try {
-              await CopyFollowerAccount.increment(
-                { net_profit: followerNetProfitToRecord },
-                { where: { id: parseInt(copiedOrder.order_user_id) } }
-              );
-              
-              logger.info('Copy follower net profit updated after local close', {
-                copiedOrderId: copiedOrder.order_id,
-                user_id: copiedOrder.order_user_id,
-                net_profit: followerNetProfitToRecord
-              });
-            } catch (netProfitError) {
-              logger.error('Failed to update copy follower net profit', {
-                copiedOrderId: copiedOrder.order_id,
-                user_id: copiedOrder.order_user_id,
-                error: netProfitError.message
-              });
+          // Update copy follower net profit (same as strategy providers) only if payout ran
+          if (payoutApplied) {
+            const followerNetProfitToRecord = Number(adjustedNetProfit);
+            if (Number.isFinite(followerNetProfitToRecord)) {
+              try {
+                await CopyFollowerAccount.increment(
+                  { net_profit: followerNetProfitToRecord },
+                  { where: { id: parseInt(copiedOrder.order_user_id) } }
+                );
+                
+                logger.info('Copy follower net profit updated after local close', {
+                  copiedOrderId: copiedOrder.order_id,
+                  user_id: copiedOrder.order_user_id,
+                  net_profit: followerNetProfitToRecord
+                });
+              } catch (netProfitError) {
+                logger.error('Failed to update copy follower net profit', {
+                  copiedOrderId: copiedOrder.order_id,
+                  user_id: copiedOrder.order_user_id,
+                  error: netProfitError.message
+                });
+              }
             }
           }
           
