@@ -373,6 +373,7 @@ class CopyFollowerEquityMonitorService {
       const mockMasterOrder = {
         order_id: `master_${order.order_id}`,
         order_status: 'CLOSED',
+        order_user_id: order.strategy_provider_id, // Preserve provider for performance fee logic
         close_price: null, // Will be determined by Python service
         close_time: new Date().toISOString(),
         net_profit: 0, // Will be calculated by Python service
