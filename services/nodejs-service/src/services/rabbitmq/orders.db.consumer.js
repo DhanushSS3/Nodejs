@@ -265,6 +265,7 @@ async function applyDbUpdate(msg) {
     take_profit,
     // New fields from pending monitor
     symbol,
+    close_origin,
   } = msg || {};
   
   // Enhanced logging for DB update processing
