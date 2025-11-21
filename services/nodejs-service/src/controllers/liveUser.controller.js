@@ -610,13 +610,13 @@ async function getUserInfo(req, res) {
           'wallet_balance', 'margin', 'net_profit', 'status', 'is_active',
           'performance_fee', 'total_followers', 'total_return_percentage',
           'three_month_return', 'max_drawdown', 'profile_image_url',
-          'description', 'created_at'
+          'description', 'created_at', 'user_id'
         ],
         include: [
           {
             model: LiveUser,
             as: 'owner',
-            attributes: ['email', 'phone_number', 'city', 'state', 'country']
+            attributes: ['id', 'email', 'phone_number', 'city', 'state', 'country']
           }
         ]
       });
@@ -626,6 +626,36 @@ async function getUserInfo(req, res) {
           success: false,
           message: 'Strategy provider account not found'
         });
+      }
+
+      // Calculate aggregate counts/balances for the owning live user (if available)
+      const ownerUserId = strategyProvider.user_id || strategyProvider.owner?.id || null;
+      let totalCopyFollowerAccounts = 0;
+      let totalCopyFollowerBalance = 0;
+      let totalStrategyProviderAccounts = 0;
+      let totalStrategyProviderBalance = 0;
+
+      if (ownerUserId) {
+        const [copyFollowerAccounts, strategyProviderAccounts] = await Promise.all([
+          CopyFollowerAccount.findAll({
+            where: { user_id: ownerUserId },
+            attributes: ['wallet_balance']
+          }),
+          StrategyProviderAccount.findAll({
+            where: { user_id: ownerUserId },
+            attributes: ['wallet_balance']
+          })
+        ]);
+
+        totalCopyFollowerAccounts = copyFollowerAccounts.length;
+        totalCopyFollowerBalance = copyFollowerAccounts.reduce((sum, account) => {
+          return sum + (parseFloat(account.wallet_balance) || 0);
+        }, 0);
+
+        totalStrategyProviderAccounts = strategyProviderAccounts.length;
+        totalStrategyProviderBalance = strategyProviderAccounts.reduce((sum, account) => {
+          return sum + (parseFloat(account.wallet_balance) || 0);
+        }, 0);
       }
 
       // Construct strategy provider response
@@ -655,7 +685,11 @@ async function getUserInfo(req, res) {
         description: strategyProvider.description,
         status: strategyProvider.status,
         is_active: strategyProvider.is_active,
-        created_at: strategyProvider.created_at
+        created_at: strategyProvider.created_at,
+        total_copy_follower_accounts: totalCopyFollowerAccounts,
+        total_copy_follower_balance: totalCopyFollowerBalance,
+        total_strategy_provider_accounts: totalStrategyProviderAccounts,
+        total_strategy_provider_balance: totalStrategyProviderBalance
       };
 
       return res.status(200).json(userInfo);
