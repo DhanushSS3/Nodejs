@@ -74,6 +74,16 @@ class CopyTradingService {
       const symbol_holders_key = `symbol_holders:${order.symbol}:${userType}`;
       const order_data_key = `order_data:${order.order_id}`;
 
+      const toIso = (value) => {
+        if (!value) return undefined;
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) return undefined;
+        return date.toISOString();
+      };
+
+      const createdAtIso = toIso(order.created_at || order.createdAt || order.copy_timestamp || Date.now());
+      const updatedAtIso = toIso(order.updated_at || order.updatedAt || Date.now());
+
       // Create order data entry (canonical)
       await redisCluster.hset(order_data_key, {
         order_id: order.order_id,
@@ -88,7 +98,9 @@ class CopyTradingService {
         take_profit: order.take_profit ? order.take_profit.toString() : '',
         status: order.order_status,
         execution_status: 'PENDING',
-        placed_by: order.placed_by || userType
+        placed_by: order.placed_by || userType,
+        ...(createdAtIso ? { created_at: createdAtIso } : {}),
+        ...(updatedAtIso ? { updated_at: updatedAtIso } : {}),
       });
 
       // Create user holdings entry
@@ -105,7 +117,9 @@ class CopyTradingService {
         take_profit: order.take_profit ? order.take_profit.toString() : '',
         status: order.order_status,
         execution_status: 'PENDING',
-        placed_by: order.placed_by || userType
+        placed_by: order.placed_by || userType,
+        ...(createdAtIso ? { created_at: createdAtIso } : {}),
+        ...(updatedAtIso ? { updated_at: updatedAtIso } : {}),
       };
 
       // Add master_order_id for copy follower orders
