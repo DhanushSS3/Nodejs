@@ -1418,79 +1418,9 @@ async function closeOrder(req, res) {
     const result = pyResp.data?.data || pyResp.data || {};
     const flow = result.flow; // 'local' or 'provider'
 
-    // If local flow, finalize DB immediately
+    // If local flow, rely on RabbitMQ close confirmation to finalize SQL/Redis/payout
     if (flow === 'local') {
-      try {
-        const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
-        const row = await OrderModel.findOne({ where: { order_id } });
-        if (row) {
-          const updateFields = {
-            order_status: 'CLOSED',
-          };
-          if (result.close_price != null) updateFields.close_price = String(result.close_price);
-          if (result.net_profit != null) updateFields.net_profit = String(result.net_profit);
-          if (result.swap != null) updateFields.swap = String(result.swap);
-          if (result.total_commission != null) updateFields.commission = String(result.total_commission);
-          // Also persist incoming status string for historical trace
-          updateFields.status = incomingStatus;
-          await row.update(updateFields);
-
-          // Apply wallet payout + user transactions (idempotent)
-          try {
-            const payoutKey = `close_payout_applied:${String(order_id)}`;
-            const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
-            if (nx) {
-              await applyOrderClosePayout({
-                userType: req_user_type,
-                userId: parseInt(req_user_id, 10),
-                orderPk: row?.id ?? null,
-                orderIdStr: String(order_id),
-                netProfit: Number(result.net_profit) || 0,
-                commission: Number(result.total_commission) || 0,
-                profitUsd: Number(result.profit_usd) || 0,
-                swap: Number(result.swap) || 0,
-                symbol,
-                orderType: order_type,
-              });
-              try {
-                portfolioEvents.emitUserUpdate(req_user_type, req_user_id, { type: 'wallet_balance_update', order_id });
-              } catch (_) {}
-            }
-          } catch (e) {
-            logger.warn('Failed to apply wallet payout on local close', { error: e.message, order_id });
-          }
-
-        }
-      } catch (e) {
-        logger.error('Failed to update SQL row after local close', { order_id, error: e.message });
-      }
-
-      // Update used margin mirror in SQL and emit portfolio events
-      try {
-        if (typeof result.used_margin_executed === 'number') {
-          await updateUserUsedMargin({ userType: req_user_type, userId: parseInt(req_user_id, 10), usedMargin: result.used_margin_executed });
-          try {
-            portfolioEvents.emitUserUpdate(req_user_type, req_user_id, { type: 'user_margin_update', used_margin_usd: result.used_margin_executed });
-          } catch (_) {}
-        }
-        try {
-          portfolioEvents.emitUserUpdate(req_user_type, req_user_id, { type: 'order_update', order_id, update: { order_status: 'CLOSED' } });
-        } catch (_) {}
-      } catch (mErr) {
-        logger.error('Failed to persist/emit margin updates after local close', { order_id, error: mErr.message });
-      }
-
-      // Increment user's aggregate net_profit with this close P/L
-      try {
-        if (typeof result.net_profit === 'number') {
-          const UserModel = req_user_type === 'live' ? LiveUser : DemoUser;
-          await UserModel.increment({ net_profit: result.net_profit }, { where: { id: parseInt(req_user_id, 10) } });
-        }
-      } catch (e) {
-        logger.error('Failed to increment user net_profit after local close', { user_id: req_user_id, error: e.message });
-      }
-    } else {
-      // provider flow: DB will be updated by worker_close via RabbitMQ; we already persisted lifecycle IDs
+      logger.info('Local close delegated to RabbitMQ consumer', { order_id, user_id: req_user_id, user_type: req_user_type });
     }
 
     return res.status(200).json({ success: true, data: result, order_id });

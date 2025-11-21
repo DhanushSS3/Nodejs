@@ -753,8 +753,35 @@ async function applyDbUpdate(msg) {
       }
     } catch (_) {}
 
+    if (type === 'ORDER_CLOSE_CONFIRMED') {
+      const requiredFields = ['close_price', 'net_profit', 'commission', 'profit_usd'];
+      const missingCloseFields = requiredFields.filter((field) => msg[field] == null);
+      if (missingCloseFields.length > 0) {
+        logger.warn('Close confirmation missing expected financial fields', {
+          order_id: String(order_id),
+          missingCloseFields,
+          payloadKeys: Object.keys(msg || {}),
+          close_origin: close_origin || 'unknown',
+        });
+      }
+      if (!row && close_origin === 'local') {
+        logger.warn('Local close confirmation arrived without SQL row; will rely on payload only', {
+          order_id: String(order_id),
+          user_id: String(user_id),
+          user_type: String(user_type),
+        });
+      }
+    }
+
     if (Object.keys(updateFields).length > 0) {
       const dbUpdateStartTime = Date.now();
+      if (close_origin) {
+        logger.info('Processing close confirmation with origin metadata', {
+          orderId: String(order_id),
+          close_origin,
+          messageType: type,
+        });
+      }
       const before = {
         margin: row.margin != null ? row.margin.toString() : null,
         commission: row.commission != null ? row.commission.toString() : null,
@@ -883,6 +910,34 @@ async function applyDbUpdate(msg) {
             pUser.hset(orderKey, 'swap', String(updateFields.swap));
           }
           await pUser.exec();
+
+          const statusIsClosed = Object.prototype.hasOwnProperty.call(updateFields, 'order_status')
+            && String(updateFields.order_status).toUpperCase() === 'CLOSED';
+          if (statusIsClosed) {
+            try {
+              const cleanupPipe = redisCluster.pipeline();
+              cleanupPipe.srem(indexKey, String(order_id));
+              cleanupPipe.del(orderKey);
+              await cleanupPipe.exec();
+            } catch (cleanupErr) {
+              logger.warn('Failed to cleanup user holdings after close', { error: cleanupErr.message, order_id: String(order_id) });
+            }
+
+            try {
+              await redisCluster.del(orderDataKey);
+            } catch (delErr) {
+              logger.warn('Failed to delete canonical order_data after close', { error: delErr.message, order_id: String(order_id) });
+            }
+
+            if (symbolUpper) {
+              try {
+                const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
+                await redisCluster.srem(symKey, hashTag);
+              } catch (symErr) {
+                logger.warn('symbol_holders cleanup failed after close', { error: symErr.message, symbol: symbolUpper, user: hashTag });
+              }
+            }
+          }
 
           // 2) order_data pipeline (separate slot)
           const pOd = redisCluster.pipeline();

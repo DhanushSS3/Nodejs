@@ -15,7 +15,11 @@ from app.config.redis_logging import (
     log_connection_acquire, log_connection_release, log_connection_error,
     log_pipeline_operation, connection_tracker, generate_operation_id
 )
-from app.services.orders.order_close_service import OrderCloser
+from app.services.orders.order_close_service import (
+    OrderCloser,
+    build_close_confirmation_payload,
+    publish_close_confirmation,
+)
 from app.services.orders.order_repository import fetch_user_config
 from app.services.orders.provider_connection import get_provider_connection_manager
 from app.services.orders.id_generator import generate_stoploss_cancel_id, generate_takeprofit_cancel_id
@@ -669,27 +673,22 @@ class CloseWorker:
                             close_message = "Closed"  # Default fallback
                     
                     
-                    db_msg = {
-                        "type": "ORDER_CLOSE_CONFIRMED",
-                        "order_id": str(payload.get("order_id")),
-                        "user_id": str(payload.get("user_id")),
-                        "user_type": str(payload.get("user_type")),
-                        "order_status": "CLOSED",
-                        "close_price": result.get("close_price"),
-                        "net_profit": result.get("net_profit"),
-                        "commission": result.get("total_commission"),
-                        "commission_entry": result.get("commission_entry"),
-                        "commission_exit": result.get("commission_exit"),
-                        "profit_usd": result.get("profit_usd"),
-                        "swap": result.get("swap"),
-                        "used_margin_executed": result.get("used_margin_executed"),
-                        "used_margin_all": result.get("used_margin_all"),
-                        "trigger_lifecycle_id": trigger_lifecycle_id,
-                        "close_message": close_message,
-                    }
-                    
-                    msg = aio_pika.Message(body=orjson.dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
-                    await self._ex.publish(msg, routing_key=DB_UPDATE_QUEUE)
+                    db_msg = build_close_confirmation_payload(
+                        order_id=str(payload.get("order_id")),
+                        user_id=str(payload.get("user_id")),
+                        user_type=str(payload.get("user_type")),
+                        symbol=str(payload.get("symbol") or "").upper() or None,
+                        order_type=str(payload.get("order_type") or "").upper() or None,
+                        result=result,
+                        close_message=close_message,
+                        flow="provider",
+                        close_origin="provider",
+                        extra_fields={
+                            "trigger_lifecycle_id": trigger_lifecycle_id,
+                        },
+                    )
+
+                    await publish_close_confirmation(db_msg, channel=self._channel, exchange=self._ex)
                     
                     db_time = (time.time() - db_start) * 1000
                     logger.debug(

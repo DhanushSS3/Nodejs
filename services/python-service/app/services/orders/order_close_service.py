@@ -4,6 +4,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import aio_pika
 import orjson
 from redis.exceptions import ResponseError
 
@@ -87,6 +88,82 @@ async def _save_close_id_to_database(order_id: str, close_id: str, user_type: st
             order_id, close_id, user_type, user_id, str(e)
         )
         return False
+
+
+def build_close_confirmation_payload(
+    *,
+    order_id: str,
+    user_id: str,
+    user_type: str,
+    symbol: Optional[str],
+    order_type: Optional[str],
+    result: Dict[str, Any],
+    close_message: str,
+    flow: str,
+    close_origin: str,
+    extra_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload = {
+        "type": "ORDER_CLOSE_CONFIRMED",
+        "order_id": str(order_id),
+        "user_id": str(user_id),
+        "user_type": str(user_type),
+        "order_status": "CLOSED",
+        "close_price": result.get("close_price"),
+        "net_profit": result.get("net_profit"),
+        "commission": result.get("total_commission"),
+        "commission_entry": result.get("commission_entry"),
+        "commission_exit": result.get("commission_exit"),
+        "profit_usd": result.get("profit_usd"),
+        "swap": result.get("swap"),
+        "used_margin_executed": result.get("used_margin_executed"),
+        "used_margin_all": result.get("used_margin_all"),
+        "symbol": symbol,
+        "order_type": order_type,
+        "close_message": close_message,
+        "flow": flow,
+        "close_origin": close_origin,
+    }
+    if extra_fields:
+        payload.update(extra_fields)
+    return payload
+
+
+async def publish_close_confirmation(
+    message: Dict[str, Any],
+    channel: Optional[aio_pika.abc.AbstractChannel] = None,
+    exchange: Optional[aio_pika.abc.AbstractExchange] = None,
+) -> None:
+    """Publish ORDER_CLOSE_CONFIRMED message (shared by local/provide flows)."""
+    try:
+        amqp_message = aio_pika.Message(
+            body=orjson.dumps(message),
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        )
+
+        if channel is not None and exchange is not None:
+            await exchange.publish(amqp_message, routing_key=DB_UPDATE_QUEUE)
+        else:
+            connection = await aio_pika.connect_robust(RABBITMQ_URL)
+            async with connection:
+                channel = await connection.channel()
+                await channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
+                await channel.default_exchange.publish(
+                    amqp_message,
+                    routing_key=DB_UPDATE_QUEUE,
+                )
+
+        logger.info(
+            "[CLOSE:DB_PUBLISHED] order_id=%s queue=%s",
+            message.get("order_id"),
+            DB_UPDATE_QUEUE,
+        )
+    except Exception as e:
+        error_logger.error(
+            "[CLOSE:DB_PUBLISH_FAILED] order_id=%s error=%s",
+            message.get("order_id"),
+            str(e),
+        )
 
 async def _get_user_lock(user_type: str, user_id: str) -> asyncio.Lock:
     """Get or create a lock for a specific user to prevent race conditions."""
@@ -298,6 +375,23 @@ class OrderCloser:
                 "order_status": "CLOSED",
                 "status": "CLOSED",
             }
+
+            close_msg_payload = build_close_confirmation_payload(
+                order_id=order_id,
+                user_id=user_id,
+                user_type=user_type,
+                symbol=symbol,
+                order_type=order_type,
+                result=response,
+                close_message="Closed",
+                flow=flow,
+                close_origin="local",
+            )
+            try:
+                await publish_close_confirmation(close_msg_payload)
+            except Exception:
+                # Errors already logged in helper; continue returning response
+                pass
             return response
 
         # Provider flow
