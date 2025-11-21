@@ -2399,7 +2399,7 @@ async function cancelPendingOrder(req, res) {
       // Local finalize
       try {
         await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, order_id);
-        await redisCluster.delete(`pending_orders:${order_id}`);
+        await redisCluster.del(`pending_orders:${order_id}`);
       } catch (e) { logger.warn('Failed to remove from pending ZSET/HASH', { error: e.message, order_id }); }
       try {
         const tag = `${user_type}:${user_id}`;
@@ -2408,10 +2408,10 @@ async function cancelPendingOrder(req, res) {
         // Use pipeline only for same-slot keys (idx, h)
         const p1 = redisCluster.pipeline();
         p1.srem(idx, order_id);
-        p1.delete(h);
+        p1.del(h);
         await p1.exec();
         // Delete canonical separately to avoid cross-slot pipeline error
-        try { await redisCluster.delete(`order_data:${order_id}`); } catch (eDel) {
+        try { await redisCluster.del(`order_data:${order_id}`); } catch (eDel) {
           logger.warn('Failed to delete order_data for pending cancel', { error: eDel.message, order_id });
         }
       } catch (e2) { logger.warn('Failed to remove holdings/index for pending cancel', { error: e2.message, order_id }); }
