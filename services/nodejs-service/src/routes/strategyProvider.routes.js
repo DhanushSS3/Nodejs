@@ -36,7 +36,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 15 * 1024 * 1024, // 15MB limit
   },
   fileFilter: fileFilter
 });
@@ -280,7 +280,7 @@ const upload = multer({
  *               profile_image:
  *                 type: string
  *                 format: binary
- *                 description: Profile image file (optional, max 5MB, JPEG/PNG/GIF/WebP)
+ *                 description: Profile image file (optional, max 15MB, JPEG/PNG/GIF/WebP)
  *     responses:
  *       201:
  *         description: Strategy provider account created successfully
@@ -750,7 +750,7 @@ router.post('/', (req, res, next) => {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
           success: false,
-          message: 'Profile image file size too large. Maximum size is 5MB.'
+          message: 'Profile image file size too large. Maximum size is 15MB.'
         });
       }
       if (err.message.includes('Only image files')) {

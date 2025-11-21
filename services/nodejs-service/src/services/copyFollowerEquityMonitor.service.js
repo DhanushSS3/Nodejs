@@ -1,4 +1,5 @@
 const logger = require('./logger.service');
+const copyTradingRedisService = require('./copyTradingRedis.service');
 
 /**
  * Service for monitoring copy follower equity and triggering auto stop copying
@@ -254,10 +255,13 @@ class CopyFollowerEquityMonitorService {
     try {
       // 1. Close all open orders for this copy follower account
       const closeOrdersResult = await this.closeAllCopyFollowerOrders(copyFollowerAccount.id);
-      
-      // 2. Update copy follower account status
+
+      // 2. Cancel any pending orders before stopping
+      const cancelPendingResult = await this.cancelAllPendingCopyFollowerOrders(copyFollowerAccount.id);
+
+      // 3. Update copy follower account status
       const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
-      await CopyFollowerAccount.update({
+      const [updatedRows] = await CopyFollowerAccount.update({
         copy_status: 'stopped',
         stop_reason: `Auto ${thresholdType.replace('_', ' ')}: ${reason}`,
         is_active: 0,
@@ -267,7 +271,37 @@ class CopyFollowerEquityMonitorService {
         where: { id: copyFollowerAccount.id }
       });
 
-      // 3. Log the auto stop event
+      // 4. Update strategy provider aggregate stats (total followers & investment)
+      const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+      if (updatedRows > 0) {
+        const investmentAmount = parseFloat(copyFollowerAccount.investment_amount || 0);
+        await StrategyProviderAccount.decrement({
+          total_followers: 1,
+          total_investment: investmentAmount
+        }, {
+          where: { id: copyFollowerAccount.strategy_provider_id }
+        });
+      } else {
+        logger.warn('Auto stop copying update skipped because follower account was already inactive', {
+          copyFollowerAccountId: copyFollowerAccount.id
+        });
+      }
+
+      // 5. Clean up Redis relationships so provider no longer tracks this follower
+      try {
+        await copyTradingRedisService.cleanupCopyTradingRelationship(
+          copyFollowerAccount.strategy_provider_id,
+          copyFollowerAccount.id
+        );
+      } catch (cleanupError) {
+        logger.warn('Failed to cleanup copy trading Redis relationship during auto stop', {
+          copyFollowerAccountId: copyFollowerAccount.id,
+          strategyProviderId: copyFollowerAccount.strategy_provider_id,
+          error: cleanupError.message
+        });
+      }
+
+      // 6. Log the auto stop event
       logger.info('Auto stop copying triggered', {
         copyFollowerAccountId: copyFollowerAccount.id,
         userId: copyFollowerAccount.user_id,
@@ -275,7 +309,8 @@ class CopyFollowerEquityMonitorService {
         reason,
         thresholdType,
         thresholdValue,
-        ordersClosedCount: closeOrdersResult.closedCount
+        ordersClosedCount: closeOrdersResult.closedCount,
+        pendingCancelledCount: cancelPendingResult.cancelledCount
       });
 
       return {
@@ -283,7 +318,8 @@ class CopyFollowerEquityMonitorService {
         reason,
         thresholdType,
         thresholdValue,
-        ordersClosedCount: closeOrdersResult.closedCount
+        ordersClosedCount: closeOrdersResult.closedCount,
+        pendingCancelledCount: cancelPendingResult.cancelledCount
       };
 
     } catch (error) {
@@ -313,7 +349,7 @@ class CopyFollowerEquityMonitorService {
       const openOrders = await CopyFollowerOrder.findAll({
         where: {
           copy_follower_account_id: copyFollowerAccountId,
-          order_status: 'OPEN'
+          order_status: ['OPEN', 'PARTIALLY_FILLED']
         }
       });
 
@@ -392,6 +428,99 @@ class CopyFollowerEquityMonitorService {
 
     } catch (error) {
       logger.error('Failed to close copy follower order', {
+        orderId: order.order_id,
+        error: error.message
+      });
+      return {
+        success: false,
+        orderId: order.order_id,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Cancel all pending orders for copy follower account
+   * @param {number} copyFollowerAccountId - Copy follower account ID
+   * @returns {Object} Cancel orders result
+   */
+  static async cancelAllPendingCopyFollowerOrders(copyFollowerAccountId) {
+    try {
+      const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      const pendingStatuses = ['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL', 'QUEUED'];
+
+      const pendingOrders = await CopyFollowerOrder.findAll({
+        where: {
+          copy_follower_account_id: copyFollowerAccountId,
+          order_status: pendingStatuses
+        }
+      });
+
+      let cancelledCount = 0;
+      const errors = [];
+
+      for (const order of pendingOrders) {
+        try {
+          const cancelResult = await this.cancelCopyFollowerPendingOrder(order);
+          if (cancelResult.success) {
+            cancelledCount++;
+          } else {
+            errors.push({
+              orderId: order.order_id,
+              error: cancelResult.error
+            });
+          }
+        } catch (error) {
+          errors.push({
+            orderId: order.order_id,
+            error: error.message
+          });
+        }
+      }
+
+      return {
+        success: true,
+        totalOrders: pendingOrders.length,
+        cancelledCount,
+        errors
+      };
+
+    } catch (error) {
+      logger.error('Failed to cancel copy follower pending orders', {
+        copyFollowerAccountId,
+        error: error.message
+      });
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Cancel individual pending copy follower order using existing copy trading service
+   * @param {Object} order - Copy follower pending order
+   * @returns {Object} Cancel order result
+   */
+  static async cancelCopyFollowerPendingOrder(order) {
+    try {
+      const copyTradingService = require('./copyTrading.service');
+      const mockMasterOrder = {
+        order_id: `master_cancel_${order.order_id}`,
+        order_status: 'CANCELLED',
+        order_user_id: order.strategy_provider_id,
+        cancel_reason: 'auto_stop_copying'
+      };
+
+      await copyTradingService.cancelFollowerOrder(order, mockMasterOrder);
+
+      return {
+        success: true,
+        orderId: order.order_id
+      };
+
+    } catch (error) {
+      logger.error('Failed to cancel pending copy follower order', {
         orderId: order.order_id,
         error: error.message
       });
