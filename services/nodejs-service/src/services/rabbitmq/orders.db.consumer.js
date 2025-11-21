@@ -1199,9 +1199,8 @@ async function applyDbUpdate(msg) {
               strategyProviderId: copyFollowerOrder.strategy_provider_id,
               orderNetProfit: Number(net_profit) || 0,
               symbol: copyFollowerOrder.symbol ? String(copyFollowerOrder.symbol).toUpperCase() : undefined,
-              orderType: copyFollowerOrder.order_type ? String(copyFollowerOrder.order_type).toUpperCase() : undefined,
-              options: { adjustAccountNetProfit: true }
-            });
+              orderType: copyFollowerOrder.order_type ? String(copyFollowerOrder.order_type).toUpperCase() : undefined
+            }, { adjustAccountNetProfit: true });
             
             if (performanceFeeResult.performanceFeeCharged) {
               logger.info('Performance fee applied successfully', {
