@@ -247,6 +247,15 @@ async function fetchOpenOrdersFromRedis(userType, userId) {
     results = (res || []).map(([err, data], i) => {
       if (err) return null;
       const row = data || {};
+      if (userType === 'copy_follower') {
+        logger.info('Copy follower open-order snapshot row', {
+          userType,
+          userId,
+          orderId: keys[i]?.id,
+          hasCreatedAt: row.created_at != null,
+          created_at: row.created_at,
+        });
+      }
       // Only include OPEN orders
       if (String(row.order_status || '').toUpperCase() !== 'OPEN') return null;
       return {
