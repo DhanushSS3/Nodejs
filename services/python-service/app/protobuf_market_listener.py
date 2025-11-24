@@ -5,6 +5,7 @@ Based on frontend JavaScript implementation with pako.inflate and protobuf decod
 """
 import asyncio
 import logging
+import os
 import time
 import websockets
 import zlib
@@ -56,7 +57,9 @@ class ProtobufMarketListener:
             'successful_decodes': 0,
             'batches_processed': 0,
             'queue_size': 0,
-            'avg_batch_size': 0
+            'avg_batch_size': 0,
+            'heartbeats_sent': 0,
+            'heartbeat_failures': 0
         }
         
         self.redis_queue = asyncio.Queue()
@@ -66,6 +69,10 @@ class ProtobufMarketListener:
         self.last_values = {}  # symbol -> (bid, ask)
         self._last_sent_ms = {}  # symbol -> last enqueue timestamp
         self._last_msg_ms = 0
+        self._last_pong_ms = 0
+        self._last_ping_ms = 0
+        self.client_ping_interval = int(os.getenv("MARKET_WS_CLIENT_PING_INTERVAL", "20"))
+        self.client_ping_timeout = int(os.getenv("MARKET_WS_CLIENT_PING_TIMEOUT", "10"))
         
     async def start(self):
         """Start the market listener with auto-reconnection and batch processing"""
@@ -122,6 +129,13 @@ class ProtobufMarketListener:
             logger.info("Connected to market feed successfully")
             # Reset last message timer at connect
             self._last_msg_ms = int(time.time() * 1000)
+            self._last_pong_ms = self._last_msg_ms
+
+            def _on_pong(_: bytes):
+                self._last_pong_ms = int(time.time() * 1000)
+                self._last_msg_ms = self._last_pong_ms
+
+            websocket.pong_handler = _on_pong
 
             # Idle watchdog: force reconnect if no data for >30s
             async def _idle_watchdog():
@@ -129,7 +143,10 @@ class ProtobufMarketListener:
                     while True:
                         await asyncio.sleep(5)
                         now = int(time.time() * 1000)
-                        last_age = now - (self._last_msg_ms or now)
+                        last_activity = max(self._last_msg_ms or 0, self._last_pong_ms or 0)
+                        if not last_activity:
+                            last_activity = now
+                        last_age = now - last_activity
                         if last_age > 30000:  # 30s
                             logger.warning(f"Idle watchdog: no market data for {last_age}ms, closing websocket to reconnect")
                             try:
@@ -141,6 +158,42 @@ class ProtobufMarketListener:
                     return
 
             watchdog_task = asyncio.create_task(_idle_watchdog())
+
+            async def _client_heartbeat():
+                try:
+                    while True:
+                        await asyncio.sleep(self.client_ping_interval)
+                        if websocket.closed:
+                            break
+                        try:
+                            self._last_ping_ms = int(time.time() * 1000)
+                            self.stats['heartbeats_sent'] += 1
+                            pong_waiter = await websocket.ping()
+                            await asyncio.wait_for(pong_waiter, timeout=self.client_ping_timeout)
+                            self._last_msg_ms = int(time.time() * 1000)
+                        except asyncio.TimeoutError:
+                            self.stats['heartbeat_failures'] += 1
+                            logger.warning(
+                                "Heartbeat pong timeout after %ss, forcing reconnect",
+                                self.client_ping_timeout
+                            )
+                            try:
+                                await websocket.close()
+                            except Exception:
+                                pass
+                            break
+                        except Exception as hb_err:
+                            self.stats['heartbeat_failures'] += 1
+                            logger.error(f"Heartbeat failure: {hb_err}")
+                            try:
+                                await websocket.close()
+                            except Exception:
+                                pass
+                            break
+                except asyncio.CancelledError:
+                    return
+
+            heartbeat_task = asyncio.create_task(_client_heartbeat())
             
             # CRITICAL FIX: Add timeout to receive loop to detect silent stalls
             # 
@@ -188,10 +241,11 @@ class ProtobufMarketListener:
                         break
                         
             finally:
-                try:
-                    watchdog_task.cancel()
-                except Exception:
-                    pass
+                for task in (watchdog_task, heartbeat_task):
+                    try:
+                        task.cancel()
+                    except Exception:
+                        pass
     
     async def _redis_writer(self):
         while not self._shutdown_event.is_set():
