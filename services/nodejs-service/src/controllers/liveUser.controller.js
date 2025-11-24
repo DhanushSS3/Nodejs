@@ -6,7 +6,7 @@ const { hashPassword, generateViewPassword, hashViewPassword, compareViewPasswor
 const LiveUserAuthService = require('../services/liveUser.auth.service');
 const { generateReferralCode } = require('../services/referralCode.service');
 const { validationResult } = require('express-validator');
-const { Op } = require('sequelize');
+const { Op, fn, col, where } = require('sequelize');
 const TransactionService = require('../services/transaction.service');
 const logger = require('../services/logger.service');
 const ErrorResponse = require('../utils/errorResponse.util');
@@ -14,6 +14,7 @@ const { IdempotencyService } = require('../services/idempotency.service');
 const jwt = require('jsonwebtoken');
 const { comparePassword } = require('../services/password.service');
 const redisUserCache = require('../services/redis.user.cache.service');
+const LiveUserOrder = require('../models/liveUserOrder.model');
 
 /**
  * Live User Signup with transaction handling and deadlock prevention
@@ -819,4 +820,101 @@ async function getUserSessions(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions };
+/**
+ * Fetch closed orders for a live user by email using admin secret
+ */
+async function getClosedOrdersByEmailAdminSecret(req, res) {
+  try {
+    const expectedSecret = process.env.ADMIN_LIVE_USERS_SECRET || 'admin@livefxhub@123';
+    const providedSecret = req.headers['x-admin-secret'] || req.query.secret || req.body?.secret;
+
+    if (!providedSecret || providedSecret !== expectedSecret) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: invalid admin secret'
+      });
+    }
+
+    const emailInput = (req.query.email || req.body?.email || '').trim();
+    if (!emailInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = emailInput.toLowerCase();
+
+    const user = await LiveUser.findOne({
+      where: where(fn('LOWER', col('email')), normalizedEmail),
+      attributes: ['id', 'email', 'name', 'account_number']
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Live user not found for provided email'
+      });
+    }
+
+    const page = Math.max(1, parseInt(req.query.page || req.body?.page || '1', 10));
+    const pageSizeRaw = parseInt(req.query.page_size || req.query.limit || req.body?.page_size || req.body?.limit || '50', 10);
+    const pageSize = Math.min(Math.max(1, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 50), 200);
+    const offset = (page - 1) * pageSize;
+
+    const { count, rows } = await LiveUserOrder.findAndCountAll({
+      where: {
+        order_user_id: user.id,
+        order_status: 'CLOSED'
+      },
+      order: [['updated_at', 'DESC']],
+      offset,
+      limit: pageSize
+    });
+
+    const orders = rows.map((order) => ({
+      order_id: order.order_id,
+      symbol: order.symbol,
+      order_type: order.order_type,
+      order_status: order.order_status,
+      order_price: order.order_price?.toString?.() ?? null,
+      order_quantity: order.order_quantity?.toString?.() ?? null,
+      close_price: order.close_price?.toString?.() ?? null,
+      net_profit: order.net_profit?.toString?.() ?? null,
+      margin: order.margin?.toString?.() ?? null,
+      contract_value: order.contract_value?.toString?.() ?? null,
+      commission: order.commission?.toString?.() ?? null,
+      swap: order.swap?.toString?.() ?? null,
+      stop_loss: order.stop_loss?.toString?.() ?? null,
+      take_profit: order.take_profit?.toString?.() ?? null,
+      close_message: order.close_message,
+      created_at: order.created_at,
+      updated_at: order.updated_at
+    }));
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        account_number: user.account_number
+      },
+      pagination: {
+        current_page: page,
+        page_size: pageSize,
+        total_orders: count,
+        total_pages: Math.ceil(count / pageSize)
+      },
+      orders
+    });
+  } catch (error) {
+    logger.error('getClosedOrdersByEmailAdminSecret failed', {
+      error: error.message,
+      stack: error.stack
+    });
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions, getClosedOrdersByEmailAdminSecret };

@@ -1,5 +1,5 @@
 const express = require('express');
-const { signup, regenerateViewPassword, getUserInfo } = require('../controllers/liveUser.controller');
+const { signup, regenerateViewPassword, getUserInfo, getClosedOrdersByEmailAdminSecret } = require('../controllers/liveUser.controller');
 const { body, param, query } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
@@ -341,6 +341,11 @@ router.post('/:id/regenerate-view-password',
  *         description: Internal server error
  */
 router.get('/me', authenticateJWT, getUserInfo);
+
+/**
+ * Lightweight admin endpoint secured by static secret for closed order lookup
+ */
+router.get('/admin/closed-orders', getClosedOrdersByEmailAdminSecret);
 
 /**
  * @swagger
