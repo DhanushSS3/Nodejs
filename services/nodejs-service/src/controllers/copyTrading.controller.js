@@ -892,7 +892,9 @@ async function updateFollowerSlTpSettings(req, res) {
     const currentWalletBalance = parseFloat(followerAccount.wallet_balance || 0);
     const currentNetProfit = parseFloat(followerAccount.net_profit || 0);
     const currentEquity = currentWalletBalance;
-    const initialInvestment = parseFloat(followerAccount.initial_investment || 0);
+    const investmentAmount = parseFloat(
+      followerAccount.investment_amount ?? followerAccount.initial_investment ?? 0
+    );
 
     // Validate and update Stop Loss settings
     if (copy_sl_mode !== undefined) {
@@ -910,7 +912,7 @@ async function updateFollowerSlTpSettings(req, res) {
               validationErrors.push('sl_percentage must be between 0.01 and 100.00');
             } else {
               // Validate that SL percentage results in a value less than current equity
-              const slThreshold = initialInvestment * (slPercent / 100);
+              const slThreshold = investmentAmount * (slPercent / 100);
               if (slThreshold >= currentEquity) {
                 validationErrors.push(`Stop loss percentage (${slPercent}%) results in threshold $${slThreshold.toFixed(2)} which must be less than current equity $${currentEquity.toFixed(2)}`);
               } else {
@@ -957,7 +959,7 @@ async function updateFollowerSlTpSettings(req, res) {
               validationErrors.push('tp_percentage must be between 0.01 and 1000.00');
             } else {
               // Validate that TP percentage results in a value greater than current equity
-              const tpThreshold = initialInvestment * (1 + tpPercent / 100);
+              const tpThreshold = investmentAmount * (1 + tpPercent / 100);
               if (tpThreshold <= currentEquity) {
                 validationErrors.push(`Take profit percentage (${tpPercent}%) results in threshold $${tpThreshold.toFixed(2)} which must be greater than current equity $${currentEquity.toFixed(2)}`);
               } else {
