@@ -1,6 +1,6 @@
 const cryptoPaymentService = require('../services/crypto.payment.service');
 const logger = require('../utils/logger');
-const { cryptoPaymentLogger } = require('../services/logging');
+const { cryptoPaymentLogger, cryptoWebhookRawLogger } = require('../services/logging');
 
 class CryptoPaymentController {
   /**
@@ -203,6 +203,11 @@ class CryptoPaymentController {
         body: req.body,
         headers: req.headers 
       });
+
+      // Persist raw webhook payload exactly as received (for audits/debugging)
+      if (req.rawBody) {
+        cryptoWebhookRawLogger.logRawPayload(req.rawBody);
+      }
 
       // Validate HMAC signature
       const signature = req.headers['x-tlp-signature'];
