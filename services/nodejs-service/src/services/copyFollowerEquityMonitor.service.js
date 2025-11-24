@@ -33,15 +33,17 @@ class CopyFollowerEquityMonitorService {
       }
 
       const currentEquity = parseFloat(portfolioData.equity);
-      const initialInvestment = parseFloat(copyFollowerAccount.initial_investment);
+      const investmentAmount = parseFloat(
+        copyFollowerAccount.investment_amount ?? copyFollowerAccount.initial_investment ?? 0
+      );
       
       result.currentEquity = currentEquity;
-      result.initialInvestment = initialInvestment;
+      result.initialInvestment = investmentAmount;
 
       // Check Stop Loss threshold
       if (copyFollowerAccount.copy_sl_mode && copyFollowerAccount.copy_sl_mode !== 'none') {
         const slThreshold = this.calculateThreshold(
-          initialInvestment,
+          investmentAmount,
           copyFollowerAccount.copy_sl_mode,
           copyFollowerAccount.sl_percentage,
           copyFollowerAccount.sl_amount,
@@ -60,7 +62,7 @@ class CopyFollowerEquityMonitorService {
       // Check Take Profit threshold
       if (copyFollowerAccount.copy_tp_mode && copyFollowerAccount.copy_tp_mode !== 'none') {
         const tpThreshold = this.calculateThreshold(
-          initialInvestment,
+          investmentAmount,
           copyFollowerAccount.copy_tp_mode,
           copyFollowerAccount.tp_percentage,
           copyFollowerAccount.tp_amount,
