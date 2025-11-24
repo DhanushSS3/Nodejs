@@ -88,8 +88,9 @@ const CryptoPayment = sequelize.define('CryptoPayment', {
   hooks: {
     beforeCreate: (cryptoPayment) => {
       if (!cryptoPayment.merchantOrderId) {
-        // Generate merchantOrderId in format: livefx_{uuid4().hex}
-        cryptoPayment.merchantOrderId = `livefx_${uuidv4().replace(/-/g, '')}`;
+        // Generate merchantOrderId in format: livefx_{short_uuid} (UUID hex minus 4 chars)
+        const shortUuid = uuidv4().replace(/-/g, '').slice(0, -4);
+        cryptoPayment.merchantOrderId = `livefx_${shortUuid}`;
       }
     },
   },
@@ -123,7 +124,8 @@ const CryptoPayment = sequelize.define('CryptoPayment', {
  * @returns {string} Merchant order ID in format: livefx_{uuid4}
  */
 CryptoPayment.generateMerchantOrderId = function() {
-  return `livefx_${uuidv4().replace(/-/g, '')}`;
+  const shortUuid = uuidv4().replace(/-/g, '').slice(0, -4);
+  return `livefx_${shortUuid}`;
 };
 
 /**

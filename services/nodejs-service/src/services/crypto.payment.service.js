@@ -353,8 +353,9 @@ class CryptoPaymentService {
       });
 
       const { status, baseAmountReceived, settledAmountReceived, settledAmountCredited, commission } = webhookData;
-      // Capture previous value *before* we mutate the instance so duplicate detection is accurate
+      // Capture previous value *before* we mutate the instance (helpful for diagnostics)
       const previousBaseAmountReceived = payment.baseAmountReceived;
+      const referenceIdentifier = payment.merchantOrderId || payment.orderId || null;
       
       // Map Tylt status to internal status
       const internalStatus = this.mapTyltStatusToInternal(status);
@@ -409,9 +410,22 @@ class CryptoPaymentService {
       // SIMPLE DUPLICATE DETECTION: Since we create only ONE record per payment request,
       // any subsequent webhook for the same payment record is a duplicate if wallet was already credited
       const isEligibleForCredit = ['COMPLETED', 'UNDERPAYMENT', 'OVERPAYMENT'].includes(internalStatus) && baseAmountReceived;
-      // Use previous value captured *before* update
-      const hasAlreadyBeenCredited = previousBaseAmountReceived !== null && previousBaseAmountReceived > 0;
-      const shouldCreditWallet = isEligibleForCredit && !hasAlreadyBeenCredited;
+
+      // Check if a deposit transaction already exists for this payment identifier (true idempotency)
+      let existingCreditTransaction = null;
+      if (referenceIdentifier) {
+        existingCreditTransaction = await UserTransaction.findOne({
+          where: {
+            reference_id: referenceIdentifier,
+            user_id: payment.userId,
+            type: 'deposit'
+          },
+          transaction
+        });
+      }
+
+      const hasAlreadyBeenCredited = Boolean(existingCreditTransaction);
+      const shouldCreditWallet = isEligibleForCredit && referenceIdentifier && !hasAlreadyBeenCredited;
 
       logger.info('Duplicate detection check', {
         paymentId: payment.id,
@@ -420,6 +434,8 @@ class CryptoPaymentService {
         truncationDetected: isTruncated,
         internalStatus,
         baseAmountReceived,
+        referenceIdentifier,
+        existingCreditTransactionId: existingCreditTransaction?.transaction_id || null,
         isEligibleForCredit,
         hasAlreadyBeenCredited,
         shouldCreditWallet,
@@ -437,7 +453,13 @@ class CryptoPaymentService {
             reason: 'First time processing this payment'
           });
 
-          const creditResult = await this.creditUserWallet(payment.userId, parseFloat(baseAmountReceived), webhookData, transaction);
+          const creditResult = await this.creditUserWallet(
+            payment.userId,
+            parseFloat(baseAmountReceived),
+            webhookData,
+            transaction,
+            referenceIdentifier
+          );
           walletCreditSuccess = true;
           walletCreditAmount = parseFloat(baseAmountReceived);
           newWalletBalance = previousWalletBalance + walletCreditAmount;
@@ -467,7 +489,9 @@ class CryptoPaymentService {
             ? `Status '${internalStatus}' not eligible for wallet credit` 
             : 'No baseAmountReceived in webhook';
         } else if (hasAlreadyBeenCredited) {
-          skipReason = 'DUPLICATE WEBHOOK: Payment record already processed for wallet credit';
+          skipReason = 'DUPLICATE WEBHOOK: Wallet already credited for this merchantOrderId';
+        } else if (!referenceIdentifier) {
+          skipReason = 'Missing merchantOrderId and orderId - cannot ensure idempotent wallet credit';
         }
 
         logger.info('Wallet credit skipped', {
@@ -478,6 +502,8 @@ class CryptoPaymentService {
           internalStatus,
           baseAmountReceived,
           previousBaseAmountReceived: payment.baseAmountReceived,
+          referenceIdentifier,
+          existingCreditTransactionId: existingCreditTransaction?.transaction_id || null,
           reason: skipReason,
           isDuplicateWebhook: hasAlreadyBeenCredited,
           explanation: 'One payment record can only credit wallet once'
@@ -621,7 +647,7 @@ class CryptoPaymentService {
    * @param {Object} webhookData - Webhook data for reference
    * @param {Object} transaction - Database transaction
    */
-  async creditUserWallet(userId, amount, webhookData, transaction) {
+  async creditUserWallet(userId, amount, webhookData, transaction, referenceIdentifier = null) {
     try {
       // Find live user (crypto deposits only for live users)
       const user = await LiveUser.findByPk(userId, { transaction });
@@ -643,6 +669,12 @@ class CryptoPaymentService {
       // Generate unique transaction ID (Redis-backed, atomic)
       const transactionId = await idGenerator.generateTransactionId();
       
+      const resolvedReferenceId = referenceIdentifier || webhookData.merchantOrderId || webhookData.orderId;
+
+      if (!resolvedReferenceId) {
+        throw new Error('Missing merchantOrderId and orderId for transaction reference');
+      }
+
       // Create transaction record
       await UserTransaction.create({
         transaction_id: transactionId,
@@ -653,14 +685,14 @@ class CryptoPaymentService {
         balance_before: currentBalance,
         balance_after: newBalance,
         status: 'completed',
-        reference_id: webhookData.merchantOrderId,
+        reference_id: resolvedReferenceId,
         user_email: user.email, // Store user email for audit purposes
         method_type: 'CRYPTO', // Set method type as CRYPTO for crypto deposits
         notes: `Crypto deposit via Tylt - ${webhookData.status}`,
         metadata: {
           paymentGateway: 'tylt',
-          orderId: webhookData.orderId,
-          merchantOrderId: webhookData.merchantOrderId,
+          orderId: webhookData.orderId || null,
+          merchantOrderId: webhookData.merchantOrderId || referenceIdentifier || null,
           baseCurrency: webhookData.baseCurrency,
           settledCurrency: webhookData.settledCurrency,
           network: webhookData.network,
