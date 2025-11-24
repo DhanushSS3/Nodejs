@@ -222,6 +222,9 @@ class OrderCloser:
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
 
+        close_reason = (str(payload.get("close_reason")) if payload.get("close_reason") else "").strip()
+        trigger_lifecycle_id = payload.get("trigger_lifecycle_id")
+
         # Read existing order from user holdings
         hash_tag = f"{user_type}:{user_id}"
         order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
@@ -376,6 +379,12 @@ class OrderCloser:
                 "status": "CLOSED",
             }
 
+            close_message_value = close_reason or "Closed"
+
+            extra_fields = {}
+            if trigger_lifecycle_id:
+                extra_fields["trigger_lifecycle_id"] = trigger_lifecycle_id
+
             close_msg_payload = build_close_confirmation_payload(
                 order_id=order_id,
                 user_id=user_id,
@@ -383,9 +392,10 @@ class OrderCloser:
                 symbol=symbol,
                 order_type=order_type,
                 result=response,
-                close_message="Closed",
+                close_message=close_message_value,
                 flow=flow,
                 close_origin="local",
+                extra_fields=extra_fields or None,
             )
             try:
                 await publish_close_confirmation(close_msg_payload)

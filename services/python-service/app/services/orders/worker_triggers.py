@@ -262,6 +262,10 @@ class TriggerMonitor:
                     "order_id": order_id,
                     "status": "CLOSED",
                     "order_status": "CLOSED",
+                    # Provide explicit reason so OrderCloser can propagate accurate close messages
+                    "close_reason": close_message,
+                    # Allow downstream systems to identify the exact trigger lifecycle id
+                    "trigger_lifecycle_id": trigger_lifecycle_id,
                 }
                 result = await self._closer.close_order(payload)
                 if not result.get("ok"):
