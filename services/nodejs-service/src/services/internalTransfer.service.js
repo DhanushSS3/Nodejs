@@ -782,12 +782,7 @@ class InternalTransferService {
         'leverage': (sourceAccount.leverage || 100).toString(),
         'group': sourceAccount.group || 'Standard'
       });
-      sourcePipeline.hset(sourceLegacyKey, {
-        'balance': sourceBalanceAfter.toString(),
-        'wallet_balance': sourceBalanceAfter.toString()
-      });
       sourcePipeline.del(sourcePortfolioKey);
-      sourcePipeline.expire(sourceLegacyKey, 86400);
       
       // Pipeline 2: Update destination account keys (all belong to same slot)
       const destinationPipeline = redisCluster.pipeline();
@@ -801,17 +796,26 @@ class InternalTransferService {
         'leverage': (destinationAccount.leverage || 100).toString(),
         'group': destinationAccount.group || 'Standard'
       });
-      destinationPipeline.hset(destinationLegacyKey, {
-        'balance': destinationBalanceAfter.toString(),
-        'wallet_balance': destinationBalanceAfter.toString()
-      });
       destinationPipeline.del(destinationPortfolioKey);
-      destinationPipeline.expire(destinationLegacyKey, 86400);
       
       // Execute account-specific pipelines in parallel
       const [sourceResults, destinationResults] = await Promise.all([
         sourcePipeline.exec(),
         destinationPipeline.exec()
+      ]);
+
+      // Legacy keys use classic naming (no hash tags) so update them outside the pipelines
+      await Promise.all([
+        redisCluster.hset(sourceLegacyKey, {
+          'balance': sourceBalanceAfter.toString(),
+          'wallet_balance': sourceBalanceAfter.toString()
+        }),
+        redisCluster.expire(sourceLegacyKey, 86400),
+        redisCluster.hset(destinationLegacyKey, {
+          'balance': destinationBalanceAfter.toString(),
+          'wallet_balance': destinationBalanceAfter.toString()
+        }),
+        redisCluster.expire(destinationLegacyKey, 86400)
       ]);
       
       // Handle dirty user keys separately (they may be in different hash slots)
