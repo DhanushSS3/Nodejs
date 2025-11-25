@@ -161,24 +161,7 @@ class CopyFollowerEquityMonitorService {
       // Portfolio calculator writes to: user_portfolio:{user_type:user_id}
       const portfolioKey = `user_portfolio:{${userType}:${userId}}`;
       
-      logger.info('Attempting to get portfolio data for copy follower', {
-        userType,
-        userId,
-        portfolioKey,
-        timestamp: new Date().toISOString()
-      });
-      
       const portfolioData = await redisCluster.hgetall(portfolioKey);
-      
-      logger.info('Portfolio data retrieved from Redis', {
-        userType,
-        userId,
-        portfolioKey,
-        hasData: portfolioData && Object.keys(portfolioData).length > 0,
-        dataKeys: portfolioData ? Object.keys(portfolioData) : [],
-        rawData: portfolioData,
-        timestamp: new Date().toISOString()
-      });
       
       if (portfolioData && Object.keys(portfolioData).length > 0) {
         // Convert string values to numbers where appropriate
@@ -192,13 +175,6 @@ class CopyFollowerEquityMonitorService {
           calc_status: portfolioData.calc_status || 'unknown',
           last_updated: portfolioData.last_updated || null
         };
-        
-        logger.info('Portfolio data parsed successfully', {
-          userType,
-          userId,
-          portfolio,
-          timestamp: new Date().toISOString()
-        });
         
         return portfolio;
       }
@@ -706,11 +682,6 @@ class CopyFollowerEquityMonitorService {
       const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
       const { redisCluster } = require('../../config/redis');
       
-      logger.info('Starting Redis backfill for copy follower', {
-        copyFollowerAccountId,
-        timestamp: new Date().toISOString()
-      });
-
       // Get all open orders for this copy follower
       const openOrders = await CopyFollowerOrder.findAll({
         where: {
@@ -720,9 +691,6 @@ class CopyFollowerEquityMonitorService {
       });
 
       if (openOrders.length === 0) {
-        logger.info('No open orders found for copy follower backfill', {
-          copyFollowerAccountId
-        });
         return { backfilled: 0, reason: 'no_open_orders' };
       }
 
@@ -782,20 +750,6 @@ class CopyFollowerEquityMonitorService {
 
           backfilledCount++;
 
-          logger.info('Backfilled Redis entries for copy follower order', {
-            copyFollowerAccountId,
-            orderId: order.order_id,
-            symbol: order.symbol,
-            orderStatus: order.order_status,
-            symbolHoldersKey: symbol_holders_key,
-            redisKeys: {
-              order_data: order_data_key,
-              user_holdings: order_key,
-              user_index: index_key,
-              symbol_holders: symbol_holders_key
-            }
-          });
-
         } catch (orderError) {
           logger.error('Failed to backfill Redis entries for specific order', {
             copyFollowerAccountId,
@@ -806,12 +760,13 @@ class CopyFollowerEquityMonitorService {
         }
       }
 
-      logger.info('Completed Redis backfill for copy follower', {
-        copyFollowerAccountId,
-        totalOrders: openOrders.length,
-        backfilledCount,
-        timestamp: new Date().toISOString()
-      });
+      if (backfilledCount > 0) {
+        logger.info('Redis backfill completed for copy follower', {
+          copyFollowerAccountId,
+          totalOrders: openOrders.length,
+          backfilledCount
+        });
+      }
 
       return { 
         backfilled: backfilledCount, 

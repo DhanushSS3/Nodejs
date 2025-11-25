@@ -87,8 +87,14 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Swagger UI - Disabled for production
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+const swaggerEnabled = String(process.env.ENABLE_SWAGGER || '').toLowerCase() === 'true';
+
+if (swaggerEnabled) {
+  logger.info('Swagger UI enabled at /api-docs');
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+} else {
+  logger.info('Swagger UI disabled');
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {

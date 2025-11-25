@@ -1197,9 +1197,7 @@ async function getPerformanceFeeEarnings(req, res) {
       const strategyAccount = await StrategyProviderAccount.findOne({
         where: {
           id: parsedStrategyId,
-          user_id: userId,
-          status: 1,
-          is_active: 1
+          user_id: userId
         }
       });
       
@@ -1289,9 +1287,7 @@ async function getPerformanceFeeEarnings(req, res) {
 
     // Build where clause for copy follower investments
     const investmentWhere = {
-      strategy_provider_id: strategyProviderId,
-      copy_status: 'active',
-      is_active: 1
+      strategy_provider_id: strategyProviderId
     };
     
     // Add date filters for investments if specified
@@ -1476,9 +1472,7 @@ async function getCopyFollowerInvestments(req, res) {
     // Get all copy follower accounts for this strategy provider
     const copyFollowerAccounts = await CopyFollowerAccount.findAll({
       where: {
-        strategy_provider_id: strategyProviderId,
-        status: 1,
-        is_active: 1
+        strategy_provider_id: strategyProviderId
       },
       attributes: [
         'id',
