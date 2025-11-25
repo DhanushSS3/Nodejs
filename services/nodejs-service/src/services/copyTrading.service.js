@@ -841,41 +841,213 @@ class CopyTradingService {
    */
   async calculateFollowerLotSize(masterOrder, follower) {
     try {
-      // Strategy provider wallet balance drives lot ratio (requested behavior)
+      // Get strategy provider and require live equity from Redis portfolio data
       const strategyProvider = await StrategyProviderAccount.findByPk(masterOrder.order_user_id);
       if (!strategyProvider) {
         throw new Error(`Strategy provider not found: ${masterOrder.order_user_id}`);
       }
 
-      const masterBalance = parseFloat(strategyProvider.wallet_balance || 0);
-      if (!(masterBalance > 0)) {
-        throw new Error(
-          `Strategy provider ${masterOrder.order_user_id} has insufficient wallet balance (${masterBalance})`
-        );
+      // Fetch live equity from Redis portfolio data (required)
+      const portfolioKey = `user_portfolio:{strategy_provider:${masterOrder.order_user_id}}`;
+      let portfolioData;
+      try {
+        portfolioData = await redisCluster.hgetall(portfolioKey);
+      } catch (redisError) {
+        logger.error('Failed to fetch portfolio data from Redis', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          error: redisError.message
+        });
+        throw new Error(`Cannot fetch live portfolio data for strategy provider ${masterOrder.order_user_id}: ${redisError.message}`);
       }
 
-      // Get follower investment amount (their equity in copy trading)
-      const followerInvestment = parseFloat(follower.investment_amount || 0);
+      // If portfolio data is missing, wait briefly and try once more (portfolio might be recalculating)
+      if (!portfolioData || !portfolioData.equity) {
+        logger.info('Portfolio data missing, waiting for potential recalculation', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey
+        });
+        
+        // Wait 1 second for portfolio calculator to potentially update the key (increased from 500ms)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        try {
+          portfolioData = await redisCluster.hgetall(portfolioKey);
+          if (portfolioData && portfolioData.equity) {
+            logger.info('Portfolio data found after wait', {
+              strategyProviderId: masterOrder.order_user_id,
+              portfolioKey,
+              equity: portfolioData.equity
+            });
+          }
+        } catch (retryError) {
+          logger.warn('Retry fetch of portfolio data failed', {
+            strategyProviderId: masterOrder.order_user_id,
+            error: retryError.message
+          });
+        }
+      }
 
+      let masterEquity;
+      let equitySource;
+      
+      if (!portfolioData || !portfolioData.equity) {
+        // Enhanced fallback: Check Redis config for updated balance first, then DB wallet_balance
+        let configBalance = null;
+        try {
+          const configKey = `user:{strategy_provider:${masterOrder.order_user_id}}:config`;
+          const configData = await redisCluster.hgetall(configKey);
+          configBalance = parseFloat(configData.balance || configData.wallet_balance || 0);
+          
+          logger.info('Checking Redis config for updated balance', {
+            strategyProviderId: masterOrder.order_user_id,
+            configKey,
+            configBalance,
+            configFields: Object.keys(configData || {}),
+            rawConfigData: configData
+          });
+        } catch (configError) {
+          logger.warn('Failed to fetch config balance from Redis', {
+            strategyProviderId: masterOrder.order_user_id,
+            error: configError.message
+          });
+        }
+        
+        // Use config balance if available and valid, otherwise fallback to DB wallet_balance
+        masterEquity = (configBalance && configBalance > 0) ? configBalance : parseFloat(strategyProvider.wallet_balance || 0);
+        equitySource = (configBalance && configBalance > 0) ? 'redis_config_balance' : 'db_wallet_balance_fallback';
+        
+        logger.warn('No live equity data available in Redis portfolio, using enhanced fallback', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          portfolioData: portfolioData ? Object.keys(portfolioData) : null,
+          configBalance,
+          dbWalletBalance: strategyProvider.wallet_balance,
+          finalEquity: masterEquity,
+          equitySource
+        });
+        
+        if (masterEquity <= 0) {
+          throw new Error(`Strategy provider ${masterOrder.order_user_id} has no equity available (final equity: ${masterEquity}, source: ${equitySource})`);
+        }
+      } else {
+        masterEquity = parseFloat(portfolioData.equity);
+        equitySource = 'redis_portfolio';
+        
+        logger.info('Using live equity from Redis portfolio', {
+          strategyProviderId: masterOrder.order_user_id,
+          portfolioKey,
+          liveEquity: masterEquity,
+          portfolioFields: Object.keys(portfolioData),
+          portfolioLastUpdated: portfolioData.last_updated,
+          portfolioCalcStatus: portfolioData.calc_status
+        });
+      }
+      
+      // Get follower equity (prefer live portfolio equity, fallback to config/db wallet balance)
+      const followerPortfolioKey = `user_portfolio:{copy_follower:${follower.id}}`;
+      let followerPortfolioData;
+      try {
+        followerPortfolioData = await redisCluster.hgetall(followerPortfolioKey);
+      } catch (followerPortfolioError) {
+        logger.warn('Failed to fetch follower portfolio from Redis', {
+          copyFollowerId: follower.id,
+          followerPortfolioKey,
+          error: followerPortfolioError.message
+        });
+      }
+
+      if (!followerPortfolioData || !followerPortfolioData.equity) {
+        logger.info('Follower portfolio data missing, attempting fallback', {
+          copyFollowerId: follower.id,
+          followerPortfolioKey
+        });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+          const retryData = await redisCluster.hgetall(followerPortfolioKey);
+          if (retryData && retryData.equity) {
+            followerPortfolioData = retryData;
+            logger.info('Follower portfolio data found after retry', {
+              copyFollowerId: follower.id,
+              followerPortfolioKey,
+              equity: retryData.equity
+            });
+          }
+        } catch (retryError) {
+          logger.warn('Retry fetch of follower portfolio failed', {
+            copyFollowerId: follower.id,
+            error: retryError.message
+          });
+        }
+      }
+
+      let followerEquity;
+      let followerEquitySource;
+      if (followerPortfolioData && followerPortfolioData.equity) {
+        followerEquity = parseFloat(followerPortfolioData.equity);
+        followerEquitySource = 'redis_portfolio';
+      } else {
+        let configBalance = null;
+        try {
+          const followerConfigKey = `user:{copy_follower:${follower.id}}:config`;
+          const followerConfig = await redisCluster.hgetall(followerConfigKey);
+          configBalance = parseFloat(followerConfig.balance || followerConfig.wallet_balance || 0);
+          logger.info('Checking follower Redis config for balance', {
+            copyFollowerId: follower.id,
+            followerConfigKey,
+            configBalance,
+            configFields: followerConfig ? Object.keys(followerConfig) : []
+          });
+        } catch (followerConfigError) {
+          logger.warn('Failed to fetch follower config from Redis', {
+            copyFollowerId: follower.id,
+            error: followerConfigError.message
+          });
+        }
+
+        if (configBalance && configBalance > 0) {
+          followerEquity = configBalance;
+          followerEquitySource = 'redis_config_balance';
+        } else {
+          followerEquity = parseFloat(
+            follower.equity ?? follower.wallet_balance ?? follower.investment_amount ?? 0
+          );
+          followerEquitySource = 'db_account_balance_fallback';
+        }
+      }
+
+      if (!(followerEquity > 0)) {
+        throw new Error(
+          `Copy follower ${follower.id} has insufficient equity (${followerEquity})`
+        );
+      }
+      
       logger.info('Lot size calculation data', {
         strategyProviderId: masterOrder.order_user_id,
         strategyProvider: {
           id: strategyProvider.id,
           wallet_balance: strategyProvider.wallet_balance,
-          balanceSource: 'db_wallet_balance'
+          liveEquity: masterEquity,
+          equitySource: equitySource
         },
         follower: {
           id: follower.id,
-          investment_amount: follower.investment_amount,
-          followerInvestment: followerInvestment
+          equity: follower.equity,
+          wallet_balance: follower.wallet_balance,
+          followerEquity,
+          equitySource: followerEquitySource
         },
         masterOrder: {
           order_quantity: masterOrder.order_quantity
         }
       });
+      
+      if (masterEquity <= 0) {
+        throw new Error(`Master equity is zero or negative: live_equity=${masterEquity} from Redis portfolio`);
+      }
 
-      // Calculate basic ratio based on wallet balances
-      const ratio = followerInvestment / masterBalance;
+      // Calculate basic ratio
+      const ratio = followerEquity / masterEquity;
       const masterLotSize = parseFloat(masterOrder.order_quantity);
       let calculatedLotSize = masterLotSize * ratio;
 
@@ -898,8 +1070,8 @@ class CopyTradingService {
       logger.info('Lot size calculation data',{ finalLotSize: finalLotSize , calculatedLotSize: calculatedLotSize} );
 
       return {
-        masterEquity: masterBalance,
-        followerInvestment,
+        masterEquity,
+        followerEquity,
         ratio,
         masterLotSize,
         calculatedLotSize,
