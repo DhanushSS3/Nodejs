@@ -71,20 +71,41 @@ function removeConnection(userKey, ws) {
 }
 
 function closeOldestConnection(userKey) {
-  if (userConnections.has(userKey)) {
-    const connections = userConnections.get(userKey);
-    if (connections.length > 0) {
-      const oldestWs = connections[0]; // First connection is oldest
-      logger.info('Closing oldest WebSocket connection due to limit', {
-        userKey,
-        totalConnections: connections.length,
-        maxAllowed: MAX_CONNECTIONS_PER_USER
-      });
+  if (!userConnections.has(userKey)) {
+    return;
+  }
+
+  const connections = userConnections.get(userKey);
+  if (!connections || connections.length === 0) {
+    return;
+  }
+
+  const oldestWs = connections.shift(); // Removes first (oldest) connection
+  if (connections.length === 0) {
+    userConnections.delete(userKey);
+  }
+
+  const updatedCount = connections.length;
+  if (updatedCount === 0) {
+    userConnCounts.delete(userKey);
+  } else {
+    userConnCounts.set(userKey, updatedCount);
+  }
+
+  if (oldestWs) {
+    oldestWs._removedFromLimit = true;
+    logger.info('Closing oldest WebSocket connection due to limit', {
+      userKey,
+      totalConnections: updatedCount + 1,
+      maxAllowed: MAX_CONNECTIONS_PER_USER
+    });
+    try {
+      oldestWs.close(1000, 'Connection replaced by newer connection');
+    } catch (e) {
+      logger.warn('Failed to close oldest connection', { error: e.message, userKey });
       try {
-        oldestWs.close(1000, 'Connection replaced by newer connection');
-      } catch (e) {
-        logger.warn('Failed to close oldest connection', { error: e.message, userKey });
-      }
+        oldestWs.terminate();
+      } catch (_) {}
     }
   }
 }
@@ -367,8 +388,8 @@ function startPortfolioWSServer(server) {
     
     const userKey = getUserKey(userType, userId);
 
-    // Check connection limit and close oldest if needed
-    const currentCount = userConnCounts.get(userKey) || 0;
+    // Check connection limit and close oldest connections if needed
+    let currentCount = userConnCounts.get(userKey) || 0;
     if (currentCount >= MAX_CONNECTIONS_PER_USER) {
       logger.info('WebSocket connection limit reached, closing oldest connection', { 
         userId, 
@@ -376,7 +397,9 @@ function startPortfolioWSServer(server) {
         currentConnections: currentCount, 
         maxAllowed: MAX_CONNECTIONS_PER_USER 
       });
-      closeOldestConnection(userKey);
+      while ((userConnCounts.get(userKey) || 0) >= MAX_CONNECTIONS_PER_USER) {
+        closeOldestConnection(userKey);
+      }
     }
 
     // Add new connection
@@ -387,7 +410,9 @@ function startPortfolioWSServer(server) {
     let alive = true;
     ws.on('close', () => {
       alive = false;
-      removeConnection(userKey, ws);
+      if (!ws._removedFromLimit) {
+        removeConnection(userKey, ws);
+      }
       logger.info('WS portfolio closed', { 
         userId, 
         userType, 

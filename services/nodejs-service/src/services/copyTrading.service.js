@@ -1047,13 +1047,22 @@ class CopyTradingService {
       }
 
       // Calculate basic ratio
+      const floorLotSize = (value) => {
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+          return 0;
+        }
+        return Math.floor(value * 100) / 100;
+      };
+
       const ratio = followerEquity / masterEquity;
       const masterLotSize = parseFloat(masterOrder.order_quantity);
       let calculatedLotSize = masterLotSize * ratio;
+      calculatedLotSize = floorLotSize(calculatedLotSize);
 
       // Apply follower's max lot size limit
       if (follower.max_lot_size && calculatedLotSize > follower.max_lot_size) {
         calculatedLotSize = parseFloat(follower.max_lot_size);
+        calculatedLotSize = floorLotSize(calculatedLotSize);
       }
 
       // Get group min/max lot constraints
@@ -1065,6 +1074,7 @@ class CopyTradingService {
       if (finalLotSize > groupConstraints.maxLot) {
         finalLotSize = groupConstraints.maxLot;
       }
+      finalLotSize = floorLotSize(finalLotSize);
 
 
       logger.info('Lot size calculation data',{ finalLotSize: finalLotSize , calculatedLotSize: calculatedLotSize} );
