@@ -429,14 +429,14 @@ class StrategyProviderService {
         return { eligible: false, reason: 'Strategy not found' };
       }
       
-      // Private strategy requirements: Only equity > $100
+      // Private strategy requirements: Only wallet balance > $100
       const minEquity = 100.00;
-      const currentEquity = parseFloat(strategyProvider.equity || 0);
+      const currentEquity = parseFloat(strategyProvider.wallet_balance || 0);
       
       if (currentEquity < minEquity) {
         return { 
           eligible: false, 
-          reason: `Minimum equity of $${minEquity} required. Current equity: $${currentEquity.toFixed(2)}`,
+          reason: `Minimum wallet balance of $${minEquity} required. Current balance: $${currentEquity.toFixed(2)}`,
           requirements: {
             min_equity: minEquity,
             current_equity: currentEquity
