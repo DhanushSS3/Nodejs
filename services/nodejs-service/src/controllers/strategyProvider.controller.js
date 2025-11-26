@@ -1824,6 +1824,7 @@ async function getCopyFollowerInvestments(req, res) {
 }
 
 module.exports = {
+  archiveStrategyProviderAccount,
   createStrategyProviderAccount,
   getStrategyProviderAccount,
   getUserStrategyProviderAccounts,

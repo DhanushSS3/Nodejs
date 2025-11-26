@@ -3797,16 +3797,9 @@ module.exports = {
   addTakeProfitToOrder,
   cancelStopLossFromOrder,
   cancelTakeProfitFromOrder,
-  modifyStopLoss,
-  modifyTakeProfit,
   placeStrategyProviderPendingOrder,
-  cancelStrategyProviderPendingOrder,
-  placeCopyFollowerOrder,
   addStopLossToCopyFollowerOrder,
   addTakeProfitToCopyFollowerOrder,
-  cancelCopyFollowerPendingOrder,
-  modifyCopyFollowerStopLoss,
-  modifyCopyFollowerTakeProfit,
   closeStrategyProviderOrderInternal,
   cancelStrategyProviderOrderInternal
 };
