@@ -417,7 +417,12 @@ async function getUserStrategyProviderAccounts(req, res) {
       });
     }
     
-    const strategyProviders = await strategyProviderService.getUserStrategyProviderAccounts(userId);
+    const rawStrategyProviders = await strategyProviderService.getUserStrategyProviderAccounts(userId);
+    const strategyProviders = rawStrategyProviders.map((sp) => ({
+      ...sp,
+      is_archived: Boolean(sp.is_archived),
+      archived_at: sp.archived_at || null
+    }));
     
     return res.status(200).json({
       success: true,
@@ -740,9 +745,7 @@ async function switchToStrategyProvider(req, res) {
     const strategyProvider = await StrategyProviderAccount.findOne({
       where: {
         id: strategyProviderId,
-        user_id: userId,
-        status: 1,
-        is_active: 1
+        user_id: userId
       },
       include: [
         {
@@ -759,6 +762,20 @@ async function switchToStrategyProvider(req, res) {
       return res.status(404).json({
         success: false,
         message: 'Strategy provider account not found or you do not have access'
+      });
+    }
+
+    if (strategyProvider.is_archived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Strategy provider account is archived and cannot be switched into'
+      });
+    }
+
+    if (strategyProvider.status !== 1 || strategyProvider.is_active !== 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Strategy provider account is inactive and cannot be switched into'
       });
     }
 
