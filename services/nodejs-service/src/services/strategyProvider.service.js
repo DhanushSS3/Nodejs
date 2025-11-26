@@ -301,7 +301,8 @@ class StrategyProviderService {
           access_link: accessLink,
           visibility: 'private',
           status: 1,
-          is_active: 1
+          is_active: 1,
+          is_archived: false
         },
         include: [{
           model: LiveUser,
@@ -366,7 +367,8 @@ class StrategyProviderService {
           access_link: accessLink,
           visibility: 'private',
           status: 1,
-          is_active: 1
+          is_active: 1,
+          is_archived: false
         },
         include: [{
           model: LiveUser,
@@ -882,6 +884,7 @@ class StrategyProviderService {
       const whereConditions = {
         status: 1,
         is_active: 1,
+        is_archived: false,
         visibility: 'public',
         [Op.or]: [
           { is_catalog_eligible: true },     // Normal eligible accounts

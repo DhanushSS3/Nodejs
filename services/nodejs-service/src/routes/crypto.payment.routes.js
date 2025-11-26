@@ -16,6 +16,8 @@ const router = express.Router();
  *         - baseCurrency
  *         - settledCurrency
  *         - networkSymbol
+ *         - user_id
+ *         - user_type
  *       properties:
  *         baseAmount:
  *           type: string
@@ -35,8 +37,13 @@ const router = express.Router();
  *           example: "BSC"
  *         user_id:
  *           type: string
- *           description: Live user ID (optional if authenticated)
+ *           description: Target account ID (live, strategy provider, or copy follower)
  *           example: "4"
+ *         user_type:
+ *           type: string
+ *           description: Type of target account
+ *           enum: [live, strategy_provider, copy_follower]
+ *           example: "strategy_provider"
  *         customerName:
  *           type: string
  *           description: Optional customer name

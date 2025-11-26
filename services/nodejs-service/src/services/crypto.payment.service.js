@@ -1,4 +1,4 @@
-const { CryptoPayment, UserTransaction, LiveUser } = require('../models');
+const { CryptoPayment, UserTransaction, LiveUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 const sequelize = require('../config/db');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -13,6 +13,30 @@ class CryptoPaymentService {
     this.apiKey = process.env.TLP_API_KEY;
     this.apiSecret = process.env.TLP_API_SECRET;
     this.callbackUrl = process.env.TLP_CALLBACK_URL || 'https://livefxhubv2.livefxhub.com/api/crypto-payments/webhook';
+  }
+
+  getAccountModel(userType = 'live') {
+    switch ((userType || 'live').toLowerCase()) {
+      case 'strategy_provider':
+        return StrategyProviderAccount;
+      case 'copy_follower':
+        return CopyFollowerAccount;
+      case 'live':
+      default:
+        return LiveUser;
+    }
+  }
+
+  async findAccount(userType = 'live', userId, options = {}) {
+    const Model = this.getAccountModel(userType);
+    if (!Model) {
+      return null;
+    }
+    const parsedId = parseInt(userId, 10);
+    if (Number.isNaN(parsedId)) {
+      return null;
+    }
+    return Model.findByPk(parsedId, options);
   }
 
   /**
@@ -74,12 +98,14 @@ class CryptoPaymentService {
     const startTime = Date.now();
     
     try {
-      const { user_id, baseAmount, baseCurrency, settledCurrency, networkSymbol, customerName, comments, _ip, _userAgent } = paymentData;
+      const { user_id, user_type, initiator_user_id, initiator_user_type, baseAmount, baseCurrency, settledCurrency, networkSymbol, customerName, comments, _ip, _userAgent } = paymentData;
 
       // Validate required fields
-      if (!user_id || !baseAmount || !baseCurrency || !settledCurrency || !networkSymbol) {
+      if (!user_id || !user_type || !baseAmount || !baseCurrency || !settledCurrency || !networkSymbol) {
         throw new Error('Missing required payment fields');
       }
+
+      const normalizedUserType = user_type.toString().toLowerCase();
 
       // Generate unique merchant order ID
       const merchantOrderId = CryptoPayment.generateMerchantOrderId();
@@ -114,6 +140,7 @@ class CryptoPaymentService {
       logger.info('Creating Tylt payment request', { 
         merchantOrderId, 
         userId: user_id, 
+        userType: normalizedUserType,
         amount: baseAmount, 
         currency: baseCurrency 
       });
@@ -154,6 +181,9 @@ class CryptoPaymentService {
       // Save payment record to database
       const cryptoPayment = await CryptoPayment.create({
         userId: parseInt(user_id),
+        userType: normalizedUserType,
+        initiatorUserId: initiator_user_id ? parseInt(initiator_user_id) : null,
+        initiatorUserType: initiator_user_type || null,
         merchantOrderId,
         orderId: tyltData.orderId, // Store Tylt's order ID
         baseAmount: parseFloat(baseAmount),
@@ -229,6 +259,7 @@ class CryptoPaymentService {
       logger.error('Error creating crypto payment deposit', { 
         error: error.message, 
         userId: paymentData.user_id,
+        userType: paymentData.user_type,
         stack: error.stack 
       });
 
@@ -361,14 +392,16 @@ class CryptoPaymentService {
       const internalStatus = this.mapTyltStatusToInternal(status);
       
       // Get user's current wallet balance for logging
-      const user = await LiveUser.findByPk(payment.userId, { transaction });
+      const paymentUserType = payment.userType || 'live';
+      const user = await this.findAccount(paymentUserType, payment.userId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!user) {
         logger.error('User not found for payment', {
           paymentId: payment.id,
           userId: payment.userId,
+          userType: paymentUserType,
           merchantOrderId
         });
-        throw new Error(`User not found with ID: ${payment.userId}`);
+        throw new Error(`${paymentUserType} user not found with ID: ${payment.userId}`);
       }
       
       const previousWalletBalance = parseFloat(user.wallet_balance) || 0;
@@ -418,6 +451,7 @@ class CryptoPaymentService {
           where: {
             reference_id: referenceIdentifier,
             user_id: payment.userId,
+            user_type: paymentUserType,
             type: 'deposit'
           },
           transaction
@@ -455,6 +489,7 @@ class CryptoPaymentService {
 
           const creditResult = await this.creditUserWallet(
             payment.userId,
+            paymentUserType,
             parseFloat(baseAmountReceived),
             webhookData,
             transaction,
@@ -468,6 +503,7 @@ class CryptoPaymentService {
           logger.info('Wallet credit successful', {
             merchantOrderId,
             userId: payment.userId,
+            userType: paymentUserType,
             amount: walletCreditAmount,
             transactionId,
             newBalance: newWalletBalance
@@ -647,14 +683,14 @@ class CryptoPaymentService {
    * @param {Object} webhookData - Webhook data for reference
    * @param {Object} transaction - Database transaction
    */
-  async creditUserWallet(userId, amount, webhookData, transaction, referenceIdentifier = null) {
+  async creditUserWallet(userId, userType = 'live', amount, webhookData, transaction, referenceIdentifier = null) {
     try {
       // Find live user (crypto deposits only for live users)
-      const user = await LiveUser.findByPk(userId, { transaction });
-      const userType = 'live';
+      const AccountModel = this.getAccountModel(userType);
+      const user = await AccountModel.findByPk(userId, { transaction, lock: transaction.LOCK.UPDATE });
       
       if (!user) {
-        throw new Error(`Live user not found with ID: ${userId}`);
+        throw new Error(`${userType} user not found with ID: ${userId}`);
       }
 
       // Get current wallet balance
@@ -699,13 +735,15 @@ class CryptoPaymentService {
           depositAddress: webhookData.depositAddress,
           transactionHash: webhookData.transactions?.[0]?.transactionHash,
           commission: webhookData.commission,
+          initiatorUserId: webhookData.initiatorUserId || null,
+          initiatorUserType: webhookData.initiatorUserType || null,
           webhookReceivedAt: new Date().toISOString()
         }
       }, { transaction });
 
       // Update Redis user cache with new wallet balance
       try {
-        await redisUserCache.updateUser('live', userId, {
+        await redisUserCache.updateUser(userType, userId, {
           wallet_balance: newBalance
         });
         logger.info('Redis user cache updated after wallet credit', {

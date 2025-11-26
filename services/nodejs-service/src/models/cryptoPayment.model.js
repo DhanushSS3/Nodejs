@@ -13,6 +13,22 @@ const CryptoPayment = sequelize.define('CryptoPayment', {
     allowNull: false,
     comment: 'ID of the user making the payment',
   },
+  userType: {
+    type: DataTypes.ENUM('live', 'strategy_provider', 'copy_follower'),
+    allowNull: false,
+    defaultValue: 'live',
+    comment: 'Type of account receiving the credit',
+  },
+  initiatorUserId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: 'User/account ID that initiated the deposit (if different)',
+  },
+  initiatorUserType: {
+    type: DataTypes.ENUM('live', 'strategy_provider'),
+    allowNull: true,
+    comment: 'Account type of the initiator',
+  },
   merchantOrderId: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -98,6 +114,14 @@ const CryptoPayment = sequelize.define('CryptoPayment', {
     {
       fields: ['userId'],
       name: 'idx_crypto_payments_user_id',
+    },
+    {
+      fields: ['userType'],
+      name: 'idx_crypto_payments_user_type',
+    },
+    {
+      fields: ['initiatorUserId'],
+      name: 'idx_crypto_payments_initiator_user_id',
     },
     {
       fields: ['merchantOrderId'],
