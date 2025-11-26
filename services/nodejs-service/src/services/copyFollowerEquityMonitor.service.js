@@ -319,15 +319,18 @@ class CopyFollowerEquityMonitorService {
    * @param {number} copyFollowerAccountId - Copy follower account ID
    * @returns {Object} Close orders result
    */
-  static async closeAllCopyFollowerOrders(copyFollowerAccountId) {
+  static async closeAllCopyFollowerOrders(copyFollowerAccountId, options = {}) {
     try {
       const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+      const allowedStatuses = (options.allowedStatuses && options.allowedStatuses.length > 0)
+        ? options.allowedStatuses
+        : ['OPEN', 'PARTIALLY_FILLED'];
       
       // Get all open orders for this copy follower account
       const openOrders = await CopyFollowerOrder.findAll({
         where: {
           copy_follower_account_id: copyFollowerAccountId,
-          order_status: ['OPEN', 'PARTIALLY_FILLED']
+          order_status: allowedStatuses
         }
       });
 
@@ -422,10 +425,12 @@ class CopyFollowerEquityMonitorService {
    * @param {number} copyFollowerAccountId - Copy follower account ID
    * @returns {Object} Cancel orders result
    */
-  static async cancelAllPendingCopyFollowerOrders(copyFollowerAccountId) {
+  static async cancelAllPendingCopyFollowerOrders(copyFollowerAccountId, options = {}) {
     try {
       const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
-      const pendingStatuses = ['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL', 'QUEUED'];
+      const pendingStatuses = (options.allowedStatuses && options.allowedStatuses.length > 0)
+        ? options.allowedStatuses
+        : ['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL', 'QUEUED'];
 
       const pendingOrders = await CopyFollowerOrder.findAll({
         where: {

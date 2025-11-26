@@ -71,6 +71,347 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+async function determineStrategyProviderFlow(strategyProviderId) {
+  try {
+    const userCfgKey = `user:{strategy_provider:${strategyProviderId}}:config`;
+    const ucfg = await redisCluster.hgetall(userCfgKey);
+    const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+    return so === 'barclays';
+  } catch (error) {
+    logger.warn('Failed to determine strategy provider execution flow', {
+      strategyProviderId,
+      error: error.message
+    });
+    return false;
+  }
+}
+
+async function closeStrategyProviderOrderInternal({
+  strategyAccount,
+  order,
+  providedClosePrice,
+  closeMessage = 'User closed',
+  initiator = 'system',
+  operationId = `strategy_provider_close_${order.order_id}`
+}) {
+  const strategyProviderId = strategyAccount.id;
+  const order_id = order.order_id;
+  const isProviderFlow = await determineStrategyProviderFlow(strategyProviderId);
+
+  const close_id = await idGenerator.generateOrderId();
+  let stoploss_cancel_id = null;
+  let takeprofit_cancel_id = null;
+
+  if (order.stop_loss) {
+    stoploss_cancel_id = await idGenerator.generateOrderId();
+  }
+  if (order.take_profit) {
+    takeprofit_cancel_id = await idGenerator.generateOrderId();
+  }
+
+  try {
+    if (close_id) {
+      await orderLifecycleService.addLifecycleId(order_id, 'close_id', close_id);
+    }
+    if (stoploss_cancel_id) {
+      await orderLifecycleService.addLifecycleId(order_id, 'stoploss_cancel_id', stoploss_cancel_id);
+    }
+    if (takeprofit_cancel_id) {
+      await orderLifecycleService.addLifecycleId(order_id, 'takeprofit_cancel_id', takeprofit_cancel_id);
+    }
+  } catch (error) {
+    logger.warn('Failed to persist lifecycle ids before close', {
+      order_id,
+      error: error.message
+    });
+  }
+
+  try {
+    const odKey = `order_data:${order_id}`;
+    await redisCluster.hset(odKey, {
+      order_id: String(order_id),
+      user_type: 'strategy_provider',
+      user_id: String(strategyProviderId),
+      symbol: order.symbol,
+      order_type: order.order_type,
+      order_status: order.order_status,
+      status: order.status || 'OPEN',
+      order_price: String(order.order_price),
+      order_quantity: String(order.order_quantity),
+      close_id: String(close_id),
+      sending_orders: isProviderFlow ? 'barclays' : 'rock'
+    });
+  } catch (error) {
+    logger.warn('Failed to store order data in Redis before close', {
+      order_id,
+      error: error.message
+    });
+  }
+
+  try {
+    const userCfgKey = `user:{strategy_provider:${strategyProviderId}}:config`;
+    const existingConfig = await redisCluster.hgetall(userCfgKey);
+    const desiredFlow = isProviderFlow ? 'barclays' : 'rock';
+    if (!existingConfig.sending_orders || existingConfig.sending_orders !== desiredFlow) {
+      await redisCluster.hset(userCfgKey, {
+        sending_orders: desiredFlow,
+        user_type: 'strategy_provider',
+        user_id: String(strategyProviderId),
+        group: strategyAccount.group || 'Standard',
+        last_updated: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    logger.warn('Failed to update strategy provider config in Redis before close', {
+      strategyProviderId,
+      error: error.message
+    });
+  }
+
+  try {
+    const contextKey = `close_context:${order_id}`;
+    const contextValue = {
+      context: 'USER_CLOSED',
+      initiator,
+      timestamp: new Date().toISOString()
+    };
+    await redisCluster.set(contextKey, JSON.stringify(contextValue), 'EX', 300);
+  } catch (error) {
+    logger.warn('Failed to set close context for strategy provider order', {
+      order_id,
+      error: error.message
+    });
+  }
+
+  const pyPayload = {
+    symbol: order.symbol,
+    order_type: order.order_type,
+    user_id: strategyProviderId.toString(),
+    user_type: 'strategy_provider',
+    order_id,
+    status: 'CLOSED',
+    order_status: 'CLOSED',
+    close_id,
+    order_quantity: parseFloat(order.order_quantity),
+    close_message: closeMessage
+  };
+
+  if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
+  if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
+  if (isProviderFlow && !Number.isNaN(providedClosePrice) && providedClosePrice > 0) {
+    pyPayload.close_price = providedClosePrice;
+  }
+
+  const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+  const pyResp = await pythonServiceAxios.post(
+    `${baseUrl}/api/orders/close`,
+    pyPayload,
+    { timeout: 20000 }
+  );
+
+  const result = pyResp.data?.data || {};
+  const flow = result.flow;
+  const finalClosePrice = (flow === 'provider' && providedClosePrice) ? providedClosePrice : result.close_price;
+
+  await order.update({
+    order_status: 'CLOSED',
+    close_price: finalClosePrice,
+    net_profit: result.net_profit || 0,
+    commission: result.total_commission || 0,
+    swap: result.swap || 0,
+    copy_distribution_status: 'pending',
+    copy_distribution_completed_at: null,
+    close_message: closeMessage
+  });
+
+  if (flow === 'local' || !flow) {
+    await handleLocalFlowPostClose(result, order, strategyProviderId, order_id, operationId);
+  } else {
+    logger.info('Provider flow close initiated, waiting for worker confirmation', {
+      order_id,
+      flow,
+      operationId
+    });
+  }
+
+  setImmediate(async () => {
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await StrategyProviderStatsService.updateStatisticsAfterOrderClose(strategyProviderId, order_id);
+    } catch (error) {
+      logger.error('Failed to update strategy provider statistics after order close', {
+        strategyProviderId,
+        orderId: order_id,
+        error: error.message
+      });
+    }
+  });
+
+  return {
+    order_id,
+    flow,
+    result
+  };
+}
+
+async function cancelStrategyProviderOrderInternal({
+  strategyAccount,
+  order,
+  cancelMessage = 'User cancelled pending order',
+  initiator = 'system'
+}) {
+  const strategyProviderId = strategyAccount.id;
+  const order_id = order.order_id;
+  const symbol = order.symbol;
+  const order_type = order.order_type;
+  const user_type = 'strategy_provider';
+  const user_id = strategyProviderId.toString();
+
+  const isProviderFlow = await determineStrategyProviderFlow(strategyProviderId);
+
+  if (!isProviderFlow) {
+    try {
+      await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, order_id);
+      await redisCluster.del(`pending_orders:${order_id}`);
+    } catch (error) {
+      logger.warn('Failed to remove pending order data from Redis during cancel', {
+        order_id,
+        error: error.message
+      });
+    }
+
+    try {
+      const tag = `${user_type}:${user_id}`;
+      const idx = `user_orders_index:{${tag}}`;
+      const h = `user_holdings:{${tag}}:${order_id}`;
+      const pipeline = redisCluster.pipeline();
+      pipeline.srem(idx, order_id);
+      pipeline.del(h);
+      await pipeline.exec();
+      await redisCluster.del(`order_data:${order_id}`);
+    } catch (error) {
+      logger.warn('Failed to clean user holdings for pending cancel', {
+        order_id,
+        error: error.message
+      });
+    }
+
+    await order.update({
+      order_status: 'CANCELLED',
+      copy_distribution_status: 'failed',
+      close_message: cancelMessage
+    });
+
+    await copyTradingService.processStrategyProviderOrderUpdate(order);
+
+    try {
+      portfolioEvents.emitUserUpdate(user_type, user_id, {
+        type: 'order_update',
+        order_id,
+        update: { order_status: 'CANCELLED' },
+        reason: 'local_pending_cancel'
+      });
+      portfolioEvents.emitUserUpdate(user_type, user_id, {
+        type: 'pending_cancelled',
+        order_id,
+        reason: 'local_pending_cancel'
+      });
+    } catch (error) {
+      logger.warn('Failed to emit portfolio event after local pending cancel', {
+        order_id,
+        error: error.message
+      });
+    }
+
+    return {
+      httpStatus: 200,
+      body: {
+        success: true,
+        order_id,
+        order_status: 'CANCELLED',
+        message: cancelMessage
+      }
+    };
+  }
+
+  const cancel_id = await idGenerator.generateCancelOrderId();
+
+  await order.update({
+    cancel_id,
+    order_status: 'PENDING-CANCEL',
+    copy_distribution_status: 'distributing',
+    close_message: cancelMessage
+  });
+
+  try {
+    const tag = `${user_type}:${user_id}`;
+    const h = `user_holdings:{${tag}}:${order_id}`;
+    const od = `order_data:${order_id}`;
+    await redisCluster.hset(h, 'cancel_id', String(cancel_id));
+    await redisCluster.hset(od, 'cancel_id', String(cancel_id));
+    await redisCluster.hset(h, 'status', 'PENDING-CANCEL');
+    await redisCluster.hset(od, 'status', 'PENDING-CANCEL');
+  } catch (error) {
+    logger.warn('Failed to mirror cancel status in Redis for provider flow', {
+      order_id,
+      error: error.message
+    });
+  }
+
+  try {
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    pythonServiceAxios.post(
+      `${baseUrl}/api/orders/registry/lifecycle-id`,
+      { order_id, new_id: cancel_id, id_type: 'cancel_id' }
+    ).catch(() => {});
+  } catch (error) {
+    logger.warn('Failed to register cancel lifecycle id for provider flow', {
+      order_id,
+      error: error.message
+    });
+  }
+
+  try {
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    const pyPayload = {
+      order_id,
+      cancel_id,
+      order_type,
+      user_id,
+      user_type,
+      status: 'CANCELLED',
+      symbol
+    };
+    pythonServiceAxios.post(
+      `${baseUrl}/api/orders/pending/cancel`,
+      pyPayload
+    ).catch(error => {
+      logger.error('Python pending cancel failed for strategy provider', {
+        order_id,
+        error: error.message
+      });
+    });
+  } catch (error) {
+    logger.error('Failed to dispatch provider pending cancel', {
+      order_id,
+      error: error.message
+    });
+  }
+
+  await copyTradingService.processStrategyProviderOrderUpdate(order);
+
+  return {
+    httpStatus: 202,
+    body: {
+      success: true,
+      order_id,
+      order_status: 'PENDING-CANCEL',
+      cancel_id,
+      message: 'Cancel request submitted successfully'
+    }
+  };
+}
+
 /**
  * Validate strategy provider order payload
  */
@@ -3447,7 +3788,6 @@ async function addTakeProfitToCopyFollowerOrder(req, res) {
 
 module.exports = {
   placeStrategyProviderOrder,
-  placeStrategyProviderPendingOrder,
   getStrategyProviderOrders,
   closeStrategyProviderOrder,
   getCopyFollowerOrders,
@@ -3457,6 +3797,16 @@ module.exports = {
   addTakeProfitToOrder,
   cancelStopLossFromOrder,
   cancelTakeProfitFromOrder,
+  modifyStopLoss,
+  modifyTakeProfit,
+  placeStrategyProviderPendingOrder,
+  cancelStrategyProviderPendingOrder,
+  placeCopyFollowerOrder,
   addStopLossToCopyFollowerOrder,
-  addTakeProfitToCopyFollowerOrder
+  addTakeProfitToCopyFollowerOrder,
+  cancelCopyFollowerPendingOrder,
+  modifyCopyFollowerStopLoss,
+  modifyCopyFollowerTakeProfit,
+  closeStrategyProviderOrderInternal,
+  cancelStrategyProviderOrderInternal
 };

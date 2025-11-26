@@ -1,5 +1,6 @@
 const strategyProviderService = require('../services/strategyProvider.service');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const LiveUser = require('../models/liveUser.model');
 const UserTransaction = require('../models/userTransaction.model');
@@ -8,6 +9,13 @@ const logger = require('../services/logger.service');
 const redisUserCache = require('../services/redis.user.cache.service');
 const { Op } = require('sequelize');
 const sequelize = require('../config/db');
+const copyTradingService = require('../services/copyTrading.service');
+const copyTradingRedisService = require('../services/copyTradingRedis.service');
+const CopyFollowerEquityMonitorService = require('../services/copyFollowerEquityMonitor.service');
+const {
+  closeStrategyProviderOrderInternal,
+  cancelStrategyProviderOrderInternal
+} = require('./copyTrading.orders.controller');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -18,6 +26,157 @@ const JWT_SECRET = process.env.JWT_SECRET;
  */
 function getUserId(user) {
   return user?.sub || user?.user_id || user?.id;
+}
+
+/**
+ * Archive strategy provider account
+ * POST /api/strategy-providers/:id/archive
+ */
+async function archiveStrategyProviderAccount(req, res) {
+  const strategyProviderId = parseInt(req.params.id, 10);
+  const userId = getUserId(req.user);
+
+  if (!strategyProviderId || Number.isNaN(strategyProviderId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid strategy provider ID'
+    });
+  }
+
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required'
+    });
+  }
+
+  const strategyProvider = await StrategyProviderAccount.findOne({
+    where: {
+      id: strategyProviderId,
+      user_id: userId
+    }
+  });
+
+  if (!strategyProvider) {
+    return res.status(404).json({
+      success: false,
+      message: 'Strategy provider account not found'
+    });
+  }
+
+  if (strategyProvider.is_archived) {
+    return res.status(400).json({
+      success: false,
+      message: 'Strategy provider account already archived'
+    });
+  }
+
+  try {
+    // Load all active copy followers for this strategy
+    const followers = await CopyFollowerAccount.findAll({
+      where: {
+        strategy_provider_id: strategyProviderId,
+        status: 1,
+        is_active: 1
+      },
+      transaction
+    });
+
+    // Close/cancel copy follower activity using existing helpers with strict status filters
+    for (const follower of followers) {
+      const closeResult = await CopyFollowerEquityMonitorService.closeAllCopyFollowerOrders(follower.id, {
+        allowedStatuses: ['OPEN']
+      });
+      if (!closeResult.success || (closeResult.errors && closeResult.errors.length)) {
+        throw new Error(`Failed to close copy follower orders for follower ${follower.id}`);
+      }
+
+      const cancelResult = await CopyFollowerEquityMonitorService.cancelAllPendingCopyFollowerOrders(follower.id, {
+        allowedStatuses: ['PENDING']
+      });
+      if (!cancelResult.success || (cancelResult.errors && cancelResult.errors.length)) {
+        throw new Error(`Failed to cancel pending copy follower orders for follower ${follower.id}`);
+      }
+
+      await CopyFollowerAccount.update({
+        copy_status: 'stopped',
+        status: 0,
+        is_active: 0,
+        stop_reason: 'strategy_archived'
+      }, {
+        where: { id: follower.id }
+      });
+
+      await copyTradingRedisService.cleanupCopyTradingRelationship(strategyProviderId, follower.id);
+    }
+
+    // Cancel pending strategy provider orders (PENDING only)
+    const pendingOrders = await StrategyProviderOrder.findAll({
+      where: {
+        order_user_id: strategyProviderId,
+        order_status: 'PENDING'
+      }
+    });
+
+    for (const order of pendingOrders) {
+      await cancelStrategyProviderOrderInternal({
+        strategyAccount: strategyProvider,
+        order,
+        cancelMessage: 'Strategy archived',
+        initiator: 'strategy_archive_flow'
+      });
+    }
+
+    // Close open strategy provider orders (OPEN only)
+    const openOrders = await StrategyProviderOrder.findAll({
+      where: {
+        order_user_id: strategyProviderId,
+        order_status: 'OPEN'
+      }
+    });
+
+    for (const order of openOrders) {
+      await closeStrategyProviderOrderInternal({
+        strategyAccount: strategyProvider,
+        order,
+        closeMessage: 'Strategy archived',
+        initiator: 'strategy_archive_flow'
+      });
+    }
+
+    // Final archival updates performed atomically
+    await sequelize.transaction(async (transaction) => {
+      await StrategyProviderAccount.update({
+        status: 0,
+        is_active: 0,
+        is_archived: true,
+        archived_at: new Date(),
+        sending_orders: 'disabled',
+        total_followers: 0,
+        total_investment: 0
+      }, {
+        where: { id: strategyProviderId },
+        transaction
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Strategy provider account archived successfully'
+    });
+  } catch (error) {
+    logger.error('Failed to archive strategy provider account', {
+      userId,
+      strategyProviderId,
+      error: error.message
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to archive strategy provider account',
+      error: error.message
+    });
+  }
 }
 
 /**

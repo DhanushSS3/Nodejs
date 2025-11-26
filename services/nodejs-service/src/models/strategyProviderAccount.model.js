@@ -139,6 +139,17 @@ const StrategyProviderAccount = sequelize.define('StrategyProviderAccount', {
       max: 90.00
     }
   },
+
+  // Archival Tracking
+  is_archived: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  archived_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
   
   // Catalog Eligibility (Exness requirements)
   is_catalog_eligible: { 

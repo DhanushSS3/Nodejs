@@ -770,6 +770,7 @@ router.post('/', (req, res, next) => {
 router.get('/', strategyProviderController.getUserStrategyProviderAccounts);
 router.get('/performance-fee-earnings', strategyProviderController.getPerformanceFeeEarnings);
 router.get('/copy-follower-investments', strategyProviderController.getCopyFollowerInvestments);
+router.post('/:id/archive', strategyProviderController.archiveStrategyProviderAccount);
 router.get('/:id', strategyProviderController.getStrategyProviderAccount);
 router.get('/:id/catalog-eligibility', strategyProviderController.checkCatalogEligibility);
 
