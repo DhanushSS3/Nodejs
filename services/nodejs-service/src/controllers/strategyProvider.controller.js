@@ -1624,10 +1624,9 @@ async function getCopyFollowerInvestments(req, res) {
       const strategyAccount = await StrategyProviderAccount.findOne({
         where: {
           id: parsedStrategyId,
-          user_id: userId,
-          status: 1,
-          is_active: 1
-        }
+          user_id: userId
+        },
+        attributes: ['id', 'status', 'is_active']
       });
       
       if (!strategyAccount) {
