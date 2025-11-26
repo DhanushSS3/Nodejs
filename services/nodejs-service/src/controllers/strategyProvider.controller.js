@@ -78,8 +78,7 @@ async function archiveStrategyProviderAccount(req, res) {
         strategy_provider_id: strategyProviderId,
         status: 1,
         is_active: 1
-      },
-      transaction
+      }
     });
 
     // Close/cancel copy follower activity using existing helpers with strict status filters
