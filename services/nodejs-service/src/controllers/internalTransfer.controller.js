@@ -73,14 +73,14 @@ class InternalTransferController {
       }
 
       // Validate account IDs for non-main accounts
-      if (fromAccountType !== 'main' && !fromAccountId) {
+      if (fromAccountType !== 'live' && !fromAccountId) {
         return res.status(400).json({
           success: false,
           message: 'fromAccountId is required for non-main accounts'
         });
       }
 
-      if (toAccountType !== 'main' && !toAccountId) {
+      if (toAccountType !== 'live' && !toAccountId) {
         return res.status(400).json({
           success: false,
           message: 'toAccountId is required for non-main accounts'
@@ -90,9 +90,9 @@ class InternalTransferController {
       // For main account, use userId as accountId
       const transferData = {
         fromAccountType,
-        fromAccountId: fromAccountType === 'main' ? userId : fromAccountId,
+        fromAccountId: fromAccountType === 'live' ? userId : fromAccountId,
         toAccountType,
-        toAccountId: toAccountType === 'main' ? userId : toAccountId,
+        toAccountId: toAccountType === 'live' ? userId : toAccountId,
         amount: parseFloat(amount)
       };
 
@@ -175,14 +175,14 @@ class InternalTransferController {
       }
 
       // Validate account IDs for non-main accounts
-      if (fromAccountType !== 'main' && !fromAccountId) {
+      if (fromAccountType !== 'live' && !fromAccountId) {
         return res.status(400).json({
           success: false,
           message: 'fromAccountId is required for non-main accounts'
         });
       }
 
-      if (toAccountType !== 'main' && !toAccountId) {
+      if (toAccountType !== 'live' && !toAccountId) {
         return res.status(400).json({
           success: false,
           message: 'toAccountId is required for non-main accounts'
@@ -201,9 +201,9 @@ class InternalTransferController {
       // For main account, use userId as accountId
       const transferData = {
         fromAccountType,
-        fromAccountId: fromAccountType === 'main' ? userId : fromAccountId,
+        fromAccountId: fromAccountType === 'live' ? userId : fromAccountId,
         toAccountType,
-        toAccountId: toAccountType === 'main' ? userId : toAccountId,
+        toAccountId: toAccountType === 'live' ? userId : toAccountId,
         amount: transferAmount,
         notes: notes || ''
       };
@@ -313,7 +313,7 @@ class InternalTransferController {
       const { accountType, accountId } = req.params;
 
       // For main account, use userId as accountId
-      const actualAccountId = accountType === 'main' ? userId : parseInt(accountId);
+      const actualAccountId = accountType === 'live' ? userId : parseInt(accountId);
 
       logger.info('Getting account balance', { userId, accountType, accountId: actualAccountId });
 
@@ -382,7 +382,7 @@ class InternalTransferController {
       }
 
       // For main account, use userId as accountId
-      const actualAccountId = accountType === 'main' ? userId : parseInt(accountId);
+      const actualAccountId = accountType === 'live' ? userId : parseInt(accountId);
 
       if (!actualAccountId) {
         return res.status(400).json({
