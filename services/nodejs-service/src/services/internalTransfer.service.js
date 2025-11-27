@@ -204,14 +204,14 @@ class InternalTransferService {
   static async getAccountDetails(userId, accountType, accountId) {
     try {
       switch (accountType) {
-        case 'main':
+        case 'live':
           const liveUser = await LiveUser.findOne({
             where: { id: userId, status: 1, is_active: 1 },
             attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'leverage', 'group']
           });
           return liveUser ? {
             id: liveUser.id,
-            type: 'main',
+            type: 'live',
             wallet_balance: parseFloat(liveUser.wallet_balance || 0),
             margin: parseFloat(liveUser.margin || 0),
             net_profit: parseFloat(liveUser.net_profit || 0),
@@ -283,7 +283,7 @@ class InternalTransferService {
       let totalMarginRequired = 0;
 
       switch (accountType) {
-        case 'main':
+        case 'live':
           const liveUserOrders = await LiveUserOrder.findAll({
             where: { 
               order_user_id: userId, 
@@ -647,7 +647,7 @@ class InternalTransferService {
    */
   static async updateAccountBalance(accountType, accountId, amount, transaction) {
     switch (accountType) {
-      case 'main':
+      case 'live':
         await LiveUser.increment('wallet_balance', {
           by: amount,
           where: { id: accountId },
@@ -941,7 +941,7 @@ class InternalTransferService {
       
       // Generate Redis key based on account type (matching Python portfolio calculator)
       switch (accountType) {
-        case 'main':
+        case 'live':
           redisKey = `user_portfolio:{live:${accountId}}`;
           break;
         case 'strategy_provider':
