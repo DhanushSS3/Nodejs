@@ -1,5 +1,5 @@
 const UserTransaction = require('../models/userTransaction.model');
-const { LiveUser, DemoUser } = require('../models');
+const { LiveUser, DemoUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
 const redisSyncService = require('./redis.sync.service');
@@ -18,7 +18,18 @@ class WalletService {
    * @returns {Model} Sequelize model
    */
   getUserModel(userType) {
-    return userType === 'live' ? LiveUser : DemoUser;
+    switch ((userType || 'live').toString().toLowerCase()) {
+      case 'live':
+        return LiveUser;
+      case 'demo':
+        return DemoUser;
+      case 'strategy_provider':
+        return StrategyProviderAccount;
+      case 'copy_follower':
+        return CopyFollowerAccount;
+      default:
+        throw new Error(`Unsupported user type: ${userType}`);
+    }
   }
 
   /**

@@ -1,5 +1,7 @@
 const MoneyRequest = require('../models/moneyRequest.model');
 const LiveUser = require('../models/liveUser.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const Admin = require('../models/admin.model');
 const idGeneratorService = require('./idGenerator.service');
 const walletService = require('./wallet.service');
@@ -21,11 +23,44 @@ class MoneyRequestService {
    * @returns {Promise<Object>} Created money request
    */
   async createRequest(requestData) {
-    const { userId, type, amount, currency = 'USD', methodType, methodDetails = null, accountNumber = null } = requestData;
+    const {
+      userId,
+      initiatorAccountType = 'live',
+      targetAccountId = null,
+      targetAccountType = null,
+      type,
+      amount,
+      currency = 'USD',
+      methodType,
+      methodDetails = null,
+      accountNumber = null
+    } = requestData;
     const operationId = `create_money_request_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     try {
-      logger.info(`[${operationId}] Creating ${type} request for user ${userId}, amount: ${amount}`);
+      logger.info(`[${operationId}] Creating ${type} request`, {
+        userId,
+        initiatorAccountType,
+        targetAccountId,
+        targetAccountType,
+        amount
+      });
+
+      if (!userId) {
+        throw new Error('userId is required');
+      }
+
+      const normalizedInitiatorType = (initiatorAccountType || 'live').toString().toLowerCase();
+      const normalizedTargetType = (targetAccountType || normalizedInitiatorType || 'live').toString().toLowerCase();
+      const supportedAccountTypes = ['live', 'strategy_provider', 'copy_follower'];
+
+      if (!supportedAccountTypes.includes(normalizedInitiatorType)) {
+        throw new Error(`Unsupported initiatorAccountType: ${initiatorAccountType}`);
+      }
+
+      if (!supportedAccountTypes.includes(normalizedTargetType)) {
+        throw new Error(`Unsupported targetAccountType: ${targetAccountType}`);
+      }
 
       // Validate user exists
       const user = await LiveUser.findByPk(userId);
@@ -38,9 +73,30 @@ class MoneyRequestService {
         throw new Error('Amount must be positive');
       }
 
+      let effectiveTargetAccountId = targetAccountId;
+      if (!effectiveTargetAccountId && normalizedTargetType === 'live') {
+        effectiveTargetAccountId = userId;
+      }
+
+      let targetAccountSnapshot = null;
+
       // For withdrawals, check if user has sufficient balance
       if (type === 'withdraw') {
-        const currentBalance = await walletService.getCurrentBalance(userId, 'live');
+        if (!effectiveTargetAccountId) {
+          throw new Error('targetAccountId is required for withdrawal requests');
+        }
+
+        const parsedTargetId = parseInt(effectiveTargetAccountId, 10);
+        if (Number.isNaN(parsedTargetId) || parsedTargetId <= 0) {
+          throw new Error('targetAccountId must be a positive integer');
+        }
+
+        targetAccountSnapshot = await this.findAccountRecord(normalizedTargetType, parsedTargetId);
+        if (!targetAccountSnapshot) {
+          throw new Error('Target account not found');
+        }
+
+        const currentBalance = parseFloat(targetAccountSnapshot.wallet_balance || 0);
         if (currentBalance < amount) {
           throw new Error('Insufficient balance for withdrawal request');
         }
@@ -50,6 +106,20 @@ class MoneyRequestService {
         if (!methodType || !allowedMethods.includes(methodType)) {
           throw new Error('Invalid or missing withdrawal method_type');
         }
+
+        effectiveTargetAccountId = parsedTargetId;
+      } else {
+        // Default snapshot for non-withdraw requests
+        effectiveTargetAccountId = userId;
+        targetAccountSnapshot = user;
+      }
+
+      const snapshotAccountNumber = accountNumber
+        || (targetAccountSnapshot && targetAccountSnapshot.account_number)
+        || user.account_number;
+
+      if (!snapshotAccountNumber) {
+        throw new Error('Account number snapshot is required');
       }
 
       // Generate unique request ID
@@ -59,7 +129,11 @@ class MoneyRequestService {
       const moneyRequest = await MoneyRequest.create({
         request_id: requestId,
         user_id: userId,
-        account_number: accountNumber || user.account_number,
+        initiator_user_id: userId,
+        initiator_user_type: normalizedInitiatorType,
+        target_account_id: effectiveTargetAccountId,
+        target_account_type: normalizedTargetType,
+        account_number: snapshotAccountNumber,
         method_type: type === 'withdraw' ? methodType : null,
         method_details: type === 'withdraw' ? methodDetails : null,
         type,
@@ -76,6 +150,26 @@ class MoneyRequestService {
       logger.error(`[${operationId}] Error creating money request:`, error);
       throw error;
     }
+  }
+
+  getAccountModelByType(accountType = 'live') {
+    switch ((accountType || 'live').toString().toLowerCase()) {
+      case 'strategy_provider':
+        return StrategyProviderAccount;
+      case 'copy_follower':
+        return CopyFollowerAccount;
+      case 'live':
+      default:
+        return LiveUser;
+    }
+  }
+
+  async findAccountRecord(accountType, accountId) {
+    const Model = this.getAccountModelByType(accountType);
+    if (!Model) {
+      return null;
+    }
+    return Model.findByPk(accountId);
   }
 
   /**
@@ -260,9 +354,12 @@ class MoneyRequestService {
         throw new Error(`Request cannot be approved from status: ${request.status}`);
       }
 
+      const targetAccountId = request.target_account_id || request.user_id;
+      const targetAccountType = request.target_account_type || 'live';
+
       // For withdrawals, double-check balance
       if (request.type === 'withdraw') {
-        const currentBalance = await walletService.getCurrentBalance(request.user_id, 'live');
+        const currentBalance = await walletService.getCurrentBalance(targetAccountId, targetAccountType);
         if (currentBalance < request.amount) {
           throw new Error('Insufficient balance for withdrawal');
         }
@@ -270,13 +367,13 @@ class MoneyRequestService {
 
       // Create the actual transaction
       const transactionData = {
-        userId: request.user_id,
-        userType: 'live',
+        userId: targetAccountId,
+        userType: targetAccountType,
         type: request.type,
         amount: request.type === 'withdraw' ? -Math.abs(request.amount) : Math.abs(request.amount),
         referenceId: request.request_id,
         adminId: adminId,
-        userEmail: request.user.email, // Add user email from the included user data
+        userEmail: request.user ? request.user.email : null,
         methodType: request.method_type, // Add method type from the request
         notes: notes || `${request.type} approved via money request ${request.request_id}`,
         metadata: {
@@ -284,7 +381,11 @@ class MoneyRequestService {
           approved_by_admin: adminId,
           original_request_amount: request.amount,
           currency: request.currency,
-          method_details: request.method_details // Store method details in metadata for reference
+          method_details: request.method_details, // Store method details in metadata for reference
+          initiator_user_id: request.initiator_user_id,
+          initiator_user_type: request.initiator_user_type,
+          target_account_id: targetAccountId,
+          target_account_type: targetAccountType
         }
       };
 

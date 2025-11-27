@@ -20,6 +20,26 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     allowNull: false,
     comment: 'Reference to live_users.id',
   },
+  initiator_user_id: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+    comment: 'ID of the user/account that initiated the request',
+  },
+  initiator_user_type: {
+    type: DataTypes.ENUM('live', 'strategy_provider', 'copy_follower'),
+    allowNull: true,
+    comment: 'Account type of the initiator',
+  },
+  target_account_id: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+    comment: 'ID of the wallet/account the request operates on',
+  },
+  target_account_type: {
+    type: DataTypes.ENUM('live', 'strategy_provider', 'copy_follower'),
+    allowNull: true,
+    comment: 'Account type of the wallet/account the request operates on',
+  },
   account_number: {
     type: DataTypes.STRING(50),
     allowNull: false,
@@ -116,6 +136,18 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     },
     {
       fields: ['status', 'created_at']
+    },
+    {
+      fields: ['target_account_type']
+    },
+    {
+      fields: ['target_account_id']
+    },
+    {
+      fields: ['initiator_user_id']
+    },
+    {
+      fields: ['initiator_user_type']
     }
   ],
   scopes: {
