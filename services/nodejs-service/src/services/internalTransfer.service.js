@@ -683,7 +683,7 @@ class InternalTransferService {
    */
   static mapAccountTypeToUserType(accountType) {
     switch (accountType) {
-      case 'main':
+      case 'live':
         return 'live';
       case 'strategy_provider':
         return 'strategy_provider';
