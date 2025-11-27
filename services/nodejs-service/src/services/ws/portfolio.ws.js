@@ -16,6 +16,10 @@ const portfolioEvents = require('../events/portfolio.events');
 const userConnCounts = new Map(); // key: user_type:user_id -> count
 const userConnections = new Map(); // key: user_type:user_id -> array of WebSocket objects
 const MAX_CONNECTIONS_PER_USER = 5; // Maximum WebSocket connections per user
+const CONNECTION_LIMIT_CLOSE_CODE = 4429;
+const CONNECTION_LIMIT_CLOSE_REASON = 'Connection limit reached - another session replaced this one';
+const CONNECTION_LIMIT_GRACE_MS = 5000; // throttle reconnection attempts after we kick a socket
+const connectionLimitGrace = new Map(); // key -> timestamp when we last forced a connection close
 
 function getUserKey(userType, userId) {
   return `${String(userType).toLowerCase()}:${String(userId)}`;
@@ -67,17 +71,20 @@ function removeConnection(userKey, ws) {
   const n = Math.max(0, c - 1);
   if (n === 0) userConnCounts.delete(userKey);
   else userConnCounts.set(userKey, n);
+  if (n < MAX_CONNECTIONS_PER_USER) {
+    connectionLimitGrace.delete(userKey);
+  }
   return n;
 }
 
 function closeOldestConnection(userKey) {
   if (!userConnections.has(userKey)) {
-    return;
+    return false;
   }
 
   const connections = userConnections.get(userKey);
   if (!connections || connections.length === 0) {
-    return;
+    return false;
   }
 
   const oldestWs = connections.shift(); // Removes first (oldest) connection
@@ -94,20 +101,25 @@ function closeOldestConnection(userKey) {
 
   if (oldestWs) {
     oldestWs._removedFromLimit = true;
+    oldestWs._closedDueToLimit = true;
+    connectionLimitGrace.set(userKey, Date.now());
     logger.info('Closing oldest WebSocket connection due to limit', {
       userKey,
       totalConnections: updatedCount + 1,
       maxAllowed: MAX_CONNECTIONS_PER_USER
     });
     try {
-      oldestWs.close(1000, 'Connection replaced by newer connection');
+      oldestWs.close(CONNECTION_LIMIT_CLOSE_CODE, CONNECTION_LIMIT_CLOSE_REASON);
     } catch (e) {
       logger.warn('Failed to close oldest connection', { error: e.message, userKey });
       try {
         oldestWs.terminate();
       } catch (_) {}
     }
+    return true;
   }
+
+  return false;
 }
 
 // Legacy functions for backward compatibility
@@ -388,6 +400,22 @@ function startPortfolioWSServer(server) {
     
     const userKey = getUserKey(userType, userId);
 
+    // If we recently forced a close for this user, reject the new connection to prevent churn
+    const graceSince = connectionLimitGrace.get(userKey) || 0;
+    if (graceSince && (Date.now() - graceSince) < CONNECTION_LIMIT_GRACE_MS) {
+      const retryInMs = CONNECTION_LIMIT_GRACE_MS - (Date.now() - graceSince);
+      logger.info('Rejecting WebSocket connection due to grace window after limit enforcement', {
+        userId,
+        userType,
+        retryInMs,
+        maxAllowed: MAX_CONNECTIONS_PER_USER
+      });
+      try {
+        ws.close(CONNECTION_LIMIT_CLOSE_CODE, CONNECTION_LIMIT_CLOSE_REASON);
+      } catch (_) {}
+      return;
+    }
+
     // Check connection limit and close oldest connections if needed
     let currentCount = userConnCounts.get(userKey) || 0;
     if (currentCount >= MAX_CONNECTIONS_PER_USER) {
@@ -398,7 +426,10 @@ function startPortfolioWSServer(server) {
         maxAllowed: MAX_CONNECTIONS_PER_USER 
       });
       while ((userConnCounts.get(userKey) || 0) >= MAX_CONNECTIONS_PER_USER) {
-        closeOldestConnection(userKey);
+        const closed = closeOldestConnection(userKey);
+        if (!closed) {
+          break;
+        }
       }
     }
 

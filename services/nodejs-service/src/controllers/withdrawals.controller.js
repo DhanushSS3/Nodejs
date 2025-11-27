@@ -217,7 +217,7 @@ async function createWithdrawalRequest(req, res) {
       },
     });
   } catch (error) {
-    const statusCode = error instanceof WithdrawalValidationError ? (error.statusCode || 400) : 500;
+    const statusCode = error instanceof WithdrawalValidationError ? (error.statusCode || 400) : (error.statusCode || 500);
     logger.error('Failed to create withdrawal request', { operationId, error: error.message });
     return res.status(statusCode).json({ success: false, message: error.message || 'Internal server error' });
   }

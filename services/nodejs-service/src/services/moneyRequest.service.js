@@ -98,7 +98,9 @@ class MoneyRequestService {
 
         const currentBalance = parseFloat(targetAccountSnapshot.wallet_balance || 0);
         if (currentBalance < amount) {
-          throw new Error('Insufficient balance for withdrawal request');
+          const error = new Error('Insufficient balance for withdrawal request');
+          error.statusCode = 400;
+          throw error;
         }
 
         // Validate method type

@@ -192,7 +192,7 @@ async function createFollowerAccount(req, res) {
     });
     
     const transferValidation = await InternalTransferService.validateTransfer(userId, {
-      fromAccountType: 'main',
+      fromAccountType: 'live',
       fromAccountId: userId,
       toAccountType: 'copy_follower', // Temporary - will be created
       toAccountId: null, // Will be set after account creation
@@ -389,7 +389,7 @@ async function createFollowerAccount(req, res) {
     try {
       const sourceAccount = {
         id: userId,
-        type: 'main',
+        type: 'live',
         wallet_balance: parseFloat(liveUser.wallet_balance || 0),
         leverage: parseFloat(liveUser.leverage || 100),
         group: liveUser.group || 'Standard'
