@@ -835,8 +835,8 @@ class InternalTransferService {
       const forceRecalcMessage = {
         type: 'FORCE_PORTFOLIO_RECALC',
         users: [
-          { user_type: sourceAccount.type === 'main' ? 'live' : sourceAccount.type, user_id: sourceAccount.id.toString() },
-          { user_type: destinationAccount.type === 'main' ? 'live' : destinationAccount.type, user_id: destinationAccount.id.toString() }
+          { user_type: sourceAccount.type === 'live' ? 'live' : sourceAccount.type, user_id: sourceAccount.id.toString() },
+          { user_type: destinationAccount.type === 'live' ? 'live' : destinationAccount.type, user_id: destinationAccount.id.toString() }
         ],
         reason: 'internal_transfer_completed',
         timestamp: new Date().toISOString()
