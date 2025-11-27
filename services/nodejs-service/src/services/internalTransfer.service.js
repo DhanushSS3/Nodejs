@@ -63,7 +63,7 @@ class InternalTransferService {
 
       return {
         mainAccount: liveUser ? {
-          type: 'main',
+          type: 'live',
           id: liveUser.id,
           name: 'Main Trading Account',
           account_number: liveUser.account_number,
