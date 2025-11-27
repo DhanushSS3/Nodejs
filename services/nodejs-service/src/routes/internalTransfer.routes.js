@@ -241,10 +241,10 @@ router.post('/execute',
   authenticateJWT,
   [
     body('fromAccountType')
-      .isIn(['main', 'strategy_provider', 'copy_follower'])
+      .isIn(['live', 'strategy_provider', 'copy_follower'])
       .withMessage('Invalid fromAccountType'),
     body('toAccountType')
-      .isIn(['main', 'strategy_provider', 'copy_follower'])
+      .isIn(['live', 'strategy_provider', 'copy_follower'])
       .withMessage('Invalid toAccountType'),
     body('amount')
       .isFloat({ min: 0.01 })
