@@ -994,7 +994,7 @@ class InternalTransferService {
   static getPortfolioCalculatorConfigKey(accountType, accountId) {
     let userType;
     switch (accountType) {
-      case 'main':
+      case 'live':
         userType = 'live';
         break;
       case 'strategy_provider':
@@ -1018,7 +1018,7 @@ class InternalTransferService {
   static getLegacyConfigKey(accountType, accountId) {
     let userType;
     switch (accountType) {
-      case 'main':
+      case 'live':
         userType = 'live';
         break;
       case 'strategy_provider':
@@ -1042,7 +1042,7 @@ class InternalTransferService {
   static getPortfolioKey(accountType, accountId) {
     let userType;
     switch (accountType) {
-      case 'main':
+      case 'live':
         userType = 'live';
         break;
       case 'strategy_provider':
@@ -1065,7 +1065,7 @@ class InternalTransferService {
   static getDirtyUserKey(accountType) {
     let userType;
     switch (accountType) {
-      case 'main':
+      case 'live':
         userType = 'live';
         break;
       case 'strategy_provider':
@@ -1088,7 +1088,7 @@ class InternalTransferService {
    */
   static getRedisAccountKey(accountType, accountId) {
     switch (accountType) {
-      case 'main':
+      case 'live':
         return `live_user:${accountId}:balance`;
       case 'strategy_provider':
         return `strategy_provider:${accountId}:balance`;
