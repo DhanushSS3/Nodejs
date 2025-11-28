@@ -3,9 +3,12 @@ import logging
 import os
 from typing import Dict, List, Optional, Tuple
 
-import orjson
 import aio_pika
+import orjson
+
 from app.config.redis_config import redis_cluster
+from app.services.orders.order_close_service import OrderCloser
+from app.services.rabbitmq_client import publish_db_update
 from app.services.orders.order_repository import fetch_user_orders, fetch_group_data
 from app.services.portfolio.conversion_utils import convert_to_usd
 from app.services.orders.order_close_service import OrderCloser
@@ -173,15 +176,7 @@ class LiquidationEngine:
     async def _publish_db_update(self, msg: dict):
         """Publish DB update message to RabbitMQ"""
         try:
-            await self._ensure_rabbitmq_connection()
-            if self._ex is None:
-                logger.warning("RabbitMQ not connected, skipping DB update")
-                return
-                
-            import os
-            db_update_queue = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
-            amsg = aio_pika.Message(body=orjson.dumps(msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
-            await self._ex.publish(amsg, routing_key=db_update_queue)
+            await publish_db_update(msg)
             logger.info("[AUTOCUTOFF:DB_UPDATE] Published close confirmation for order_id=%s", msg.get("order_id"))
         except Exception as e:
             logger.error("Failed to publish DB update from LiquidationEngine: %s", e)

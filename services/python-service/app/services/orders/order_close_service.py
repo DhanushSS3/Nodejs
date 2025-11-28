@@ -4,7 +4,6 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import aio_pika
 import orjson
 from redis.exceptions import ResponseError
 
@@ -26,13 +25,10 @@ from app.services.orders.service_provider_client import send_provider_order
 from app.services.orders.order_registry import add_lifecycle_id
 from app.services.groups.group_config_helper import get_group_config_with_fallback
 from app.services.logging.provider_logger import get_provider_errors_logger
+from app.services.rabbitmq_client import publish_db_update
 
 logger = logging.getLogger(__name__)
 error_logger = get_provider_errors_logger()
-
-# RabbitMQ configuration for DB updates
-RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
-DB_UPDATE_QUEUE = os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
 
 # User-level locks to prevent race conditions during order operations
 _user_locks = {}
@@ -57,25 +53,8 @@ async def _save_close_id_to_database(order_id: str, close_id: str, user_type: st
             "close_id": str(close_id),
         }
         
-        # Connect to RabbitMQ and publish message
-        connection = await aio_pika.connect_robust(RABBITMQ_URL)
-        async with connection:
-            channel = await connection.channel()
-            
-            # Declare queue to ensure it exists
-            await channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
-            
-            # Create message
-            message = aio_pika.Message(
-                body=orjson.dumps(db_msg),
-                delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-            )
-            
-            # Publish to DB update queue
-            await channel.default_exchange.publish(
-                message, routing_key=DB_UPDATE_QUEUE
-            )
-            
+        await publish_db_update(db_msg)
+
         logger.info(
             "[CLOSE:CLOSE_ID_SAVED] order_id=%s close_id=%s user=%s:%s",
             order_id, close_id, user_type, user_id
@@ -131,32 +110,24 @@ def build_close_confirmation_payload(
 
 async def publish_close_confirmation(
     message: Dict[str, Any],
-    channel: Optional[aio_pika.abc.AbstractChannel] = None,
-    exchange: Optional[aio_pika.abc.AbstractExchange] = None,
+    channel=None,
+    exchange=None,
 ) -> None:
     """Publish ORDER_CLOSE_CONFIRMED message (shared by local/provide flows)."""
     try:
-        amqp_message = aio_pika.Message(
-            body=orjson.dumps(message),
-            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-        )
-
         if channel is not None and exchange is not None:
-            await exchange.publish(amqp_message, routing_key=DB_UPDATE_QUEUE)
+            amqp_message = aio_pika.Message(  # type: ignore[name-defined]
+                body=orjson.dumps(message),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            )
+            await exchange.publish(amqp_message, routing_key=os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue"))
         else:
-            connection = await aio_pika.connect_robust(RABBITMQ_URL)
-            async with connection:
-                channel = await connection.channel()
-                await channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
-                await channel.default_exchange.publish(
-                    amqp_message,
-                    routing_key=DB_UPDATE_QUEUE,
-                )
+            await publish_db_update(message)
 
         logger.info(
             "[CLOSE:DB_PUBLISHED] order_id=%s queue=%s",
             message.get("order_id"),
-            DB_UPDATE_QUEUE,
+            os.getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue"),
         )
     except Exception as e:
         error_logger.error(

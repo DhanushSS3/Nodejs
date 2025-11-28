@@ -16,6 +16,7 @@ from app.services.orders.id_generator import generate_take_profit_id
 from app.services.orders.order_registry import add_lifecycle_id
 from app.services.orders.sl_tp_repository import remove_order_triggers, upsert_order_triggers, remove_takeprofit_trigger
 from app.services.orders.service_provider_client import send_provider_order
+from app.services.rabbitmq_client import publish_db_update
 
 logger = logging.getLogger(__name__)
 
@@ -158,20 +159,7 @@ class TakeProfitService:
                     "user_type": user_type,
                     "take_profit": float(tp_raw),
                 }
-                import aio_pika  # type: ignore
-                RABBITMQ_URL = __import__('os').getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
-                ORDER_DB_UPDATE_QUEUE = __import__('os').getenv("ORDER_DB_UPDATE_QUEUE", "order_db_update_queue")
-                conn = await aio_pika.connect_robust(RABBITMQ_URL)
-                try:
-                    ch = await conn.channel()
-                    await ch.declare_queue(ORDER_DB_UPDATE_QUEUE, durable=True)
-                    msg = aio_pika.Message(body=__import__('orjson').dumps(db_msg), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
-                    await ch.default_exchange.publish(msg, routing_key=ORDER_DB_UPDATE_QUEUE)
-                finally:
-                    try:
-                        await conn.close()
-                    except Exception:
-                        pass
+                await publish_db_update(db_msg)
             except Exception as e:
                 logger.warning("Failed to publish DB update for takeprofit set: %s", e)
 
