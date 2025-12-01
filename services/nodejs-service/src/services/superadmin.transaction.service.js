@@ -1,5 +1,6 @@
 const { LiveUser, DemoUser, UserTransaction } = require('../models');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const sequelize = require('../config/db');
 const { redisCluster } = require('../../config/redis');
 const logger = require('../utils/logger');
@@ -28,6 +29,8 @@ class SuperadminTransactionService {
         return DemoUser;
       case 'strategy_provider':
         return StrategyProviderAccount;
+      case 'copy_follower':
+        return CopyFollowerAccount;
       default:
         throw new Error(`Invalid user type: ${userType}`);
     }
@@ -86,7 +89,7 @@ class SuperadminTransactionService {
       throw new Error('Missing required parameters: userId, userType, amount, adminId');
     }
 
-    if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
+    if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
       throw new Error('Invalid user type. Must be "live", "demo", or "strategy_provider"');
     }
 

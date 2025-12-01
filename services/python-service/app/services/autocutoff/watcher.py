@@ -109,7 +109,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
 
     # ALERT zone (≤ cutoff but above liquidation)
     if liquidation_threshold < ml <= cutoff_level:
-        logger.warning("AutoCutoffWatcher: ALERT TRIGGERED for user %s:%s (margin_level=%.2f < cutoff_level=%.2f)", 
+        # logger.warning("AutoCutoffWatcher: ALERT TRIGGERED for user %s:%s (margin_level=%.2f < cutoff_level=%.2f)", 
                       user_type, user_id, ml, cutoff_level)
         # rate-limit via Redis TTL flag with atomic check-and-set
         alert_key = f"autocutoff:alert_sent:{user_type}:{user_id}"
@@ -119,7 +119,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
             already_set = await redis_cluster.set(alert_key, "1", ex=ALERT_TTL_SEC, nx=True)
             if not already_set:
                 # Alert already sent within TTL period
-                logger.info("AutoCutoffWatcher: alert already sent for %s:%s (within 3h TTL)", user_type, user_id)
+                # logger.info("AutoCutoffWatcher: alert already sent for %s:%s (within 3h TTL)", user_type, user_id)
                 return
         except Exception as e:
             logger.error("AutoCutoffWatcher: error checking alert flag for %s:%s: %s", user_type, user_id, e)
