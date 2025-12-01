@@ -5,6 +5,11 @@ const { UserTransaction } = require('../models');
 const sequelize = require('../config/db');
 
 class SuperadminTransactionController {
+  constructor() {
+    this.processStrategyProviderDeposit = this.processStrategyProviderDeposit.bind(this);
+    this.processStrategyProviderWithdrawal = this.processStrategyProviderWithdrawal.bind(this);
+  }
+
   /**
    * Deposit for Strategy Provider account shorthand endpoint
    * POST /api/superadmin/strategy-providers/:accountId/deposit
