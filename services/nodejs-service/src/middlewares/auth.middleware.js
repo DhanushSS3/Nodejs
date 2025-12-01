@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { redisCluster } = require('../../config/redis');
+const { getSession } = require('../utils/redisSession.util');
 
 // Enhanced authentication middleware for admin JWT tokens
 async function authenticateAdmin(req, res, next) {
@@ -73,19 +74,20 @@ async function authenticateJWT(req, res, next) {
     }
     
     // Check if session is still valid in Redis (for logout functionality)
-    if (user.sessionId && user.user_type) {
-      const userId = user.sub || user.user_id || user.id;
-      const sessionKey = `session:${user.user_type}:${userId}:${user.sessionId}`;
-      
+    const sessionId = user.sessionId || user.session_id || user.jti || user.jwtid;
+    const sessionUserId = user.sub || user.user_id || user.id;
+    const sessionUserType = (user.account_type || user.user_type || '').toString().toLowerCase();
+
+    if (sessionId && sessionUserId && sessionUserType) {
       try {
-        const sessionExists = await redisCluster.exists(sessionKey);
-        if (!sessionExists) {
-          logger.warn(`Authentication failed - Session invalidated for user ${userId} (${user.user_type}) on ${req.method} ${req.url}`);
+        const sessionData = await getSession(sessionUserId, sessionId, sessionUserType);
+        if (!sessionData) {
+          logger.warn(`Authentication failed - Session invalidated for user ${sessionUserId} (${sessionUserType}) on ${req.method} ${req.url}`);
           return res.status(401).json({ success: false, message: 'Session has been invalidated' });
         }
       } catch (redisError) {
-        logger.error(`Redis session check failed for user ${userId}: ${redisError.message}`);
-        // Continue without Redis check if Redis is down (graceful degradation)
+        logger.error(`Redis session lookup failed for user ${sessionUserId}: ${redisError.message}`);
+        // Graceful degradation: if Redis is unavailable, continue so API still works
       }
     }
     
