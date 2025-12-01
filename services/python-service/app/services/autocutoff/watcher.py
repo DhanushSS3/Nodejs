@@ -110,7 +110,7 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
     # ALERT zone (≤ cutoff but above liquidation)
     if liquidation_threshold < ml <= cutoff_level:
         # logger.warning("AutoCutoffWatcher: ALERT TRIGGERED for user %s:%s (margin_level=%.2f < cutoff_level=%.2f)", 
-                      user_type, user_id, ml, cutoff_level)
+                    #   user_type, user_id, ml, cutoff_level)
         # rate-limit via Redis TTL flag with atomic check-and-set
         alert_key = f"autocutoff:alert_sent:{user_type}:{user_id}"
         try:
