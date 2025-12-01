@@ -31,8 +31,26 @@ logger = logging.getLogger(__name__)
 error_logger = get_provider_errors_logger()
 
 # User-level locks to prevent race conditions during order operations
-_user_locks = {}
+_user_locks: Dict[str, asyncio.Lock] = {}
 _locks_lock = asyncio.Lock()
+
+
+def _normalize_close_message(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    cleaned = str(raw).strip()
+    if not cleaned:
+        return None
+    alias = cleaned.lower()
+    alias_map = {
+        "autocutoff": "Autocutoff",
+        "auto-cutoff": "Autocutoff",
+        "auto cutoff": "Autocutoff",
+        "stoploss": "Stoploss",
+        "takeprofit": "Takeprofit",
+        "admin-closed": "Admin-Closed",
+    }
+    return alias_map.get(alias, cleaned)
 
 
 async def _save_close_id_to_database(order_id: str, close_id: str, user_type: str, user_id: str) -> bool:
@@ -350,7 +368,11 @@ class OrderCloser:
                 "status": "CLOSED",
             }
 
-            close_message_value = close_reason or "Closed"
+            close_message_value = (
+                close_reason
+                or _normalize_close_message(payload.get("close_message"))
+                or "Closed"
+            )
 
             extra_fields = {}
             if trigger_lifecycle_id:

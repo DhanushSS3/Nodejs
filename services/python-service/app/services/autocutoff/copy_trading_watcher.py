@@ -19,8 +19,13 @@ from typing import Dict, Any, Optional
 from app.config.redis_config import redis_cluster, redis_pubsub_client
 from app.services.autocutoff.liquidation import LiquidationEngine
 from app.services.autocutoff.watcher import AutoCutoffWatcher
+from app.services.logging.autocutoff_logger import (
+    get_autocutoff_core_logger,
+    get_autocutoff_error_logger,
+)
 
-logger = logging.getLogger(__name__)
+logger = get_autocutoff_core_logger()
+error_logger = get_autocutoff_error_logger()
 
 
 class CopyTradingAutoCutoffWatcher(AutoCutoffWatcher):
@@ -31,7 +36,8 @@ class CopyTradingAutoCutoffWatcher(AutoCutoffWatcher):
     
     def __init__(self):
         super().__init__()
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
+        self.error_logger = error_logger
         
     async def _handle_user(self, user_key: str):
         """
@@ -77,7 +83,7 @@ class CopyTradingAutoCutoffWatcher(AutoCutoffWatcher):
                 await self._send_margin_alert(user_type, user_id, margin_level)
                 
         except Exception as e:
-            self.logger.error(f"Error handling user {user_key}: {e}")
+            self.error_logger.exception("Error handling user %s: %s", user_key, e)
             
     async def _cascade_liquidation_to_followers(self, strategy_provider_id: str):
         """
@@ -128,7 +134,9 @@ class CopyTradingAutoCutoffWatcher(AutoCutoffWatcher):
             await self._record_cascade_liquidation(strategy_provider_id, liquidation_results)
             
         except Exception as e:
-            self.logger.error(f"Cascade liquidation failed for strategy provider {strategy_provider_id}: {e}")
+            self.error_logger.exception(
+                "Cascade liquidation failed for strategy provider %s", strategy_provider_id
+            )
             
     async def _record_cascade_liquidation(self, strategy_provider_id: str, results: list):
         """
@@ -178,7 +186,7 @@ class CopyTradingAutoCutoffWatcher(AutoCutoffWatcher):
             return margin_level
             
         except Exception as e:
-            self.logger.error(f"Error getting margin level for {user_type}:{user_id}: {e}")
+            self.error_logger.exception("Error getting margin level for %s:%s", user_type, user_id)
             return None
             
     async def _initiate_liquidation(self, user_type: str, user_id: str) -> bool:
@@ -211,7 +219,7 @@ class CopyTradingAutoCutoffWatcher(AutoCutoffWatcher):
                 await redis_cluster.delete(liquidation_flag_key)
                 
         except Exception as e:
-            self.logger.error(f"Failed to initiate liquidation for {user_type}:{user_id}: {e}")
+            self.error_logger.exception("Failed to initiate liquidation for %s:%s", user_type, user_id)
             return False
             
     async def _send_margin_alert(self, user_type: str, user_id: str, margin_level: float):

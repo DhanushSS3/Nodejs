@@ -7,6 +7,11 @@ import aio_pika
 import orjson
 
 from app.config.redis_config import redis_cluster
+from app.services.logging.autocutoff_logger import (
+    get_autocutoff_core_logger,
+    get_autocutoff_error_logger,
+    get_autocutoff_order_logger,
+)
 from app.services.orders.order_close_service import OrderCloser
 from app.services.rabbitmq_client import publish_db_update
 from app.services.orders.order_repository import fetch_user_orders, fetch_group_data
@@ -19,7 +24,9 @@ from app.services.orders.id_generator import (
 )
 from app.services.orders.close_context_service import set_autocutoff_context
 
-logger = logging.getLogger(__name__)
+logger = get_autocutoff_core_logger()
+order_logger = get_autocutoff_order_logger()
+error_logger = get_autocutoff_error_logger()
 
 # RabbitMQ configuration for DB updates
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1/")
@@ -365,12 +372,37 @@ class LiquidationEngine:
                         payload["stoploss_cancel_id"] = await generate_stoploss_cancel_id()
 
                 # Dispatch close via existing closer service
+                order_logger.info(
+                    "[AUTOCUTOFF:ORDER_ATTEMPT] order_id=%s user_type=%s user_id=%s loss=%.2f side=%s",
+                    order_id,
+                    user_type,
+                    user_id,
+                    loss_val,
+                    side,
+                )
                 logger.info("[AutoCutoff] closing order %s loss=%.2f for %s:%s", order_id, loss_val, user_type, user_id)
                 res = await self._closer.close_order(payload)
                 if not res.get("ok"):
-                    logger.warning("[AutoCutoff] close failed for %s:%s order_id=%s reason=%s", user_type, user_id, order_id, res.get("reason"))
+                    reason = res.get("reason")
+                    logger.warning("[AutoCutoff] close failed for %s:%s order_id=%s reason=%s", user_type, user_id, order_id, reason)
+                    order_logger.error(
+                        "[AUTOCUTOFF:ORDER_FAILED] order_id=%s user=%s:%s reason=%s",
+                        order_id,
+                        user_type,
+                        user_id,
+                        reason,
+                    )
                     # proceed to next order
                     continue
+                order_logger.info(
+                    "[AUTOCUTOFF:ORDER_SUCCESS] order_id=%s user=%s:%s net_profit=%s close_price=%s flow=%s",
+                    order_id,
+                    user_type,
+                    user_id,
+                    res.get("net_profit"),
+                    res.get("close_price"),
+                    res.get("flow"),
+                )
 
                 # Send DB update ONLY for local execution (not provider flow)
                 # Provider flow will be handled by provider workers after execution reports

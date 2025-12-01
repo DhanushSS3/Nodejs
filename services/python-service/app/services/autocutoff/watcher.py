@@ -5,8 +5,13 @@ from typing import Optional
 from app.config.redis_config import redis_cluster, redis_pubsub_client
 from .notifier import EmailNotifier
 from .liquidation import LiquidationEngine
+from app.services.logging.autocutoff_logger import (
+    get_autocutoff_core_logger,
+    get_autocutoff_error_logger,
+)
 
-logger = logging.getLogger(__name__)
+logger = get_autocutoff_core_logger()
+error_logger = get_autocutoff_error_logger()
 
 ALERT_TTL_SEC = 10800  # 3 hours (3 * 60 * 60)
 SEM_LIMIT = 50
@@ -143,8 +148,20 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
 
     # Liquidation zone
     if ml < liquidation_threshold:
-        logger.warning("AutoCutoffWatcher: LIQUIDATION TRIGGERED for user %s:%s (margin_level=%.2f < liquidation_threshold=%.2f)", 
-                      user_type, user_id, ml, liquidation_threshold)
+        logger.warning(
+            "AutoCutoffWatcher: LIQUIDATION TRIGGERED for user %s:%s (margin_level=%.2f < liquidation_threshold=%.2f)",
+            user_type,
+            user_id,
+            ml,
+            liquidation_threshold,
+        )
+        logger.info(
+            "[AUTOCUTOFF:TRIGGER] user_type=%s user_id=%s margin_level=%.2f threshold=%.2f",
+            user_type,
+            user_id,
+            ml,
+            liquidation_threshold,
+        )
         liq_key = f"autocutoff:liquidating:{user_type}:{user_id}"
         try:
             got = await redis_cluster.set(liq_key, "1", nx=True)
@@ -159,6 +176,11 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
             logger.info("AutoCutoffWatcher: starting liquidation for %s:%s", user_type, user_id)
             await liq.run(user_type=user_type, user_id=user_id)
             logger.info("AutoCutoffWatcher: completed liquidation for %s:%s", user_type, user_id)
+        except Exception as exc:
+            error_logger.exception(
+                "[AUTOCUTOFF:WATCHER_ERROR] Failed liquidation for %s:%s", user_type, user_id
+            )
+            raise
         finally:
             try:
                 await redis_cluster.delete(liq_key)
@@ -203,11 +225,11 @@ async def _watch_loop():
                 # Fire-and-forget per-user handler with concurrency limit
                 asyncio.create_task(_handle_user_limited(user_type, user_id, notifier, liq, sem))
             except Exception as e:
-                logger.error("AutoCutoffWatcher message processing error: %s", e)
+                error_logger.exception("AutoCutoffWatcher message processing error: %s", e)
     except asyncio.CancelledError:
         logger.info("AutoCutoffWatcher cancelled")
     except Exception as e:
-        logger.exception("AutoCutoffWatcher error: %s", e)
+        error_logger.exception("AutoCutoffWatcher error: %s", e)
         # Attempt to reconnect on timeout or transient errors
         try:
             await pubsub.unsubscribe("portfolio_updates")
