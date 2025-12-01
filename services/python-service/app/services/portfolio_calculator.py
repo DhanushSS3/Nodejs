@@ -9,6 +9,7 @@ This service implements the first step of the Portfolio Calculator:
 """
 
 import asyncio
+import json
 import logging
 from typing import Set, Dict, Tuple, List, Optional
 from threading import Lock
@@ -88,9 +89,9 @@ class PortfolioCalculatorListener:
         self.logger.info("Starting Portfolio Calculator Listener...")
         try:
             self._pubsub = redis_pubsub_client.pubsub()
-            await self._pubsub.subscribe('market_price_updates')
+            await self._pubsub.subscribe('market_price_updates', 'portfolio_force_recalc')
             self._running = True
-            self.logger.info("Successfully subscribed to market_price_updates channel")
+            self.logger.info("Successfully subscribed to market_price_updates and portfolio_force_recalc channels")
 
             # Start throttled calculation loop as a background task
             loop = asyncio.get_event_loop()
@@ -964,10 +965,17 @@ class PortfolioCalculatorListener:
                 if not self._running:
                     break
                 
-                if message['type'] == 'message':
+                if message['type'] != 'message':
+                    continue
+
+                channel_raw = message.get('channel')
+                channel = channel_raw.decode('utf-8') if isinstance(channel_raw, (bytes, bytearray)) else str(channel_raw)
+
+                if channel == 'market_price_updates':
                     symbol = str(message.get('data', ''))
-                    # self.logger.info(f"🎯 Portfolio calc: Received market_price_updates message for symbol={symbol}")
                     await self._process_symbol_update(symbol)
+                elif channel == 'portfolio_force_recalc':
+                    await self._handle_force_recalc_message(message.get('data'))
                     
         except Exception as e:
             self.logger.error(f"Error in portfolio calculator listen loop: {e}")
@@ -1015,6 +1023,50 @@ class PortfolioCalculatorListener:
             
         except Exception as e:
             self.logger.error(f"Error processing symbol update for {symbol}: {e}")
+
+    async def _handle_force_recalc_message(self, data):
+        """Handle balance-change events requesting an immediate portfolio recompute."""
+        try:
+            if isinstance(data, (bytes, bytearray)):
+                payload_str = data.decode('utf-8')
+            else:
+                payload_str = str(data)
+
+            if not payload_str:
+                self.logger.warning("Received empty payload on portfolio_force_recalc channel")
+                return
+
+            payload = json.loads(payload_str)
+            users = payload.get('users') or []
+            if not users:
+                self.logger.info("portfolio_force_recalc payload contained no users", payload)
+                return
+
+            added_counts = {}
+            for user in users:
+                user_type = user.get('user_type')
+                user_id = str(user.get('user_id')) if user.get('user_id') is not None else None
+                if not user_type or user_id is None:
+                    self.logger.warning("Invalid user entry in portfolio_force_recalc payload", user)
+                    continue
+
+                user_key = f"{user_type}:{user_id}"
+                added = self._add_to_dirty_users({user_key}, user_type)
+                added_counts[user_type] = added_counts.get(user_type, 0) + added
+
+            self.logger.info(
+                "portfolio_force_recalc queued users",
+                {
+                    'reason': payload.get('reason'),
+                    'users_requested': len(users),
+                    'dirty_users_added': added_counts
+                }
+            )
+
+        except json.JSONDecodeError as decode_error:
+            self.logger.error(f"Failed to decode portfolio_force_recalc payload: {decode_error}")
+        except Exception as e:
+            self.logger.error(f"Error handling portfolio_force_recalc message: {e}")
     
     async def _fetch_symbol_holders(self, symbol: str, user_type: str) -> Set[str]:
         """

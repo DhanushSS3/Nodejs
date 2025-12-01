@@ -41,7 +41,13 @@ class RedisSyncService {
       // 4. Publish user update event for other services
       await this._publishUserUpdateEvent(userId, userType, updatedFields, operationId);
 
-      // 5. Clear any derived caches that depend on balance
+      // 5. Trigger portfolio recalculation when wallet balance changes
+      if (updatedFields.wallet_balance !== undefined) {
+        const forceRecalcReason = options?.operation_type || 'balance_change';
+        await this._publishPortfolioRecalc(userId, userType, forceRecalcReason, operationId);
+      }
+
+      // 6. Clear any derived caches that depend on balance
       await this._clearDerivedCaches(userId, userType, operationId);
 
       logger.info(`[${operationId}] Redis sync completed successfully for ${userType} user ${userId}`);
@@ -71,7 +77,9 @@ class RedisSyncService {
       const redisFields = {};
       
       if (updatedFields.wallet_balance !== undefined) {
-        redisFields.wallet_balance = String(updatedFields.wallet_balance);
+        const balanceValue = String(updatedFields.wallet_balance);
+        redisFields.wallet_balance = balanceValue;
+        redisFields.balance = balanceValue;
       }
       
       if (updatedFields.margin !== undefined) {
@@ -93,6 +101,31 @@ class RedisSyncService {
     } catch (error) {
       logger.error(`[${operationId}] Failed to update user config cache:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Publish force portfolio recalc events so Python calculator refreshes snapshots immediately
+   * @private
+   */
+  async _publishPortfolioRecalc(userId, userType, reason, operationId) {
+    const payload = {
+      type: 'FORCE_PORTFOLIO_RECALC',
+      users: [
+        {
+          user_type: userType,
+          user_id: String(userId)
+        }
+      ],
+      reason,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      await redisCluster.publish('portfolio_force_recalc', JSON.stringify(payload));
+      logger.info(`[${operationId}] Published portfolio_force_recalc for ${userType} user ${userId}`, payload);
+    } catch (error) {
+      logger.warn(`[${operationId}] Failed to publish portfolio_force_recalc for ${userType} user ${userId}: ${error.message}`);
     }
   }
 
