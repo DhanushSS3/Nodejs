@@ -1,6 +1,9 @@
 import asyncio
 import logging
+import os
 from typing import Optional
+
+import aiomysql
 
 from app.config.redis_config import redis_cluster, redis_pubsub_client
 from .notifier import EmailNotifier
@@ -15,6 +18,85 @@ error_logger = get_autocutoff_error_logger()
 
 ALERT_TTL_SEC = 10800  # 3 hours (3 * 60 * 60)
 SEM_LIMIT = 50
+
+_MYSQL_POOL: Optional[aiomysql.Pool] = None
+
+
+async def _get_mysql_pool() -> Optional[aiomysql.Pool]:
+    global _MYSQL_POOL
+    if _MYSQL_POOL and not getattr(_MYSQL_POOL, "closed", False):
+        return _MYSQL_POOL
+
+    host = os.getenv("MYSQL_HOST") or os.getenv("DB_HOST") or "89.117.188.103" or "127.0.0.1"
+    port = int(os.getenv("MYSQL_PORT") or os.getenv("DB_PORT") or 3306)
+    user = os.getenv("MYSQL_USER") or os.getenv("DB_USER") or os.getenv("DB_USERNAME") or "u436589492_demo_excution" or "u436589492_forex"
+    password = os.getenv("MYSQL_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("DB_PASS") or "Lkj@asd@123" or "Setupdev@1998"
+    db = os.getenv("MYSQL_DB") or os.getenv("DB_NAME") or "u436589492_demo_excution" or "u436589492_forex"
+
+    if not user or not password or not db:
+        logger.warning("AutoCutoffWatcher: MySQL credentials missing; email fallback disabled")
+        return None
+
+    try:
+        _MYSQL_POOL = await aiomysql.create_pool(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            db=db,
+            minsize=1,
+            maxsize=5,
+            autocommit=True,
+            charset="utf8mb4",
+        )
+        return _MYSQL_POOL
+    except Exception as e:
+        logger.error("AutoCutoffWatcher: Failed to create MySQL pool: %s", e)
+        return None
+
+
+async def _fetch_email_from_db(user_type: str, user_id: str) -> Optional[str]:
+    pool = await _get_mysql_pool()
+    if not pool:
+        return None
+
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+    query = None
+    params = (uid,)
+
+    user_type = (user_type or "").lower()
+    if user_type == "live":
+        query = "SELECT email FROM live_users WHERE id=%s LIMIT 1"
+    elif user_type == "demo":
+        query = "SELECT email FROM demo_users WHERE id=%s LIMIT 1"
+    elif user_type == "strategy_provider":
+        query = (
+            "SELECT lu.email FROM strategy_provider_accounts spa "
+            "JOIN live_users lu ON spa.user_id = lu.id WHERE spa.id=%s LIMIT 1"
+        )
+    elif user_type == "copy_follower":
+        query = (
+            "SELECT lu.email FROM copy_follower_accounts cfa "
+            "JOIN live_users lu ON cfa.user_id = lu.id WHERE cfa.id=%s LIMIT 1"
+        )
+
+    if not query:
+        return None
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                row = await cur.fetchone()
+                if row and row[0]:
+                    return str(row[0])
+    except Exception as e:
+        logger.error("AutoCutoffWatcher: Failed to fetch email via DB for %s:%s: %s", user_type, user_id, e)
+    return None
 
 
 async def _get_margin_level(user_type: str, user_id: str) -> float:
@@ -47,6 +129,15 @@ async def _get_user_email(user_type: str, user_id: str) -> Optional[str]:
             return str(em)
     except Exception:
         pass
+
+    email = await _fetch_email_from_db(user_type, user_id)
+    if email:
+        try:
+            key = f"user:{{{user_type}:{user_id}}}:config"
+            await redis_cluster.hset(key, mapping={"email": email})
+        except Exception:
+            pass
+        return email
     return None
 
 

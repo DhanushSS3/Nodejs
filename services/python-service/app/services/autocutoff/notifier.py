@@ -28,28 +28,62 @@ class EmailNotifier:
         self.sender = os.getenv("EMAIL_FROM", self.username or "noreply@example.com")
 
     def _build_message(self, *, to_addr: str, user_type: str, user_id: str, margin_level: float, threshold: float) -> MIMEMultipart:
+        subject_label, body_context = self._build_contextual_text(user_type=user_type, user_id=user_id)
+
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Margin Alert: Level {margin_level:.2f}% below {threshold:.0f}%"
+        msg["Subject"] = f"{subject_label}: Level {margin_level:.2f}% below {threshold:.0f}%"
         msg["From"] = self.sender
         msg["To"] = to_addr
 
+        intro_line = (
+            f"Your {body_context} margin level is at {margin_level:.2f}% which is below the safe threshold "
+            f"({threshold:.0f}%)."
+        )
+
+        footer_line = (
+            "Please add funds or reduce exposure immediately. This notification was sent to the primary "
+            "live-account email associated with this profile."
+        )
+
         text = (
             f"Hello,\n\n"
-            f"Your portfolio margin level is at {margin_level:.2f}% which is below the safe threshold ({threshold:.0f}%).\n"
-            f"Account: {user_type}:{user_id}\n\n"
-            f"Please add funds or reduce exposure. This is an automated alert.\n"
+            f"{intro_line}\n"
+            f"Account Reference: {user_type}:{user_id}\n\n"
+            f"{footer_line}\n"
         )
         html = (
             f"<html><body>"
             f"<p>Hello,</p>"
-            f"<p>Your portfolio margin level is at <b>{margin_level:.2f}%</b> which is below the safe threshold (<b>{threshold:.0f}%</b>).</p>"
-            f"<p>Account: <code>{user_type}:{user_id}</code></p>"
-            f"<p>Please add funds or reduce exposure. This is an automated alert.</p>"
+            f"<p>{intro_line}</p>"
+            f"<p><strong>Account Reference:</strong> <code>{user_type}:{user_id}</code></p>"
+            f"<p>{footer_line}</p>"
             f"</body></html>"
         )
         msg.attach(MIMEText(text, "plain"))
         msg.attach(MIMEText(html, "html"))
         return msg
+
+    def _build_contextual_text(self, *, user_type: str, user_id: str) -> tuple[str, str]:
+        normalized = (user_type or "").lower()
+        if normalized == "strategy_provider":
+            return (
+                "Strategy Provider Margin Alert",
+                f"strategy provider account (ID {user_id})"
+            )
+        if normalized == "copy_follower":
+            return (
+                "Copy Follower Margin Alert",
+                f"copy follower account (ID {user_id})"
+            )
+        if normalized == "demo":
+            return (
+                "Demo Account Margin Alert",
+                f"demo account (ID {user_id})"
+            )
+        return (
+            "Margin Alert",
+            f"live trading account (ID {user_id})"
+        )
 
     def _send_blocking(self, *, to_addr: str, msg: MIMEMultipart) -> None:
         # Use SSL for port 465, otherwise STARTTLS
