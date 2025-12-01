@@ -447,4 +447,92 @@ router.post('/strategy-providers/:accountId/withdraw',
   superadminTransactionController.processStrategyProviderWithdrawal
 );
 
+/**
+ * @swagger
+ * /api/superadmin/copy-followers/{accountId}/deposit:
+ *   post:
+ *     summary: Process deposit for a copy follower account (Superadmin only)
+ *     tags: [Superadmin Transactions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: accountId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Copy follower account ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/TransactionRequest'
+ *           example:
+ *             amount: 250.0
+ *             notes: "Manual funding"
+ *             referenceId: "CF_DEP_001"
+ *             method_type: "BANK"
+ *     responses:
+ *       200:
+ *         description: Deposit processed successfully
+ *       400:
+ *         description: Invalid input
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden (superadmin role required)
+ *       404:
+ *         description: Account not found
+ */
+router.post('/copy-followers/:accountId/deposit',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  handleValidationErrors,
+  superadminTransactionController.processCopyFollowerDeposit
+);
+
+/**
+ * @swagger
+ * /api/superadmin/copy-followers/{accountId}/withdraw:
+ *   post:
+ *     summary: Process withdrawal for a copy follower account (Superadmin only)
+ *     tags: [Superadmin Transactions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: accountId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Copy follower account ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/TransactionRequest'
+ *           example:
+ *             amount: 100.0
+ *             notes: "Manual withdrawal"
+ *             referenceId: "CF_WD_001"
+ *             method_type: "UPI"
+ *     responses:
+ *       200:
+ *         description: Withdrawal processed successfully
+ *       400:
+ *         description: Invalid input or insufficient balance
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden (superadmin role required)
+ *       404:
+ *         description: Account not found
+ */
+router.post('/copy-followers/:accountId/withdraw',
+  authenticateAdmin,
+  requireRole(['superadmin']),
+  handleValidationErrors,
+  superadminTransactionController.processCopyFollowerWithdrawal
+);
+
 module.exports = router;

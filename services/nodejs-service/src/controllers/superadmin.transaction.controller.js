@@ -8,6 +8,8 @@ class SuperadminTransactionController {
   constructor() {
     this.processStrategyProviderDeposit = this.processStrategyProviderDeposit.bind(this);
     this.processStrategyProviderWithdrawal = this.processStrategyProviderWithdrawal.bind(this);
+    this.processCopyFollowerDeposit = this.processCopyFollowerDeposit.bind(this);
+    this.processCopyFollowerWithdrawal = this.processCopyFollowerWithdrawal.bind(this);
   }
 
   /**
@@ -33,6 +35,28 @@ class SuperadminTransactionController {
   }
 
   /**
+   * Deposit for Copy Follower account shorthand endpoint
+   * POST /api/superadmin/copy-followers/:accountId/deposit
+   */
+  async processCopyFollowerDeposit(req, res) {
+    req.body = req.body || {};
+    req.body.userType = 'copy_follower';
+    req.params.userId = req.params.accountId;
+    return this.processDeposit(req, res);
+  }
+
+  /**
+   * Withdrawal for Copy Follower account shorthand endpoint
+   * POST /api/superadmin/copy-followers/:accountId/withdraw
+   */
+  async processCopyFollowerWithdrawal(req, res) {
+    req.body = req.body || {};
+    req.body.userType = 'copy_follower';
+    req.params.userId = req.params.accountId;
+    return this.processWithdrawal(req, res);
+  }
+
+  /**
    * Process deposit for a user
    * POST /api/superadmin/users/:userId/deposit
    */
@@ -51,10 +75,10 @@ class SuperadminTransactionController {
       }
 
       // Validate userType
-      if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
+      if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
+          message: 'Invalid userType. Must be "live", "demo", "strategy_provider", or "copy_follower"'
         });
       }
 

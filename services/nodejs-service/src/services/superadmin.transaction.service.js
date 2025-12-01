@@ -210,7 +210,7 @@ class SuperadminTransactionService {
       throw new Error('Missing required parameters: userId, userType, amount, adminId');
     }
 
-    if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
+    if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
       throw new Error('Invalid user type. Must be "live", "demo", or "strategy_provider"');
     }
 
