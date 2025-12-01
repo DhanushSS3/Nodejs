@@ -179,10 +179,10 @@ class SuperadminTransactionController {
       }
 
       // Validate userType
-      if (!['live', 'demo', 'strategy_provider'].includes(userType)) {
+      if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
+          message: 'Invalid userType. Must be "live", "demo", "strategy_provider", or "copy_follower"'
         });
       }
 
@@ -274,10 +274,10 @@ class SuperadminTransactionController {
       const { userType } = req.query;
 
       // Validate userType if provided
-      if (userType && !['live', 'demo', 'strategy_provider'].includes(userType)) {
+      if (userType && !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
+          message: 'Invalid userType. Must be "live", "demo", "strategy_provider", or "copy_follower"'
         });
       }
 
@@ -317,10 +317,10 @@ class SuperadminTransactionController {
       const { userType, limit = 50, offset = 0, type } = req.query;
 
       // Validate userType if provided
-      if (userType && !['live', 'demo', 'strategy_provider'].includes(userType)) {
+      if (userType && !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
+          message: 'Invalid userType. Must be "live", "demo", "strategy_provider", or "copy_follower"'
         });
       }
 
@@ -392,10 +392,10 @@ class SuperadminTransactionController {
       const { userType, days = 30 } = req.query;
 
       // Validate userType if provided
-      if (userType && !['live', 'demo', 'strategy_provider'].includes(userType)) {
+      if (userType && !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid userType. Must be "live", "demo", or "strategy_provider"'
+          message: 'Invalid userType. Must be "live", "demo", "strategy_provider", or "copy_follower"'
         });
       }
 
