@@ -847,6 +847,11 @@ class CopyTradingService {
         throw new Error(`Strategy provider not found: ${masterOrder.order_user_id}`);
       }
 
+      const [providerHasOpenOrders, followerHasOpenOrders] = await Promise.all([
+        this._userHasActiveOrders('strategy_provider', masterOrder.order_user_id),
+        this._userHasActiveOrders('copy_follower', follower.id)
+      ]);
+
       // Fetch live equity from Redis portfolio data (required)
       const portfolioKey = `user_portfolio:{strategy_provider:${masterOrder.order_user_id}}`;
       let portfolioData;
@@ -890,8 +895,13 @@ class CopyTradingService {
 
       let masterEquity;
       let equitySource;
+      const masterPortfolioUsedMargin = portfolioData
+        ? parseFloat(portfolioData.used_margin || portfolioData.used_margin_executed || '0') || 0
+        : 0;
+      const masterPortfolioIdle = !providerHasOpenOrders && masterPortfolioUsedMargin <= 0;
+      const hasFreshMasterPortfolio = Boolean(portfolioData?.equity) && !masterPortfolioIdle;
       
-      if (!portfolioData || !portfolioData.equity) {
+      if (!hasFreshMasterPortfolio) {
         // Enhanced fallback: Check Redis config for updated balance first, then DB wallet_balance
         let configBalance = null;
         try {
@@ -917,14 +927,16 @@ class CopyTradingService {
         masterEquity = (configBalance && configBalance > 0) ? configBalance : parseFloat(strategyProvider.wallet_balance || 0);
         equitySource = (configBalance && configBalance > 0) ? 'redis_config_balance' : 'db_wallet_balance_fallback';
         
-        logger.warn('No live equity data available in Redis portfolio, using enhanced fallback', {
+        logger.warn('Strategy provider portfolio snapshot unavailable or idle, using fallback balance', {
           strategyProviderId: masterOrder.order_user_id,
           portfolioKey,
           portfolioData: portfolioData ? Object.keys(portfolioData) : null,
           configBalance,
           dbWalletBalance: strategyProvider.wallet_balance,
           finalEquity: masterEquity,
-          equitySource
+          equitySource,
+          providerHasOpenOrders,
+          masterPortfolioUsedMargin
         });
         
         if (masterEquity <= 0) {
@@ -983,7 +995,13 @@ class CopyTradingService {
 
       let followerEquity;
       let followerEquitySource;
-      if (followerPortfolioData && followerPortfolioData.equity) {
+      const followerPortfolioUsedMargin = followerPortfolioData
+        ? parseFloat(followerPortfolioData.used_margin || followerPortfolioData.used_margin_executed || '0') || 0
+        : 0;
+      const followerPortfolioIdle = !followerHasOpenOrders && followerPortfolioUsedMargin <= 0;
+      const followerPortfolioFresh = Boolean(followerPortfolioData?.equity) && !followerPortfolioIdle;
+
+      if (followerPortfolioFresh) {
         followerEquity = parseFloat(followerPortfolioData.equity);
         followerEquitySource = 'redis_portfolio';
       } else {
@@ -1014,6 +1032,16 @@ class CopyTradingService {
           );
           followerEquitySource = 'db_account_balance_fallback';
         }
+
+        logger.warn('Follower portfolio snapshot unavailable or idle, using fallback balance', {
+          copyFollowerId: follower.id,
+          followerPortfolioKey,
+          followerPortfolioFields: followerPortfolioData ? Object.keys(followerPortfolioData) : null,
+          followerHasOpenOrders,
+          followerPortfolioUsedMargin,
+          finalEquity: followerEquity,
+          followerEquitySource
+        });
       }
 
       if (!(followerEquity > 0)) {
@@ -1034,6 +1062,7 @@ class CopyTradingService {
           id: follower.id,
           equity: follower.equity,
           wallet_balance: follower.wallet_balance,
+          followerHasOpenOrders,
           followerEquity,
           equitySource: followerEquitySource
         },
@@ -2636,6 +2665,49 @@ class CopyTradingService {
         error: error.message
       });
       return { success: false, error: error.message };
+    }
+  }
+
+  async _userHasActiveOrders(userType, userId) {
+    const formattedUserType = String(userType);
+    const formattedUserId = String(userId);
+    const hashTag = `${formattedUserType}:${formattedUserId}`;
+    const indexKey = `user_orders_index:{${hashTag}}`;
+
+    try {
+      const orderIds = await redisCluster.smembers(indexKey);
+      if (!orderIds || orderIds.length === 0) {
+        return false;
+      }
+
+      const pipeline = redisCluster.pipeline();
+      for (const orderId of orderIds) {
+        pipeline.hgetall(`user_holdings:{${hashTag}}:${orderId}`);
+      }
+
+      const results = await pipeline.exec();
+      for (const entry of results) {
+        const holding = Array.isArray(entry) ? entry[1] : entry;
+        if (!holding || Object.keys(holding).length === 0) {
+          continue;
+        }
+        const orderStatus = String(holding.order_status || '').toUpperCase();
+        const executionStatus = String(holding.execution_status || '').toUpperCase();
+        const isClosedStatus = ['CLOSED', 'CANCELLED', 'REJECTED'].includes(orderStatus);
+        const isClosedExecution = ['CLOSED', 'CANCELLED', 'REJECTED'].includes(executionStatus);
+        if (!isClosedStatus || !isClosedExecution) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch (error) {
+      logger.warn('Failed to determine active order state from Redis, defaulting to active', {
+        userType: formattedUserType,
+        userId: formattedUserId,
+        error: error.message
+      });
+      return true;
     }
   }
 }
