@@ -16,6 +16,7 @@ from app.services.orders.order_repository import (
     set_idempotency_placeholder,
     save_idempotency_result,
 )
+from app.services.logging.symbol_holders_logger import get_symbol_holders_logger
 from app.services.price_utils import get_execution_price
 from app.services.portfolio.margin_calculator import compute_single_order_margin
 from app.services.orders.commission_calculator import compute_entry_commission
@@ -37,6 +38,7 @@ idempotent replays.
 """
 
 logger = logging.getLogger(__name__)
+symbol_logger = get_symbol_holders_logger()
 
 # User-level locks to prevent race conditions during order operations
 _user_locks = {}

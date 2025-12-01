@@ -9,9 +9,14 @@ from redis.exceptions import ResponseError
 
 from app.config.redis_config import redis_cluster
 from app.config.redis_logging import (
-    log_connection_acquire, log_connection_release, log_connection_error,
-    log_pipeline_operation, connection_tracker, generate_operation_id
+    log_connection_acquire,
+    log_connection_release,
+    log_connection_error,
+    log_pipeline_operation,
+    connection_tracker,
+    generate_operation_id,
 )
+from app.services.logging.symbol_holders_logger import get_symbol_holders_logger
 from app.services.orders.order_repository import fetch_user_config, fetch_user_portfolio
 from app.services.orders.sl_tp_repository import remove_order_triggers
 from app.services.orders.order_repository import (
@@ -27,8 +32,9 @@ from app.services.groups.group_config_helper import get_group_config_with_fallba
 from app.services.logging.provider_logger import get_provider_errors_logger
 from app.services.rabbitmq_client import publish_db_update
 
-logger = logging.getLogger(__name__)
+logger = get_worker_close_logger()
 error_logger = get_provider_errors_logger()
+symbol_logger = get_symbol_holders_logger()
 
 # User-level locks to prevent race conditions during order operations
 _user_locks: Dict[str, asyncio.Lock] = {}
@@ -727,6 +733,14 @@ class OrderCloser:
                 # Symbol holders cleanup if no more orders for same symbol with connection tracking
                 if symbol:
                     any_same_symbol = any(str(od.get("symbol", "")).upper() == str(symbol).upper() for od in remaining)
+                    if any_same_symbol:
+                        symbol_logger.info(
+                            "[CLOSE:SYMBOL_HOLDERS_SKIP] user=%s:%s symbol=%s reason=%s",
+                            user_type,
+                            user_id,
+                            symbol,
+                            "other_open_orders_present",
+                        )
                     if not any_same_symbol:
                         symbol_operation_id = generate_operation_id()
                         connection_tracker.start_operation(symbol_operation_id, "cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}")
@@ -734,6 +748,13 @@ class OrderCloser:
                         
                         try:
                             await redis_cluster.srem(f"symbol_holders:{symbol}:{user_type}", f"{user_type}:{user_id}")
+                            symbol_logger.info(
+                                "[CLOSE:SYMBOL_HOLDERS_REMOVE] user=%s:%s symbol=%s key=%s",
+                                user_type,
+                                user_id,
+                                symbol,
+                                f"symbol_holders:{symbol}:{user_type}",
+                            )
                             log_connection_release("cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}", symbol_operation_id)
                             connection_tracker.end_operation(symbol_operation_id, success=True)
                         except Exception as e:

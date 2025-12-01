@@ -12,9 +12,11 @@ from app.config.redis_logging import (
     log_connection_acquire, log_connection_release, log_connection_error,
     log_pipeline_operation, connection_tracker, generate_operation_id
 )
+from app.services.logging.symbol_holders_logger import get_symbol_holders_logger
 from app.services.logging.timing_logger import get_orders_timing_logger
 
 logger = logging.getLogger(__name__)
+symbol_logger = get_symbol_holders_logger()
 _TIMING_LOG = get_orders_timing_logger()
 
 # Module-level cache for script text
@@ -498,7 +500,15 @@ async def place_order_atomic_or_fallback(
             # Perform non-user-scoped updates outside Lua to avoid cross-slot access
             try:
                 symbol_holders_key = f"symbol_holders:{symbol}:{user_type}"
-                await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                sadd_result = await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                symbol_logger.info(
+                    "[ORDER_REPO:SYMBOL_HOLDERS_ADD] user=%s:%s symbol=%s key=%s added=%s",
+                    user_type,
+                    user_id,
+                    symbol,
+                    symbol_holders_key,
+                    bool(sadd_result),
+                )
                 # Index the order id for efficient listing without SCAN
                 index_key = f"user_orders_index:{{{hash_tag}}}"
                 await redis_cluster.sadd(index_key, order_id)
@@ -526,7 +536,15 @@ async def place_order_atomic_or_fallback(
                         if data2 and data2.get("ok"):
                             try:
                                 symbol_holders_key = f"symbol_holders:{symbol}:{user_type}"
-                                await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                                sadd_retry = await redis_cluster.sadd(symbol_holders_key, f"{user_type}:{user_id}")
+                                symbol_logger.info(
+                                    "[ORDER_REPO:SYMBOL_HOLDERS_ADD_RETRY] user=%s:%s symbol=%s key=%s added=%s",
+                                    user_type,
+                                    user_id,
+                                    symbol,
+                                    symbol_holders_key,
+                                    bool(sadd_retry),
+                                )
                                 index_key = f"user_orders_index:{{{hash_tag}}}"
                                 await redis_cluster.sadd(index_key, order_id)
                             except Exception as e:

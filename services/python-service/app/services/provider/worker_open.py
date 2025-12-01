@@ -152,6 +152,13 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
                     if symbol:
                         sym_set = f"symbol_holders:{symbol}:{user_type}"
                         pipe.sadd(sym_set, hash_tag)
+                        logger.info(
+                            "[WORKER_OPEN:SYMBOL_HOLDERS_ENSURE] user=%s:%s symbol=%s key=%s",
+                            user_type,
+                            user_id,
+                            symbol,
+                            sym_set,
+                        )
                 except Exception:
                     pass
                 await pipe.execute()
