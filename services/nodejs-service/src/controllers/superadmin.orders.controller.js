@@ -4,6 +4,8 @@ const OrdersBackfillService = require('../services/orders.backfill.service');
 const { redisCluster } = require('../../config/redis');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const logger = require('../services/logger.service');
 
 function ok(res, data, message = 'OK') {
@@ -12,6 +14,9 @@ function ok(res, data, message = 'OK') {
 function bad(res, message, code = 400) {
   return res.status(code).json({ success: false, message });
 }
+
+const SUPPORTED_USER_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
+const BACKFILL_SUPPORTED_TYPES = new Set(['live', 'demo']);
 
 // POST /api/superadmin/orders/reject-queued
 // body: { order_id: string, user_type: 'live'|'demo', user_id: string|number, reason?: string }
@@ -116,49 +121,189 @@ async function rebuildUser(req, res) {
     const prune = Boolean(req.body.prune);
     const pruneSymbolHolders = Boolean(req.body.prune_symbol_holders);
 
-    if (!['live', 'demo'].includes(user_type) || !user_id) {
-      return bad(res, 'user_type must be live|demo and user_id is required');
+    if (!SUPPORTED_USER_TYPES.has(user_type) || !user_id) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower and user_id is required');
     }
 
-    let result;
-    if (backfill) {
-      // Backfill holdings from SQL, then ensure index and symbol holders
-      result = await OrdersBackfillService.backfillUserHoldingsFromSql(user_type, user_id, { includeQueued });
-    } else {
-      // Only rebuild indices from existing holdings
-      result = await OrdersIndexRebuildService.rebuildUserIndices(user_type, user_id);
+    const processed = new Set([`${user_type}:${user_id}`]);
+    const rebuildOptions = { includeQueued, backfill, deep, prune, pruneSymbolHolders };
+
+    const primary = await performUserRebuildFlow(user_type, user_id, rebuildOptions);
+    const relatedRebuilds = await rebuildAssociatedCopyTradingAccounts(
+      user_type,
+      user_id,
+      rebuildOptions,
+      processed
+    );
+
+    const responseData = typeof primary.data === 'object' && primary.data !== null
+      ? { ...primary.data }
+      : primary.data;
+
+    if (responseData && typeof responseData === 'object' && relatedRebuilds.length) {
+      responseData.related_rebuilds = relatedRebuilds;
     }
 
-    // Perform deep rebuild of execution-related caches (pending, triggers, order_data, user config)
-    let deepResult = null;
-    if (deep) {
-      try {
-        deepResult = await OrdersBackfillService.rebuildUserExecutionCaches(user_type, user_id, { includeQueued: true });
-      } catch (e) {
-        logger.warn('Deep execution-cache rebuild failed', { error: e.message, user_type, user_id });
-      }
+    let responseMessage = primary.message;
+    if (relatedRebuilds.length) {
+      responseMessage = `${responseMessage}; ${relatedRebuilds.length} associated copy-trading account(s) rebuilt`;
     }
 
-    // Optional prune of Redis entries not present in SQL
-    let pruneResult = null;
-    if (prune) {
-      try {
-        pruneResult = await OrdersBackfillService.pruneUserRedisAgainstSql(user_type, user_id, { deep: true, pruneSymbolHolders });
-      } catch (e) {
-        logger.warn('Prune against SQL failed', { error: e.message, user_type, user_id });
-      }
-    }
-
-    const message = backfill
-      ? 'User holdings backfilled from SQL and indices rebuilt'
-      : 'User indices rebuilt from holdings';
-    let data = deep ? { base: result, deep: deepResult } : result;
-    if (prune) data = { ...data, prune: pruneResult };
-    let msg = deep ? `${message}; execution caches rebuilt` : message;
-    if (prune) msg = `${msg}; stale Redis pruned`;
-    return ok(res, data, msg);
+    return ok(res, responseData, responseMessage);
   } catch (err) {
     return bad(res, `Failed to rebuild user indices: ${err.message}`, 500);
+  }
+}
+
+async function performUserRebuildFlow(user_type, user_id, options = {}) {
+  const normalizedId = String(user_id).trim();
+  const includeQueued = Boolean(options.includeQueued);
+  const canBackfill = BACKFILL_SUPPORTED_TYPES.has(user_type);
+  const shouldBackfill = Boolean(options.backfill) && canBackfill;
+
+  let baseResult;
+  if (shouldBackfill) {
+    baseResult = await OrdersBackfillService.backfillUserHoldingsFromSql(
+      user_type,
+      normalizedId,
+      { includeQueued }
+    );
+  } else {
+    if (options.backfill && !canBackfill) {
+      logger.info('Backfill not supported for user type; running index rebuild only', { user_type, user_id: normalizedId });
+    }
+    baseResult = await OrdersIndexRebuildService.rebuildUserIndices(user_type, normalizedId);
+  }
+
+  let data = baseResult;
+  let message = shouldBackfill
+    ? 'User holdings backfilled from SQL and indices rebuilt'
+    : 'User indices rebuilt from holdings';
+
+  const shouldDeep = Boolean(options.deep);
+  if (shouldDeep && canBackfill) {
+    try {
+      const deepResult = await OrdersBackfillService.rebuildUserExecutionCaches(
+        user_type,
+        normalizedId,
+        { includeQueued: true }
+      );
+      data = { base: baseResult, deep: deepResult };
+      message = `${message}; execution caches rebuilt`;
+    } catch (e) {
+      logger.warn('Deep execution-cache rebuild failed', { error: e.message, user_type, user_id: normalizedId });
+    }
+  } else if (shouldDeep && !canBackfill) {
+    logger.info('Deep rebuild skipped for unsupported user type', { user_type, user_id: normalizedId });
+  }
+
+  const shouldPrune = Boolean(options.prune);
+  if (shouldPrune && canBackfill) {
+    try {
+      const pruneResult = await OrdersBackfillService.pruneUserRedisAgainstSql(
+        user_type,
+        normalizedId,
+        { deep: true, pruneSymbolHolders: Boolean(options.pruneSymbolHolders) }
+      );
+      if (data && typeof data === 'object' && data !== baseResult && data.base) {
+        data = { ...data, prune: pruneResult };
+      } else {
+        data = { ...baseResult, prune: pruneResult };
+      }
+      message = `${message}; stale Redis pruned`;
+    } catch (e) {
+      logger.warn('Prune against SQL failed', { error: e.message, user_type, user_id: normalizedId });
+    }
+  } else if (shouldPrune && !canBackfill) {
+    logger.info('Prune skipped for unsupported user type', { user_type, user_id: normalizedId });
+  }
+
+  return { data, message };
+}
+
+async function rebuildAssociatedCopyTradingAccounts(user_type, user_id, options, processedSet) {
+  const related = [];
+  const sharedChildOptions = {
+     includeQueued: false,
+     backfill: false,
+     deep: false,
+     prune: false,
+     pruneSymbolHolders: Boolean(options.pruneSymbolHolders),
+  };
+
+  if (user_type === 'live' || user_type === 'demo') {
+    const owned = await rebuildAccountsOwnedByUser(user_id, sharedChildOptions, processedSet);
+    related.push(...owned);
+  }
+
+  if (user_type === 'strategy_provider') {
+    const followers = await rebuildFollowersForStrategyProvider(user_id, sharedChildOptions, processedSet);
+    related.push(...followers);
+  }
+
+  return related;
+}
+
+async function rebuildAccountsOwnedByUser(ownerUserId, options, processedSet) {
+  const results = [];
+  const ownerPk = Number(ownerUserId);
+  if (Number.isNaN(ownerPk)) {
+    return results;
+  }
+
+  const strategyAccounts = await StrategyProviderAccount.findAll({ where: { user_id: ownerPk } });
+  for (const account of strategyAccounts) {
+    const rebuilt = await rebuildChildAccount('strategy_provider', account.id, options, processedSet);
+    if (rebuilt) results.push(rebuilt);
+  }
+
+  const followerAccounts = await CopyFollowerAccount.findAll({ where: { user_id: ownerPk } });
+  for (const account of followerAccounts) {
+    const rebuilt = await rebuildChildAccount('copy_follower', account.id, options, processedSet);
+    if (rebuilt) results.push(rebuilt);
+  }
+
+  return results;
+}
+
+async function rebuildFollowersForStrategyProvider(strategyProviderId, options, processedSet) {
+  const results = [];
+  const providerPk = Number(strategyProviderId);
+  if (Number.isNaN(providerPk)) {
+    return results;
+  }
+
+  const followerAccounts = await CopyFollowerAccount.findAll({ where: { strategy_provider_id: providerPk } });
+  for (const account of followerAccounts) {
+    const rebuilt = await rebuildChildAccount('copy_follower', account.id, options, processedSet);
+    if (rebuilt) results.push(rebuilt);
+  }
+
+  return results;
+}
+
+async function rebuildChildAccount(user_type, user_id, options, processedSet) {
+  const key = `${user_type}:${user_id}`;
+  if (processedSet.has(key)) {
+    return null;
+  }
+  processedSet.add(key);
+
+  try {
+    const result = await performUserRebuildFlow(user_type, String(user_id), options);
+    return {
+      user_type,
+      user_id: String(user_id),
+      message: result.message,
+      data: result.data,
+    };
+  } catch (error) {
+    logger.error('Failed to rebuild associated account', { user_type, user_id, error: error.message });
+    return {
+      user_type,
+      user_id: String(user_id),
+      error: error.message,
+    };
   }
 }
 
