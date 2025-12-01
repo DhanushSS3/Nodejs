@@ -1445,14 +1445,55 @@ class CopyTradingService {
    * @param {Object} masterOrder - Master order
    */
   async closeFollowerOrder(copiedOrder, masterOrder) {
+    const orderIdStr = String(copiedOrder.order_id);
+    const closeLockKey = `copy_follower_close_lock:${orderIdStr}`;
+    const closeProcessedKey = `copy_follower_close_processed:${orderIdStr}`;
+    let lockAcquired = false;
+
     try {
+      // Re-fetch latest status to ensure we don't close an already closed order
+      const latestOrder = await CopyFollowerOrder.findOne({
+        where: { order_id: orderIdStr },
+        attributes: ['order_status', 'status']
+      });
+
+      const effectiveStatus = ((latestOrder?.order_status) || copiedOrder.order_status || '').toUpperCase();
+      if (['CLOSED', 'CANCELLED'].includes(effectiveStatus)) {
+        logger.info('Skipping copy follower close - order already finalized', {
+          copiedOrderId: orderIdStr,
+          masterOrderId: masterOrder.order_id,
+          effectiveStatus
+        });
+        return { skipped: true, reason: 'already_closed' };
+      }
+
+      // Prevent concurrent close attempts for the same follower order
+      const acquiredLock = await redisCluster.set(closeLockKey, '1', 'EX', 60, 'NX');
+      if (!acquiredLock) {
+        logger.info('Skipping copy follower close - lock already held', {
+          copiedOrderId: orderIdStr,
+          masterOrderId: masterOrder.order_id
+        });
+        return { skipped: true, reason: 'close_in_progress' };
+      }
+      lockAcquired = true;
+
+      const alreadyProcessed = await redisCluster.get(closeProcessedKey);
+      if (alreadyProcessed) {
+        logger.info('Skipping copy follower close - close already processed flag set', {
+          copiedOrderId: orderIdStr,
+          masterOrderId: masterOrder.order_id
+        });
+        return { skipped: true, reason: 'already_processed' };
+      }
+
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       
       // Generate close_id for copy follower order
       const close_id = await idGenerator.generateOrderId();
       
       const payload = {
-        order_id: String(copiedOrder.order_id), // Ensure it's a string
+        order_id: orderIdStr, // Ensure it's a string
         user_id: String(copiedOrder.order_user_id), // Ensure it's a string
         user_type: 'copy_follower',
         symbol: copiedOrder.symbol,           // Required by Python schema
@@ -1467,7 +1508,7 @@ class CopyTradingService {
 
       // Debug log the payload
       logger.info('Closing follower order payload', {
-        copiedOrderId: copiedOrder.order_id,
+        copiedOrderId: orderIdStr,
         masterOrderId: masterOrder.order_id,
         payload
       });
@@ -1502,11 +1543,11 @@ class CopyTradingService {
           
           // Update copy follower order in database
           await CopyFollowerOrder.update(updateFields, {
-            where: { order_id: copiedOrder.order_id }
+            where: { order_id: orderIdStr }
           });
           
           logger.info('Copy follower order updated in database after local close', {
-            copiedOrderId: copiedOrder.order_id,
+            copiedOrderId: orderIdStr,
             masterOrderId: masterOrder.order_id,
             updateFields
           });
@@ -1521,7 +1562,7 @@ class CopyTradingService {
               });
               
               logger.info('Copy follower margin updated after local close', {
-                copiedOrderId: copiedOrder.order_id,
+                copiedOrderId: orderIdStr,
                 user_id: copiedOrder.order_user_id,
                 used_margin: result.used_margin_executed
               });
@@ -1538,7 +1579,7 @@ class CopyTradingService {
           let adjustedNetProfit = Number(result.net_profit) || 0;
           let payoutApplied = false;
           try {
-            const payoutKey = `close_payout_applied:${String(copiedOrder.order_id)}`;
+            const payoutKey = `close_payout_applied:${orderIdStr}`;
             const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
             if (nx) {
               payoutApplied = true;
@@ -1575,11 +1616,11 @@ class CopyTradingService {
                 await CopyFollowerOrder.update({
                   net_profit: String(adjustedNetProfit)
                 }, {
-                  where: { order_id: copiedOrder.order_id }
+                  where: { order_id: orderIdStr }
                 });
                 
                 logger.info('Copy follower order net profit updated in database', {
-                  copiedOrderId: copiedOrder.order_id,
+                  copiedOrderId: orderIdStr,
                   net_profit: adjustedNetProfit,
                   hasPerformanceFee: performanceFeeResult?.performanceFeeCharged || false
                 });
@@ -1595,16 +1636,16 @@ class CopyTradingService {
                   await CopyFollowerOrder.update({
                     net_profit: String(adjustedNetProfit)
                   }, {
-                    where: { order_id: copiedOrder.order_id }
+                    where: { order_id: orderIdStr }
                   });
                   
                   logger.info('Copy follower order net profit updated (performance fee failed)', {
-                    copiedOrderId: copiedOrder.order_id,
+                    copiedOrderId: orderIdStr,
                     net_profit: adjustedNetProfit
                   });
                 } catch (updateError) {
                   logger.error('Failed to update copy follower order net profit', {
-                    copiedOrderId: copiedOrder.order_id,
+                    copiedOrderId: orderIdStr,
                     error: updateError.message
                   });
                 }
@@ -1615,7 +1656,7 @@ class CopyTradingService {
                 userType: 'copy_follower',
                 userId: parseInt(copiedOrder.order_user_id),
                 orderPk: copiedOrder?.id ?? null,
-                orderIdStr: String(copiedOrder.order_id),
+                orderIdStr,
                 netProfit: adjustedNetProfit,
                 commission: Number(result.total_commission) || 0,
                 profitUsd: Number(result.profit_usd) || 0,
@@ -1625,7 +1666,7 @@ class CopyTradingService {
               });
               
               logger.info('Copy follower wallet payout applied after local close', {
-                copiedOrderId: copiedOrder.order_id,
+                copiedOrderId: orderIdStr,
                 user_id: copiedOrder.order_user_id,
                 adjustedNetProfit
               });
@@ -1635,7 +1676,7 @@ class CopyTradingService {
                 const portfolioEvents = require('./events/portfolio.events');
                 portfolioEvents.emitUserUpdate('copy_follower', String(copiedOrder.order_user_id), { 
                   type: 'wallet_balance_update', 
-                  order_id: copiedOrder.order_id 
+                  order_id: orderIdStr 
                 });
                 
                 // If performance fee was applied, also emit update for strategy provider
@@ -1643,7 +1684,7 @@ class CopyTradingService {
                   portfolioEvents.emitUserUpdate('strategy_provider', String(masterOrder.order_user_id), {
                     type: 'wallet_balance_update',
                     reason: 'performance_fee_earned',
-                    order_id: copiedOrder.order_id,
+                    order_id: orderIdStr,
                   });
                 }
               } catch (_) {}
@@ -1657,18 +1698,32 @@ class CopyTradingService {
 
         } catch (dbError) {
           logger.error('Failed to update copy follower order in database', {
-            copiedOrderId: copiedOrder.order_id,
+            copiedOrderId: orderIdStr,
             error: dbError.message
           });
         }
       }
 
+      await redisCluster.set(closeProcessedKey, '1', 'EX', 7 * 24 * 3600);
+      return { success: true };
     } catch (error) {
       logger.error('Failed to close follower order', {
         copiedOrderId: copiedOrder.order_id,
         masterOrderId: masterOrder.order_id,
         error: error.message
       });
+      return { success: false, error: error.message };
+    } finally {
+      if (lockAcquired) {
+        try {
+          await redisCluster.del(closeLockKey);
+        } catch (lockErr) {
+          logger.warn('Failed to release copy follower close lock', {
+            copiedOrderId: orderIdStr,
+            error: lockErr.message
+          });
+        }
+      }
     }
   }
 
