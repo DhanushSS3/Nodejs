@@ -11,6 +11,10 @@ const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
 const StrategyProviderAccount = require('../../models/strategyProviderAccount.model');
 const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
+const {
+  getSession,
+  deleteSession,
+} = require('../../utils/redisSession.util');
 
 // Connection tracking and limits
 const userConnCounts = new Map(); // key: user_type:user_id -> count
@@ -77,7 +81,29 @@ function removeConnection(userKey, ws) {
   return n;
 }
 
-function closeOldestConnection(userKey) {
+async function revokeConnectionSession(ws) {
+  if (!ws || !ws._sessionMeta) return;
+  const { sessionOwnerId, sessionOwnerType, sessionId } = ws._sessionMeta;
+  if (!sessionOwnerId || !sessionOwnerType || !sessionId) return;
+
+  try {
+    await deleteSession(sessionOwnerId, sessionId, sessionOwnerType);
+    logger.info('Revoked access token session after WebSocket limit enforcement', {
+      sessionOwnerId,
+      sessionOwnerType,
+      sessionId,
+    });
+  } catch (err) {
+    logger.warn('Failed to revoke WebSocket session during limit enforcement', {
+      error: err.message,
+      sessionOwnerId,
+      sessionOwnerType,
+      sessionId,
+    });
+  }
+}
+
+async function closeOldestConnection(userKey) {
   if (!userConnections.has(userKey)) {
     return false;
   }
@@ -100,6 +126,7 @@ function closeOldestConnection(userKey) {
   }
 
   if (oldestWs) {
+    await revokeConnectionSession(oldestWs);
     oldestWs._removedFromLimit = true;
     oldestWs._closedDueToLimit = true;
     connectionLimitGrace.set(userKey, Date.now());
@@ -354,6 +381,30 @@ function startPortfolioWSServer(server) {
 
     // Determine user ID and type based on JWT structure and parameters
     let userId, userType, copyFollowerAccount = null;
+    const sessionOwnerId = user.sub || user.user_id || user.id;
+    const sessionIdFromToken = user.session_id || user.sessionId || user.jwtid || user.jti;
+    const sessionOwnerType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
+
+    if (!sessionOwnerId || !sessionIdFromToken) {
+      ws.close(4401, 'Invalid token session');
+      return;
+    }
+
+    try {
+      const activeSession = await getSession(sessionOwnerId, sessionIdFromToken, sessionOwnerType);
+      if (!activeSession) {
+        ws.close(4401, 'Token revoked or expired');
+        return;
+      }
+    } catch (err) {
+      logger.error('Failed to validate JWT session for WebSocket connection', {
+        error: err.message,
+        sessionOwnerId,
+        sessionOwnerType,
+      });
+      ws.close(4500, 'Unable to validate session');
+      return;
+    }
     
     if (copyFollowerAccountId) {
       // Copy follower account connection - validate ownership
@@ -399,6 +450,11 @@ function startPortfolioWSServer(server) {
     }
     
     const userKey = getUserKey(userType, userId);
+    ws._sessionMeta = {
+      sessionOwnerId,
+      sessionOwnerType,
+      sessionId: sessionIdFromToken,
+    };
 
     // If we recently forced a close for this user, reject the new connection to prevent churn
     const graceSince = connectionLimitGrace.get(userKey) || 0;
@@ -426,7 +482,7 @@ function startPortfolioWSServer(server) {
         maxAllowed: MAX_CONNECTIONS_PER_USER 
       });
       while ((userConnCounts.get(userKey) || 0) >= MAX_CONNECTIONS_PER_USER) {
-        const closed = closeOldestConnection(userKey);
+        const closed = await closeOldestConnection(userKey);
         if (!closed) {
           break;
         }
