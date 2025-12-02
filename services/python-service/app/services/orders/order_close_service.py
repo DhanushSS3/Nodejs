@@ -29,7 +29,10 @@ from app.services.portfolio.conversion_utils import convert_to_usd
 from app.services.orders.service_provider_client import send_provider_order
 from app.services.orders.order_registry import add_lifecycle_id
 from app.services.groups.group_config_helper import get_group_config_with_fallback
-from app.services.logging.provider_logger import get_provider_errors_logger
+from app.services.logging.provider_logger import (
+    get_provider_errors_logger,
+    get_worker_close_logger,
+)
 from app.services.rabbitmq_client import publish_db_update
 
 logger = get_worker_close_logger()
