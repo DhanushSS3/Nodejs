@@ -135,10 +135,26 @@ class CopyTradingService {
       // Add to symbol holders
       await redisCluster.sadd(symbol_holders_key, hash_tag);
 
+      logger.redis('order_redis_snapshot_created', {
+        userType,
+        userId: order.order_user_id,
+        orderId: order.order_id,
+        orderKey: order_key,
+        indexKey: index_key,
+        orderDataKey: order_data_key,
+        symbolHoldersKey: symbol_holders_key
+      });
+
       logger.info(`Created Redis entries for ${userType} order ${order.order_id}`);
 
     } catch (error) {
       logger.error(`Failed to create Redis entries for ${userType} order ${order.order_id}`, {
+        error: error.message
+      });
+      logger.redis('order_redis_snapshot_failed', {
+        userType,
+        userId: order.order_user_id,
+        orderId: order.order_id,
         error: error.message
       });
       throw error;

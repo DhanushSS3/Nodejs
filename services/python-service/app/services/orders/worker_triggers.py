@@ -15,6 +15,7 @@ from app.config.redis_logging import (
     log_pipeline_operation, connection_tracker, generate_operation_id
 )
 from app.services.orders.order_close_service import OrderCloser
+from app.services.logging.redis_order_logger import log_redis_order_event
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -205,7 +206,17 @@ class TriggerMonitor:
                     await redis_cluster.delete(processing_key)
                 except Exception:
                     pass
+                log_redis_order_event("trigger_processing_completed", {
+                    "order_id": order_id,
+                    "trigger_type": trigger_type
+                })
                 continue
+
+            log_redis_order_event("trigger_processing_started", {
+                "order_id": order_id,
+                "trigger_type": trigger_type,
+                "processing_key": processing_key
+            })
 
             try:
                 user_type = str(trig.get("user_type"))
@@ -270,6 +281,12 @@ class TriggerMonitor:
                 result = await self._closer.close_order(payload)
                 if not result.get("ok"):
                     logger.error("[TRIGGER:close_failed] order_id=%s reason=%s", order_id, result.get("reason"))
+                    log_redis_order_event("trigger_close_failed", {
+                        "order_id": order_id,
+                        "trigger_type": trigger_type,
+                        "close_reason": close_message,
+                        "reason": result.get("reason")
+                    })
                     # allow retry later
                     try:
                         await redis_cluster.delete(processing_key)

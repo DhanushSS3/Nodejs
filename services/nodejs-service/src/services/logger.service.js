@@ -9,6 +9,11 @@ if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
+// Preserve native console methods so we can override them later without recursion
+const nativeConsoleLog = console.log.bind(console);
+const nativeConsoleWarn = console.warn.bind(console);
+const nativeConsoleError = console.error.bind(console);
+
 // Winston logger for file-based error logging with rotation
 const errorLogger = winston.createLogger({
   level: 'error',
@@ -47,6 +52,67 @@ const appLogger = winston.createLogger({
   ]
 });
 
+// Dedicated Redis audit logger (captures creations/removals of key order structures)
+const redisLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join(logsDir, 'redis-audit-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '14d',
+      zippedArchive: true
+    })
+  ]
+});
+
+function writeApplicationLog(level, message, context) {
+  const payload = {
+    level,
+    message,
+    timestamp: new Date().toISOString(),
+    ...context
+  };
+  try {
+    appLogger.log({ level, message, ...payload });
+  } catch (err) {
+    nativeConsoleError('Failed to write application log', err);
+  }
+}
+
+function captureConsoleOutput(level, args) {
+  try {
+    const message = args.map(arg => {
+      if (typeof arg === 'string') return arg;
+      try { return JSON.stringify(arg); } catch (_) { return String(arg); }
+    }).join(' ');
+    writeApplicationLog(level, message, { source: 'console' });
+  } catch (err) {
+    nativeConsoleError('Console capture failed', err);
+  }
+}
+
+console.log = (...args) => {
+  captureConsoleOutput('info', args);
+  nativeConsoleLog(...args);
+};
+
+console.info = console.log;
+
+console.warn = (...args) => {
+  captureConsoleOutput('warn', args);
+  nativeConsoleWarn(...args);
+};
+
+console.error = (...args) => {
+  captureConsoleOutput('error', args);
+  nativeConsoleError(...args);
+};
+
 /**
  * Logger service for financial trading system
  * Provides structured logging for transactions, errors, and operations
@@ -59,12 +125,14 @@ class Logger {
    * @param {Object} context 
    */
   static info(message, context = {}) {
-    console.log(JSON.stringify({
+    const payload = {
       level: 'info',
       timestamp: new Date().toISOString(),
       message,
       ...context
-    }));
+    };
+    nativeConsoleLog(JSON.stringify(payload));
+    writeApplicationLog('info', message, context);
   }
 
   /**
@@ -73,12 +141,14 @@ class Logger {
    * @param {Object} context 
    */
   static warn(message, context = {}) {
-    console.warn(JSON.stringify({
+    const payload = {
       level: 'warn',
       timestamp: new Date().toISOString(),
       message,
       ...context
-    }));
+    };
+    nativeConsoleWarn(JSON.stringify(payload));
+    writeApplicationLog('warn', message, context);
   }
 
   /**
@@ -87,12 +157,14 @@ class Logger {
    * @param {Object} context 
    */
   static error(message, context = {}) {
-    console.error(JSON.stringify({
+    const payload = {
       level: 'error',
       timestamp: new Date().toISOString(),
       message,
       ...context
-    }));
+    };
+    nativeConsoleError(JSON.stringify(payload));
+    writeApplicationLog('error', message, context);
   }
 
   /**
@@ -194,6 +266,18 @@ class Logger {
    */
   static logInfoToFile(message, context = {}) {
     appLogger.info(message, {
+      timestamp: new Date().toISOString(),
+      ...context
+    });
+  }
+
+  /**
+   * Write Redis audit trail entry (e.g., key creation/removal)
+   * @param {string} message 
+   * @param {Object} context 
+   */
+  static redis(message, context = {}) {
+    redisLogger.info(message, {
       timestamp: new Date().toISOString(),
       ...context
     });

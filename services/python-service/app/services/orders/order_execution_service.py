@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 
 from app.config.redis_config import redis_cluster
+from app.services.logging.redis_order_logger import log_redis_order_event
 from app.services.orders.order_repository import (
     fetch_user_config,
     fetch_user_portfolio,
@@ -530,6 +531,13 @@ class OrderExecutor:
         )
         timings_ms["place_atomic_ms"] = int((time.perf_counter() - t_place) * 1000)
         if not ok_place:
+            log_redis_order_event("order_execution_place_failed", {
+                "order_id": order_id,
+                "user_type": user_type,
+                "user_id": user_id,
+                "symbol": symbol,
+                "reason": reason
+            })
             result = {"ok": False, "reason": f"place_order_failed:{reason}"}
             if idem_key:
                 await save_idempotency_result(idem_key, result)
@@ -598,10 +606,28 @@ class OrderExecutor:
             )
             timings_ms["place_atomic2_ms"] = int((time.perf_counter() - t_place2) * 1000)
         if not ok_place:
+            log_redis_order_event("order_execution_place_failed", {
+                "order_id": order_id,
+                "user_type": user_type,
+                "user_id": user_id,
+                "symbol": symbol,
+                "reason": reason,
+                "phase": "post_lock"
+            })
             result = {"ok": False, "reason": f"place_order_failed:{reason}"}
             if idem_key:
                 await save_idempotency_result(idem_key, result)
             return result
+
+        log_redis_order_event("order_execution_place_success", {
+            "order_id": order_id,
+            "user_type": user_type,
+            "user_id": user_id,
+            "symbol": symbol,
+            "flow": flow,
+            "status": displayed_status,
+            "execution_status": execution_status
+        })
 
         # 14) For provider flow, create/update canonical order hash and global lookups
         if flow == "provider":

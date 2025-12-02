@@ -38,6 +38,14 @@ const PERFORMANCE_LOG_INTERVAL = 60000; // Log performance every 60 seconds
 let rabbitConnection = null;
 let rabbitChannel = null;
 
+function logRedisAudit(event, context = {}) {
+  try {
+    logger.redis(event, context);
+  } catch (err) {
+    logger.warn('Failed to write redis audit log', { event, error: err.message });
+  }
+}
+
 function getOrderModel(userType) {
   switch (userType) {
     case 'live':
@@ -858,14 +866,17 @@ async function applyDbUpdate(msg) {
           const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
           // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
           const pUser = redisCluster.pipeline();
+          let redisIndexAction = null;
           // Maintain index membership based on order_status when provided
           if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
             const st = String(updateFields.order_status).toUpperCase();
             if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED' || st === 'QUEUED') {
               pUser.srem(indexKey, String(order_id));
+              redisIndexAction = 'srem';
             } else if (st === 'OPEN' || st === 'PENDING') {
               // Ensure presence in index for OPEN and PENDING
               pUser.sadd(indexKey, String(order_id));
+              redisIndexAction = 'sadd';
             }
             // Mirror order_status into user_holdings for immediate WS/UI visibility
             pUser.hset(orderKey, 'order_status', st);
@@ -914,6 +925,19 @@ async function applyDbUpdate(msg) {
           }
           await pUser.exec();
 
+          logRedisAudit('order_redis_pipeline_applied', {
+            hashTag,
+            userType: userTypeStr,
+            userId: userIdStr,
+            orderId: String(order_id),
+            orderKey,
+            indexKey,
+            orderDataKey,
+            orderStatus: updateFields.order_status,
+            indexAction: redisIndexAction || 'upsert',
+            fieldsUpdated: Object.keys(updateFields || {})
+          });
+
           const statusIsClosed = Object.prototype.hasOwnProperty.call(updateFields, 'order_status')
             && String(updateFields.order_status).toUpperCase() === 'CLOSED';
           if (statusIsClosed) {
@@ -922,12 +946,29 @@ async function applyDbUpdate(msg) {
               cleanupPipe.srem(indexKey, String(order_id));
               cleanupPipe.del(orderKey);
               await cleanupPipe.exec();
+              logRedisAudit('order_redis_removed_after_close', {
+                hashTag,
+                userType: userTypeStr,
+                userId: userIdStr,
+                orderId: String(order_id),
+                orderKey,
+                indexKey,
+                reason: 'status_closed'
+              });
             } catch (cleanupErr) {
               logger.warn('Failed to cleanup user holdings after close', { error: cleanupErr.message, order_id: String(order_id) });
             }
 
             try {
               await redisCluster.del(orderDataKey);
+              logRedisAudit('order_redis_order_data_deleted', {
+                hashTag,
+                userType: userTypeStr,
+                userId: userIdStr,
+                orderId: String(order_id),
+                orderDataKey,
+                reason: 'status_closed'
+              });
             } catch (delErr) {
               logger.warn('Failed to delete canonical order_data after close', { error: delErr.message, order_id: String(order_id) });
             }

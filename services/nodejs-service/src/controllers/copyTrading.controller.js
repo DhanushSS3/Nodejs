@@ -1388,6 +1388,19 @@ async function getCopyTradingOverview(req, res) {
       });
     }
 
+    if (copyFollowerAccounts.length && followingStrategies.length === 0) {
+      logger.warn('Copy trading overview detected follower accounts with zero strategies in memory', {
+        userId,
+        followerAccountIds: copyFollowerAccounts.map((acc) => acc.id)
+      });
+    } else if (copyFollowerAccounts.length !== followingStrategies.length) {
+      logger.info('Copy trading overview follower account mismatch', {
+        userId,
+        followerAccounts: copyFollowerAccounts.length,
+        strategiesBuilt: followingStrategies.length
+      });
+    }
+
     // Calculate overall return percentage using aggregate net profit
     // Total Return = Total Net Profit / Total Investment * 100
     const totalReturnPercentage = totalCurrentInvestment > 0 ?

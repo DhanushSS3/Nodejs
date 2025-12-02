@@ -705,6 +705,16 @@ class OrderCloser:
                         log_pipeline_operation("cluster", f"close_cleanup_{order_id}", 2 + (1 if executed_margin else 0) + (1 if total_margin else 0), operation_id)
                         log_connection_release("cluster", f"close_cleanup_{order_id}", operation_id)
                         connection_tracker.end_operation(operation_id, success=True)
+                        log_redis_order_event("order_close_cleanup_pipeline", {
+                            "order_id": order_id,
+                            "user_type": user_type,
+                            "user_id": user_id,
+                            "index_key": index_key,
+                            "order_key": order_key,
+                            "portfolio_key": portfolio_key,
+                            "executed_margin": executed_margin,
+                            "total_margin": total_margin
+                        })
                         break  # Success, exit retry loop
                         
                     except Exception as e:
@@ -712,6 +722,13 @@ class OrderCloser:
                         if attempt == max_retries - 1:
                             # Last attempt failed, re-raise
                             connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                            log_redis_order_event("order_close_cleanup_failed", {
+                                "order_id": order_id,
+                                "user_type": user_type,
+                                "user_id": user_id,
+                                "error": str(e),
+                                "attempt": attempt + 1
+                            })
                             raise
                         logger.warning(
                             "[CLOSE:CLEANUP_RETRY] order_id=%s user=%s:%s attempt=%d error=%s",
@@ -729,9 +746,22 @@ class OrderCloser:
                     await redis_cluster.delete(order_data_key)
                     log_connection_release("cluster", f"delete_canonical_{order_id}", delete_operation_id)
                     connection_tracker.end_operation(delete_operation_id, success=True)
+                    log_redis_order_event("order_close_canonical_deleted", {
+                        "order_id": order_id,
+                        "user_type": user_type,
+                        "user_id": user_id,
+                        "order_data_key": order_data_key
+                    })
                 except Exception as e:
                     log_connection_error("cluster", f"delete_canonical_{order_id}", str(e), delete_operation_id)
                     connection_tracker.end_operation(delete_operation_id, success=False, error=str(e))
+                    log_redis_order_event("order_close_canonical_delete_failed", {
+                        "order_id": order_id,
+                        "user_type": user_type,
+                        "user_id": user_id,
+                        "order_data_key": order_data_key,
+                        "error": str(e)
+                    })
 
                 # Symbol holders cleanup if no more orders for same symbol with connection tracking
                 if symbol:
@@ -760,9 +790,23 @@ class OrderCloser:
                             )
                             log_connection_release("cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}", symbol_operation_id)
                             connection_tracker.end_operation(symbol_operation_id, success=True)
+                            log_redis_order_event("order_close_symbol_holder_removed", {
+                                "order_id": order_id,
+                                "user_type": user_type,
+                                "user_id": user_id,
+                                "symbol": symbol,
+                                "symbol_key": f"symbol_holders:{symbol}:{user_type}"
+                            })
                         except Exception as e:
                             log_connection_error("cluster", f"symbol_cleanup_{symbol}_{user_type}_{user_id}", str(e), symbol_operation_id)
                             connection_tracker.end_operation(symbol_operation_id, success=False, error=str(e))
+                            log_redis_order_event("order_close_symbol_holder_remove_failed", {
+                                "order_id": order_id,
+                                "user_type": user_type,
+                                "user_id": user_id,
+                                "symbol": symbol,
+                                "error": str(e)
+                            })
 
                 return {
                     "ok": True,

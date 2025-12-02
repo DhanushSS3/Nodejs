@@ -25,6 +25,7 @@ from app.services.logging.provider_logger import (
     get_provider_errors_logger,
     log_provider_stats
 )
+from app.services.logging.redis_order_logger import log_redis_order_event
 
 # Initialize dedicated loggers
 logger = get_worker_open_logger()
@@ -166,6 +167,15 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
             log_pipeline_operation("cluster", f"open_redis_update_{order_id}", 3 + (1 if symbol else 0), operation_id)
             log_connection_release("cluster", f"open_redis_update_{order_id}", operation_id)
             connection_tracker.end_operation(operation_id, success=True)
+            log_redis_order_event("worker_open_redis_pipeline_applied", {
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_type": user_type,
+                "order_key": order_key,
+                "order_data_key": order_data_key,
+                "index_key": index_key,
+                "fields": list(mapping_filtered.keys())
+            })
             break  # Success, exit retry loop
             
         except Exception as e:
@@ -173,6 +183,13 @@ async def _update_redis_for_open(payload: Dict[str, Any]) -> Dict[str, Any]:
             if attempt == max_retries - 1:
                 # Last attempt failed, re-raise
                 connection_tracker.end_operation(operation_id, success=False, error=str(e))
+                log_redis_order_event("worker_open_redis_pipeline_failed", {
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "user_type": user_type,
+                    "error": str(e),
+                    "attempt": attempt + 1
+                })
                 raise
             logger.warning(
                 "[OPEN:REDIS_UPDATE_RETRY] order_id=%s attempt=%d error=%s",
