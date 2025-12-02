@@ -427,8 +427,8 @@ class InternalTransferService {
       const { sourceAccount, destinationAccount } = validation;
 
       // Generate unique transaction IDs (separate for source and destination)
-      const sourceTransactionId = `TXN${Date.now()}${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-      const destinationTransactionId = `TXN${Date.now() + 1}${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+      const sourceTransactionId = `TXN${Date.now()}${Math.random().toString(36).substr(2, 3).toUpperCase()}`;
+      const destinationTransactionId = `TXN${Date.now() + 1}${Math.random().toString(36).substr(2, 3).toUpperCase()}`;
 
       // Update source account balance
       await this.updateAccountBalance(
