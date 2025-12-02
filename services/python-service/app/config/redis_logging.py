@@ -67,7 +67,9 @@ redis_warnings_logger.addHandler(warnings_handler)
 
 # Redis Connection Trace Logger (for detailed connection tracking)
 redis_trace_logger = logging.getLogger('redis_trace')
-redis_trace_logger.setLevel(logging.DEBUG)
+trace_level_name = os.getenv('REDIS_TRACE_LEVEL', 'INFO').upper()
+trace_level = getattr(logging, trace_level_name, logging.INFO)
+redis_trace_logger.setLevel(trace_level)
 redis_trace_logger.propagate = False
 
 
@@ -78,7 +80,7 @@ trace_handler = RotatingFileHandler(
     backupCount=3,
     encoding='utf-8'
 )
-trace_handler.setLevel(logging.DEBUG)
+trace_handler.setLevel(trace_level)
 
 
 # Create detailed formatter for trace logs
@@ -120,6 +122,8 @@ def log_pool_critical(pool_type: str, total: int, in_use: int, operation: str = 
 
 def log_connection_acquire(pool_type: str, operation: str, operation_id: str = None, duration_ms: float = None):
     """Log connection acquisition"""
+    if not redis_trace_logger.isEnabledFor(logging.DEBUG):
+        return
     op_id = operation_id or str(uuid.uuid4())[:8]
     duration_str = f" | Duration: {duration_ms:.2f}ms" if duration_ms else ""
     redis_trace_logger.debug(f"CONN_ACQUIRE | {pool_type.upper()} | {op_id} | {operation}{duration_str}")
@@ -127,6 +131,8 @@ def log_connection_acquire(pool_type: str, operation: str, operation_id: str = N
 
 def log_connection_release(pool_type: str, operation: str, operation_id: str = None, duration_ms: float = None):
     """Log connection release"""
+    if not redis_trace_logger.isEnabledFor(logging.DEBUG):
+        return
     op_id = operation_id or str(uuid.uuid4())[:8]
     duration_str = f" | Duration: {duration_ms:.2f}ms" if duration_ms else ""
     redis_trace_logger.debug(f"CONN_RELEASE | {pool_type.upper()} | {op_id} | {operation}{duration_str}")
@@ -141,6 +147,8 @@ def log_connection_error(pool_type: str, operation: str, error: str, operation_i
 
 def log_pipeline_operation(pool_type: str, operation: str, commands_count: int, operation_id: str = None, duration_ms: float = None):
     """Log pipeline operations"""
+    if not redis_trace_logger.isEnabledFor(logging.DEBUG):
+        return
     op_id = operation_id or str(uuid.uuid4())[:8]
     duration_str = f" | Duration: {duration_ms:.2f}ms" if duration_ms else ""
     redis_trace_logger.debug(
@@ -181,10 +189,11 @@ class RedisConnectionTracker:
         self.operation_stats['total_operations'] += 1
         self.operation_stats['active_operations'] += 1
         
-        redis_trace_logger.debug(
-            f"OP_START | {operation_id} | {pool_type.upper()} | {operation} | "
-            f"Active: {self.operation_stats['active_operations']}"
-        )
+        if redis_trace_logger.isEnabledFor(logging.DEBUG):
+            redis_trace_logger.debug(
+                f"OP_START | {operation_id} | {pool_type.upper()} | {operation} | "
+                f"Active: {self.operation_stats['active_operations']}"
+            )
     
     def end_operation(self, operation_id: str, success: bool = True, error: str = None):
         """Track end of Redis operation"""
@@ -201,11 +210,12 @@ class RedisConnectionTracker:
             
             self.operation_stats['active_operations'] -= 1
             
-            redis_trace_logger.debug(
-                f"OP_END | {operation_id} | {conn_info['pool_type'].upper()} | "
-                f"{conn_info['operation']} | {status} | Duration: {duration:.2f}ms | "
-                f"Active: {self.operation_stats['active_operations']}"
-            )
+            if redis_trace_logger.isEnabledFor(logging.DEBUG):
+                redis_trace_logger.debug(
+                    f"OP_END | {operation_id} | {conn_info['pool_type'].upper()} | "
+                    f"{conn_info['operation']} | {status} | Duration: {duration:.2f}ms | "
+                    f"Active: {self.operation_stats['active_operations']}"
+                )
             
             del self.active_connections[operation_id]
     
