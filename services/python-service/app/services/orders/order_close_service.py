@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import orjson
 from redis.exceptions import ResponseError
-
+from app.services.logging.redis_order_logger import log_redis_order_event
 from app.config.redis_config import redis_cluster
 from app.config.redis_logging import (
     log_connection_acquire,
