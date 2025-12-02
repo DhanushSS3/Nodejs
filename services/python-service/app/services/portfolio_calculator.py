@@ -249,9 +249,20 @@ class PortfolioCalculatorListener:
                         cursor, batch = batch_result
                         # Ensure cursor is bytes - handle all possible types
                         if isinstance(cursor, dict):
-                            # If cursor is a dict, we can't continue SCAN properly, so stop
-                            self.logger.warning(f"SCAN cursor is dict for pattern {pattern}, stopping scan: {cursor}")
-                            cursor = b"0"  # Stop scanning
+                            # Redis cluster may return {node: cursor}; treat as multi-node response
+                            flattened_keys = []
+                            continue_scanning = False
+                            for _, node_data in cursor.items():
+                                try:
+                                    node_cursor, node_keys = node_data if isinstance(node_data, (tuple, list)) and len(node_data) == 2 else (None, node_data)
+                                except Exception:
+                                    node_cursor, node_keys = None, None
+                                if isinstance(node_keys, (list, set, tuple)):
+                                    flattened_keys.extend(list(node_keys))
+                                if node_cursor not in (None, 0, '0', b'0'):
+                                    continue_scanning = True
+                            raw_keys.extend(flattened_keys)
+                            cursor = b"1" if continue_scanning else b"0"
                         elif isinstance(cursor, str):
                             cursor = cursor.encode('utf-8')
                         elif isinstance(cursor, int):
@@ -274,11 +285,19 @@ class PortfolioCalculatorListener:
                             raw_keys.extend(list(batch))
                     elif isinstance(batch_result, dict):
                         # Map of node -> (cursor, keys)
-                        cursor = b"0"  # Stop after one pass for dict response
+                        continue_scanning = False
                         for _, v in batch_result.items():
+                            node_cursor = None
+                            node_keys = None
                             if isinstance(v, tuple) and len(v) == 2:
-                                _, lst = v
-                                raw_keys.extend(lst or [])
+                                node_cursor, node_keys = v
+                            elif isinstance(v, (list, set, tuple)):
+                                node_keys = v
+                            if isinstance(node_keys, (list, set, tuple)):
+                                raw_keys.extend(list(node_keys))
+                            if node_cursor not in (None, 0, '0', b'0'):
+                                continue_scanning = True
+                        cursor = b"1" if continue_scanning else b"0"
                     else:
                         # Unknown structure; stop
                         cursor = b"0"
