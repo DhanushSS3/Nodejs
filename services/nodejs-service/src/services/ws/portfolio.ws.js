@@ -13,7 +13,6 @@ const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
 const {
   getSession,
-  deleteSession,
 } = require('../../utils/redisSession.util');
 
 // Connection tracking and limits
@@ -81,28 +80,6 @@ function removeConnection(userKey, ws) {
   return n;
 }
 
-async function revokeConnectionSession(ws) {
-  if (!ws || !ws._sessionMeta) return;
-  const { sessionOwnerId, sessionOwnerType, sessionId } = ws._sessionMeta;
-  if (!sessionOwnerId || !sessionOwnerType || !sessionId) return;
-
-  try {
-    await deleteSession(sessionOwnerId, sessionId, sessionOwnerType);
-    logger.info('Revoked access token session after WebSocket limit enforcement', {
-      sessionOwnerId,
-      sessionOwnerType,
-      sessionId,
-    });
-  } catch (err) {
-    logger.warn('Failed to revoke WebSocket session during limit enforcement', {
-      error: err.message,
-      sessionOwnerId,
-      sessionOwnerType,
-      sessionId,
-    });
-  }
-}
-
 async function closeOldestConnection(userKey) {
   if (!userConnections.has(userKey)) {
     return false;
@@ -126,7 +103,6 @@ async function closeOldestConnection(userKey) {
   }
 
   if (oldestWs) {
-    await revokeConnectionSession(oldestWs);
     oldestWs._removedFromLimit = true;
     oldestWs._closedDueToLimit = true;
     connectionLimitGrace.set(userKey, Date.now());
