@@ -195,6 +195,63 @@ class InternalTransferService {
   }
 
   /**
+   * Validate withdrawal amount against available balance and margin requirements
+   * @param {number} userId - Live user ID (owner)
+   * @param {string} accountType - Account type of withdrawal source
+   * @param {number} accountId - Account identifier (user id for live)
+   * @param {number} amount - Withdrawal amount
+   * @returns {Object} Validation result
+   */
+  static async validateWithdrawal(userId, accountType, accountId, amount) {
+    try {
+      const withdrawalAmount = parseFloat(amount);
+      if (!Number.isFinite(withdrawalAmount) || withdrawalAmount <= 0) {
+        return { valid: false, error: 'Withdrawal amount must be greater than 0' };
+      }
+
+      const sourceAccount = await this.getAccountDetails(userId, accountType, accountId);
+      if (!sourceAccount) {
+        return { valid: false, error: 'Account not found or not accessible' };
+      }
+
+      const availableBalance = sourceAccount.wallet_balance - sourceAccount.margin;
+      if (withdrawalAmount > availableBalance) {
+        return {
+          valid: false,
+          error: `Insufficient available balance. Available: $${availableBalance.toFixed(2)}, Requested: $${withdrawalAmount.toFixed(2)}`,
+          availableBalance
+        };
+      }
+
+      const marginCheck = await this.checkMarginRequirements(userId, accountType, accountId, withdrawalAmount);
+      if (!marginCheck.valid) {
+        return marginCheck;
+      }
+
+      return {
+        valid: true,
+        account: sourceAccount,
+        availableBalance,
+        balanceAfterWithdrawal: (sourceAccount.wallet_balance - withdrawalAmount),
+        marginInfo: {
+          openOrdersCount: marginCheck.openOrdersCount || 0,
+          totalMarginRequired: marginCheck.totalMarginRequired || 0,
+          marginLevel: marginCheck.marginLevel || null
+        }
+      };
+    } catch (error) {
+      logger.error('Withdrawal validation failed', {
+        userId,
+        accountType,
+        accountId,
+        amount,
+        error: error.message
+      });
+      return { valid: false, error: 'Withdrawal validation failed: ' + error.message };
+    }
+  }
+
+  /**
    * Get account details by type and ID
    * @param {number} userId - Live user ID
    * @param {string} accountType - Account type (main, strategy_provider, copy_follower)

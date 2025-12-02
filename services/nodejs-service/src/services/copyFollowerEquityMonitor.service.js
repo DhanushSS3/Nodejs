@@ -175,6 +175,31 @@ class CopyFollowerEquityMonitorService {
           calc_status: portfolioData.calc_status || 'unknown',
           last_updated: portfolioData.last_updated || null
         };
+        const zeroMarginIndicators = ['used_margin_executed', 'used_margin', 'used_margin_all'];
+        const hasZeroMargins = zeroMarginIndicators.every((key) => parseFloat(portfolioData[key] || 0) === 0);
+        if (hasZeroMargins) {
+          try {
+            const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+            const fallbackAccount = await CopyFollowerAccount.findByPk(userId, {
+              attributes: ['wallet_balance', 'net_profit']
+            });
+            if (fallbackAccount) {
+              const walletBalance = parseFloat(fallbackAccount.wallet_balance || 0);
+              const netProfit = parseFloat(fallbackAccount.net_profit || 0);
+              portfolio.balance = walletBalance;
+              portfolio.equity = walletBalance + netProfit;
+              portfolio.profit = netProfit;
+              portfolio.calc_status = portfolio.calc_status || 'wallet_balance_fallback';
+              portfolio.fallback_source = 'wallet_balance';
+            }
+          } catch (fallbackError) {
+            logger.warn('Wallet balance fallback failed for copy follower', {
+              userType,
+              userId,
+              error: fallbackError.message
+            });
+          }
+        }
         
         return portfolio;
       }

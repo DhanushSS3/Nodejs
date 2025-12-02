@@ -1,5 +1,6 @@
 const moneyRequestService = require('../services/moneyRequest.service');
 const logger = require('../services/logger.service');
+const InternalTransferService = require('../services/internalTransfer.service');
 const { LiveUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 
 const SUPPORTED_WITHDRAW_ACCOUNT_TYPES = ['live', 'strategy_provider', 'copy_follower'];
@@ -180,6 +181,25 @@ async function createWithdrawalRequest(req, res) {
 
     const ownership = await resolveWithdrawalTarget(normalizedUserId, normalizedUserType, authContext);
 
+    const withdrawalValidation = await InternalTransferService.validateWithdrawal(
+      ownership.initiatorUserId,
+      ownership.targetAccountType,
+      ownership.targetAccountId,
+      Number(amount)
+    );
+
+    if (!withdrawalValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: withdrawalValidation.error,
+        details: {
+          availableBalance: withdrawalValidation.availableBalance,
+          marginInfo: withdrawalValidation.marginInfo,
+          balanceAfterWithdrawal: withdrawalValidation.balanceAfterWithdrawal
+        }
+      });
+    }
+
     logger.info('Creating withdrawal money request', {
       operationId,
       initiatorUserId: ownership.initiatorUserId,
@@ -214,6 +234,8 @@ async function createWithdrawalRequest(req, res) {
         currency: created.currency,
         method_type: created.method_type,
         created_at: created.created_at,
+        balance_after_withdrawal: withdrawalValidation.balanceAfterWithdrawal,
+        available_balance: withdrawalValidation.availableBalance
       },
     });
   } catch (error) {
