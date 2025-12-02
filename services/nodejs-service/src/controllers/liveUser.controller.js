@@ -6,7 +6,7 @@ const { hashPassword, generateViewPassword, hashViewPassword, compareViewPasswor
 const LiveUserAuthService = require('../services/liveUser.auth.service');
 const { generateReferralCode } = require('../services/referralCode.service');
 const { validationResult } = require('express-validator');
-const { Op, fn, col, where } = require('sequelize');
+const { Op, fn, col, where, literal } = require('sequelize');
 const TransactionService = require('../services/transaction.service');
 const logger = require('../services/logger.service');
 const ErrorResponse = require('../utils/errorResponse.util');
@@ -917,4 +917,118 @@ async function getClosedOrdersByEmailAdminSecret(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions, getClosedOrdersByEmailAdminSecret };
+/**
+ * Fetch aggregated closed-order instrument metrics for a live user by email using admin secret
+ */
+async function getClosedOrderInstrumentSummaryAdminSecret(req, res) {
+  try {
+    const expectedSecret = process.env.ADMIN_LIVE_USERS_SECRET || 'admin@livefxhub@123';
+    const providedSecret = req.headers['x-admin-secret'] || req.query.secret || req.body?.secret;
+
+    if (!providedSecret || providedSecret !== expectedSecret) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: invalid admin secret'
+      });
+    }
+
+    const emailInput = (req.query.email || req.body?.email || '').trim();
+    if (!emailInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = emailInput.toLowerCase();
+
+    const user = await LiveUser.findOne({
+      where: where(fn('LOWER', col('email')), normalizedEmail),
+      attributes: ['id', 'email', 'name', 'account_number']
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Live user not found for provided email'
+      });
+    }
+
+    const whereClause = {
+      order_user_id: user.id,
+      order_status: 'CLOSED'
+    };
+
+    const { from_date: fromDateRaw, to_date: toDateRaw, today_only: todayOnlyRaw } = req.query;
+    const todayOnly = todayOnlyRaw === 'true' || todayOnlyRaw === '1';
+    const from = fromDateRaw ? new Date(fromDateRaw) : null;
+    const to = toDateRaw ? new Date(toDateRaw) : null;
+
+    if (todayOnly) {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      whereClause.created_at = { [Op.between]: [start, end] };
+    } else if (from && to && !isNaN(from) && !isNaN(to)) {
+      whereClause.created_at = { [Op.between]: [from, to] };
+    } else if (from && !isNaN(from)) {
+      whereClause.created_at = { [Op.gte]: from };
+    } else if (to && !isNaN(to)) {
+      whereClause.created_at = { [Op.lte]: to };
+    }
+
+    const rows = await LiveUserOrder.findAll({
+      where: whereClause,
+      attributes: [
+        'symbol',
+        'order_type',
+        [fn('AVG', col('order_price')), 'avg_open_price'],
+        [fn('AVG', col('close_price')), 'avg_close_price'],
+        [fn('AVG', col('contract_value')), 'avg_contract_value'],
+        [fn('SUM', col('swap')), 'total_swap'],
+        [fn('SUM', col('commission')), 'total_commission'],
+        [fn('SUM', col('net_profit')), 'total_netprofit'],
+        [fn('SUM', col('order_quantity')), 'total_quantity']
+      ],
+      group: ['symbol', 'order_type'],
+      order: [['symbol', 'ASC'], ['order_type', 'ASC']]
+    });
+
+    const instruments = rows.map((row) => ({
+      symbol: row.get('symbol'),
+      order_type: row.get('order_type'),
+      avg_open_price: row.get('avg_open_price') !== null ? row.get('avg_open_price').toString() : null,
+      avg_close_price: row.get('avg_close_price') !== null ? row.get('avg_close_price').toString() : null,
+      avg_contract_value: row.get('avg_contract_value') !== null ? row.get('avg_contract_value').toString() : null,
+      total_swap: row.get('total_swap') !== null ? row.get('total_swap').toString() : '0',
+      total_commission: row.get('total_commission') !== null ? row.get('total_commission').toString() : '0',
+      total_netprofit: row.get('total_netprofit') !== null ? row.get('total_netprofit').toString() : '0',
+      total_quantity: row.get('total_quantity') !== null ? row.get('total_quantity').toString() : '0'
+    }));
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        account_number: user.account_number
+      },
+      filters: {
+        from_date: from && !isNaN(from) ? from.toISOString() : null,
+        to_date: to && !isNaN(to) ? to.toISOString() : null,
+        today_only: todayOnly
+      },
+      instruments
+    });
+  } catch (error) {
+    logger.error('getClosedOrderInstrumentSummaryAdminSecret failed', {
+      error: error.message,
+      stack: error.stack
+    });
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret };

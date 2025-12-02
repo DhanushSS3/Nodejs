@@ -317,7 +317,9 @@ async function applyDbUpdate(msg) {
     // Check if this order is currently being processed
     const isProcessing = await redisCluster.get(processingKey);
     if (isProcessing) {
-      logger.warn('Order is currently being processed, skipping to prevent database lock', {
+      const err = new Error('ORDER_PROCESSING_LOCKED');
+      err.code = 'ORDER_PROCESSING_LOCKED';
+      logger.warn('Order is currently being processed, requeueing message to prevent database lock', {
         messageType: String(type),
         order_id: String(order_id),
         user_id: String(user_id),
@@ -326,7 +328,7 @@ async function applyDbUpdate(msg) {
         currentProcessor: isProcessing,
         timestamp: new Date().toISOString()
       });
-      return; // Skip processing to prevent database lock conflicts
+      throw err;
     }
     
     // Mark order as being processed (with 60-second timeout)
