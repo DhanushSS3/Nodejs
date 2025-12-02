@@ -1356,11 +1356,10 @@ async function getCopyTradingOverview(req, res) {
         }
       }
 
-      // Calculate individual return for this copy follower account
-      // Return = (Current Equity - Investment) / Investment * 100
-      const currentEquity = walletBalance + netProfit;
-      const individualReturn = currentInvestment > 0 ? 
-        ((currentEquity - currentInvestment) / currentInvestment * 100) : 0;
+      // Calculate individual return for this copy follower account based on realized net profit
+      // Return = Net Profit / Investment * 100
+      const individualReturn = currentInvestment > 0 ?
+        ((netProfit / currentInvestment) * 100) : 0;
 
       followingStrategies.push({
         copy_follower_account_id: account.id,
@@ -1389,19 +1388,15 @@ async function getCopyTradingOverview(req, res) {
       });
     }
 
-    // Get count of active strategies being followed
-    const activeStrategiesCount = followingStrategies.filter(s => s.copy_status === 'active').length;
-
-    // Calculate overall return percentage
-    // Total Return = (Total Current Equity - Total Investment) / Total Investment * 100
-    const totalCurrentEquity = totalWalletBalance + totalNetProfit;
-    const totalReturnPercentage = totalCurrentInvestment > 0 ? 
-      ((totalCurrentEquity - totalCurrentInvestment) / totalCurrentInvestment * 100) : 0;
+    // Calculate overall return percentage using aggregate net profit
+    // Total Return = Total Net Profit / Total Investment * 100
+    const totalReturnPercentage = totalCurrentInvestment > 0 ?
+      ((totalNetProfit / totalCurrentInvestment) * 100) : 0;
 
     const overview = {
       user_id: userId,
-      total_strategies_following: followingStrategies.length,
-      active_strategies_count: activeStrategiesCount,
+      total_strategies_following: copyFollowerAccounts.length,
+      active_strategies_count: followingStrategies.filter((s) => s.copy_status === 'active').length,
       total_current_investment: totalCurrentInvestment,
       total_initial_investment: totalInitialInvestment,
       total_wallet_balance: totalWalletBalance,
