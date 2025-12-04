@@ -506,7 +506,7 @@ class InternalTransferService {
       // Create transaction records
       const sourceTransactionData = {
         transaction_id: sourceTransactionId,
-        user_id: userId,
+        user_id: sourceAccount.id,
         user_type: this.mapAccountTypeToUserType(sourceAccount.type),
         type: 'transfer',
         amount: -amount,
@@ -534,7 +534,7 @@ class InternalTransferService {
 
       const destinationTransactionData = {
         transaction_id: destinationTransactionId,
-        user_id: userId,
+        user_id: destinationAccount.id,
         user_type: this.mapAccountTypeToUserType(destinationAccount.type),
         type: 'transfer',
         amount: amount,
