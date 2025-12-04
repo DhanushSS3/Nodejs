@@ -263,8 +263,8 @@ class InternalTransferService {
       switch (accountType) {
         case 'live':
           const liveUser = await LiveUser.findOne({
-            where: { id: userId, status: 1, is_active: 1 },
-            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'leverage', 'group']
+            where: { id: userId },
+            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'leverage', 'group', 'status', 'is_active']
           });
           return liveUser ? {
             id: liveUser.id,
@@ -280,8 +280,8 @@ class InternalTransferService {
 
         case 'strategy_provider':
           const strategyProvider = await StrategyProviderAccount.findOne({
-            where: { id: accountId, user_id: userId, status: 1, is_active: 1 },
-            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'strategy_name', 'leverage', 'group']
+            where: { id: accountId, user_id: userId },
+            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'strategy_name', 'leverage', 'group', 'status', 'is_active']
           });
           return strategyProvider ? {
             id: strategyProvider.id,
@@ -297,8 +297,8 @@ class InternalTransferService {
 
         case 'copy_follower':
           const copyFollower = await CopyFollowerAccount.findOne({
-            where: { id: accountId, user_id: userId, status: 1, is_active: 1 },
-            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'account_name', 'leverage', 'group']
+            where: { id: accountId, user_id: userId },
+            attributes: ['id', 'wallet_balance', 'margin', 'net_profit', 'account_number', 'account_name', 'leverage', 'group', 'status', 'is_active']
           });
           return copyFollower ? {
             id: copyFollower.id,
