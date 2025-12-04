@@ -963,7 +963,8 @@ class StrategyProviderService {
           'total_return_percentage',
           'total_followers',
           'profile_image_url',
-          'performance_fee'
+          'performance_fee',
+          'max_drawdown'
         ],
         order: orderBy,
         limit: limitNum,
@@ -978,7 +979,8 @@ class StrategyProviderService {
         total_return_percentage: parseFloat(strategy.total_return_percentage || 0),
         total_followers: strategy.total_followers || 0,
         profile_image_url: strategy.profile_image_url,
-        performance_fee: parseFloat(strategy.performance_fee || 0)
+        performance_fee: parseFloat(strategy.performance_fee || 0),
+        max_drawdown: parseFloat(strategy.max_drawdown || 0)
       }));
 
       return {
