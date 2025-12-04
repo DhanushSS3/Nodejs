@@ -7,6 +7,10 @@ const logger = require('./logger.service');
 const { Op } = require('sequelize');
 const groupsCache = require('./groups.cache.service');
 const redisUserCache = require('./redis.user.cache.service');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 
 class OrdersBackfillService {
   constructor(redis = redisCluster) {
@@ -31,13 +35,68 @@ class OrdersBackfillService {
     return `symbol_holders:${String(symbol).toUpperCase()}:${userType}`;
   }
 
+  getOrderModel(userType) {
+    switch (userType) {
+      case 'live':
+        return LiveUserOrder;
+      case 'demo':
+        return DemoUserOrder;
+      case 'strategy_provider':
+        return StrategyProviderOrder;
+      case 'copy_follower':
+        return CopyFollowerOrder;
+      default:
+        throw new Error(`Unsupported user type: ${userType}`);
+    }
+  }
+
+  async deriveUserContext(userType, userId) {
+    const context = { group: 'Standard', sendingOrders: null };
+    const numericId = Number(userId);
+    if (!Number.isFinite(numericId)) {
+      return context;
+    }
+
+    try {
+      if (userType === 'live') {
+        const user = await LiveUser.findByPk(numericId);
+        if (user) {
+          if (user.group) context.group = String(user.group);
+          if (user.sending_orders) context.sendingOrders = String(user.sending_orders);
+        }
+      } else if (userType === 'demo') {
+        const user = await DemoUser.findByPk(numericId);
+        if (user) {
+          if (user.group) context.group = String(user.group);
+          if (user.sending_orders) context.sendingOrders = String(user.sending_orders);
+        }
+      } else if (userType === 'strategy_provider') {
+        const account = await StrategyProviderAccount.findByPk(numericId);
+        if (account) {
+          if (account.group) context.group = String(account.group);
+          if (account.sending_orders) context.sendingOrders = String(account.sending_orders);
+        }
+      } else if (userType === 'copy_follower') {
+        const account = await CopyFollowerAccount.findByPk(numericId);
+        if (account) {
+          if (account.group) context.group = String(account.group);
+          if (account.sending_orders) context.sendingOrders = String(account.sending_orders);
+        }
+      }
+    } catch (e) {
+      logger.warn('Failed to derive user context', { error: e.message, userType, userId });
+    }
+
+    return context;
+  }
+
   async fetchOpenOrdersFromDb(userType, userId, includeQueued = false) {
-    const Model = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+    const Model = this.getOrderModel(userType);
     // Always include PENDING along with OPEN. Optionally include QUEUED when requested.
     const statuses = includeQueued ? ['OPEN', 'PENDING', 'QUEUED', 'PENDING-QUEUED'] : ['OPEN', 'PENDING'];
-    const opts = { where: { order_user_id: Number(userId), order_status: { [Op.in]: statuses } } };
+    const where = { order_user_id: Number(userId), order_status: { [Op.in]: statuses } };
 
-    const rows = await Model.findAll(opts);
+    const rows = await Model.findAll({ where });
     return rows.map(r => ({
       order_id: r.order_id,
       symbol: String(r.symbol).toUpperCase(),
@@ -150,18 +209,8 @@ class OrdersBackfillService {
     }
 
     // Backfill order_data and global_order_lookup for ALL relevant orders (holdings may already exist)
-    let userGroup = 'Standard';
-    try {
-      if (userType === 'live') {
-        const u = await LiveUser.findByPk(Number(userId));
-        if (u && u.group) userGroup = String(u.group);
-      } else {
-        const u = await DemoUser.findByPk(Number(userId));
-        if (u && u.group) userGroup = String(u.group);
-      }
-    } catch (e) {
-      logger.warn('Failed to fetch user group for backfill', { error: e.message, userType, userId });
-    }
+    const userContext = await this.deriveUserContext(userType, userId);
+    const userGroup = userContext.group || 'Standard';
 
     for (const o of orders) {
       const odKey = `order_data:${o.order_id}`;
@@ -180,6 +229,7 @@ class OrdersBackfillService {
         created_at: o.created_at || undefined,
         group: userGroup,
         user_type: userType,
+        sending_orders: userContext.sendingOrders || undefined,
       };
       try {
         await this.redis.hset(odKey, odMap);
@@ -221,14 +271,16 @@ class OrdersBackfillService {
   // Deep rebuild: pending monitoring (local/provider), triggers (SL/TP), user config
   async rebuildUserExecutionCaches(userType, userId, { includeQueued = true } = {}) {
     // 1) Ensure user config present
-    try {
-      let cfg = await redisUserCache.getUser(userType, Number(userId));
-      if (!cfg) {
-        await redisUserCache.refreshUser(userType, Number(userId));
-        cfg = await redisUserCache.getUser(userType, Number(userId));
+    if (userType === 'live' || userType === 'demo') {
+      try {
+        let cfg = await redisUserCache.getUser(userType, Number(userId));
+        if (!cfg) {
+          await redisUserCache.refreshUser(userType, Number(userId));
+          await redisUserCache.getUser(userType, Number(userId));
+        }
+      } catch (e) {
+        logger.warn('Failed to ensure user config in Redis', { error: e.message, userType, userId });
       }
-    } catch (e) {
-      logger.warn('Failed to ensure user config in Redis', { error: e.message, userType, userId });
     }
 
     // 2) Fetch ALL active orders (OPEN, PENDING, optionally QUEUED)
@@ -238,21 +290,9 @@ class OrdersBackfillService {
     let groupName = 'Standard';
     let sendingOrders = null;
     try {
-      const cfg = await redisUserCache.getUser(userType, Number(userId));
-      if (cfg) {
-        if (cfg.group) groupName = String(cfg.group);
-        if (cfg.sending_orders) sendingOrders = String(cfg.sending_orders).toLowerCase();
-      }
-      if (!cfg || !cfg.group) {
-        // Fallback to SQL
-        if (userType === 'live') {
-          const u = await LiveUser.findByPk(Number(userId));
-          if (u && u.group) groupName = String(u.group);
-        } else {
-          const u = await DemoUser.findByPk(Number(userId));
-          if (u && u.group) groupName = String(u.group);
-        }
-      }
+      const context = await this.deriveUserContext(userType, userId);
+      if (context.group) groupName = String(context.group);
+      if (context.sendingOrders) sendingOrders = String(context.sendingOrders).toLowerCase();
     } catch (e) {
       logger.warn('Failed to derive user group/sending_orders; using defaults', { error: e.message, userType, userId });
     }
@@ -294,6 +334,7 @@ class OrdersBackfillService {
         created_at: o.created_at || undefined,
         group: groupName,
         user_type: userType,
+        sending_orders: context?.sendingOrders || undefined,
       };
       try { await this.redis.hset(odKey, odMap); } catch (e) {
         logger.warn('order_data HSET failed during deep rebuild', { error: e.message, order_id: o.order_id });
@@ -433,7 +474,7 @@ class OrdersBackfillService {
 
   async ensureHoldingFromSql(userType, userId, orderId) {
     // fetch a single order
-    const Model = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+    const Model = this.getOrderModel(userType);
     const row = await Model.findOne({ where: { order_user_id: Number(userId), order_id: String(orderId) } });
     if (!row) return { ensured: false, reason: 'order_not_found' };
     const status = String(row.order_status).toUpperCase();
@@ -460,14 +501,8 @@ class OrdersBackfillService {
     await this.redis.sadd(this.getSymbolHoldersKey(order.symbol, userType), `${userType}:${userId}`);
     // Also ensure order_data and global lookups
     try {
-      let userGroup = 'Standard';
-      if (userType === 'live') {
-        const u = await LiveUser.findByPk(Number(userId));
-        if (u && u.group) userGroup = String(u.group);
-      } else {
-        const u = await DemoUser.findByPk(Number(userId));
-        if (u && u.group) userGroup = String(u.group);
-      }
+      const context = await this.deriveUserContext(userType, userId);
+      const userGroup = context.group || 'Standard';
       const odKey = `order_data:${order.order_id}`;
       await this.redis.hset(odKey, {
         order_id: order.order_id,
@@ -482,6 +517,7 @@ class OrdersBackfillService {
         created_at: order.created_at || undefined,
         group: userGroup,
         user_type: userType,
+        sending_orders: context.sendingOrders || undefined,
       });
       const ids = [row.order_id, row.close_id, row.cancel_id, row.modify_id, row.takeprofit_id, row.stoploss_id, row.takeprofit_cancel_id, row.stoploss_cancel_id].filter(Boolean);
       if (ids.length) {

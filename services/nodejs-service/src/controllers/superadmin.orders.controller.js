@@ -16,7 +16,7 @@ function bad(res, message, code = 400) {
 }
 
 const SUPPORTED_USER_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
-const BACKFILL_SUPPORTED_TYPES = new Set(['live', 'demo']);
+const BACKFILL_SUPPORTED_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
 
 // POST /api/superadmin/orders/reject-queued
 // body: { order_id: string, user_type: 'live'|'demo', user_id: string|number, reason?: string }
@@ -224,11 +224,11 @@ async function performUserRebuildFlow(user_type, user_id, options = {}) {
 async function rebuildAssociatedCopyTradingAccounts(user_type, user_id, options, processedSet) {
   const related = [];
   const sharedChildOptions = {
-     includeQueued: false,
-     backfill: false,
-     deep: false,
-     prune: false,
-     pruneSymbolHolders: Boolean(options.pruneSymbolHolders),
+    includeQueued: Boolean(options.includeQueued),
+    backfill: Boolean(options.backfill),
+    deep: Boolean(options.deep),
+    prune: Boolean(options.prune),
+    pruneSymbolHolders: Boolean(options.pruneSymbolHolders),
   };
 
   if (user_type === 'live' || user_type === 'demo') {
