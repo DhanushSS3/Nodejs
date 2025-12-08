@@ -46,6 +46,39 @@ router.get('/demo-users', requirePermissions(['user:read']), adminUserManagement
 
 /**
  * @swagger
+ * /api/admin/users/live-users/strategy-providers:
+ *   get:
+ *     summary: Fetch strategy provider accounts associated with a live user
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve all strategy provider accounts belonging to a specific live user using the live_user_id query parameter. Requires 'strategy_provider:read' permission.
+ *     parameters:
+ *       - in: query
+ *         name: live_user_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the live user whose strategy provider accounts should be returned
+ *     responses:
+ *       200:
+ *         description: Strategy provider accounts retrieved successfully
+ *       400:
+ *         description: Missing or invalid live user ID
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Live user not found or access denied
+ */
+router.get(
+  '/live-users/strategy-providers',
+  requirePermissions(['strategy_provider:read']),
+  auditLog('GET_LIVE_USER_STRATEGY_PROVIDERS'),
+  adminUserManagementController.getLiveUserStrategyProviders
+);
+
+/**
+ * @swagger
  * /api/admin/users/live-users/{userId}:
  *   put:
  *     summary: Update a live user's information

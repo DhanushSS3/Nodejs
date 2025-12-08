@@ -40,6 +40,9 @@ class PermissionSeeder {
       { name: 'transaction:approve', description: 'Approve pending transactions' },
       { name: 'transaction:stats', description: 'View transaction statistics and reports' },
 
+      // Strategy Provider Permissions
+      { name: 'strategy_provider:read', description: 'View strategy provider account details' },
+
       // Trading Permissions
       { name: 'trading:view', description: 'View trading data' },
       { name: 'trading:create', description: 'Create trading orders' },

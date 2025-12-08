@@ -40,7 +40,7 @@ class ProtobufMarketListener:
     """
     
     def __init__(self):
-        self.ws_url = "wss://quotes.livefxhub.com:9001/?token=Lkj@asd@1234"
+        self.ws_url = "wss://quotes.livefxhub.com/?token=Lkj@asd@1234"
         self.market_service = MarketDataService()
         self.reconnect_delay = 5
         self.max_reconnect_attempts = 10

@@ -1021,6 +1021,64 @@ class AdminUserManagementController {
       res.status(500).json({ error: 'Failed to retrieve user rejected orders' });
     }
   }
+
+  /**
+   * Fetch strategy provider accounts for a live user
+   * Requires 'strategy_provider:read' permission
+   */
+  async getLiveUserStrategyProviders(req, res, next) {
+    try {
+      const { live_user_id: liveUserIdRaw } = req.query;
+      const admin = req.admin;
+
+      if (!liveUserIdRaw) {
+        return res.status(400).json({
+          success: false,
+          message: 'live_user_id query parameter is required'
+        });
+      }
+
+      const liveUserId = parseInt(liveUserIdRaw, 10);
+      if (!Number.isInteger(liveUserId) || liveUserId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'live_user_id must be a positive integer'
+        });
+      }
+
+      const ScopedLiveUser = req.scopedModels?.LiveUser;
+
+      const result = await adminUserManagementService.getStrategyProviderAccountsForLiveUser(
+        liveUserId,
+        ScopedLiveUser,
+        admin
+      );
+
+      return res.status(200).json({
+        data: result
+      });
+    } catch (error) {
+      if (error.message === 'Live user not found or access denied') {
+        return res.status(404).json({
+          success: false,
+          message: 'Live user not found or access denied'
+        });
+      }
+
+      if (error.message === 'Scoped LiveUser model unavailable') {
+        return res.status(500).json({
+          success: false,
+          message: 'Scoped LiveUser model unavailable for this request'
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve strategy provider accounts',
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = new AdminUserManagementController();

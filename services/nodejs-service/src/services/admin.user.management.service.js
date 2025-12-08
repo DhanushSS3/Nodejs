@@ -1,4 +1,4 @@
-const { LiveUser, DemoUser, LiveUserOrder, DemoUserOrder } = require('../models');
+const { LiveUser, DemoUser, LiveUserOrder, DemoUserOrder, StrategyProviderAccount } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('./logger.service');
 const redisUserCache = require('./redis.user.cache.service');
@@ -869,6 +869,76 @@ class AdminUserManagementService {
         adminId: adminInfo.id,
         userType,
         userId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Fetches all strategy provider accounts associated with a live user
+   * @param {number} liveUserId - Live user identifier
+   * @param {Model} ScopedLiveUser - Scoped LiveUser model honoring country restrictions
+   * @param {Object} adminInfo - Authenticated admin details
+   * @returns {Object} Live user summary and associated accounts
+   */
+  async getStrategyProviderAccountsForLiveUser(liveUserId, ScopedLiveUser, adminInfo) {
+    const operationId = `get_live_user_strategy_providers_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    try {
+      if (!ScopedLiveUser || typeof ScopedLiveUser.findByPk !== 'function') {
+        logger.error('Scoped LiveUser model unavailable for strategy provider lookup', {
+          operationId,
+          liveUserId,
+          adminId: adminInfo?.id
+        });
+        throw new Error('Scoped LiveUser model unavailable');
+      }
+
+      const user = await ScopedLiveUser.findByPk(liveUserId, {
+        attributes: [
+          'id',
+          'name',
+          'email',
+          'account_number',
+          'group',
+          'status',
+          'is_active',
+          'country_id'
+        ]
+      });
+
+      if (!user) {
+        logger.warn('Live user not found or access denied for strategy provider lookup', {
+          operationId,
+          liveUserId,
+          adminId: adminInfo?.id,
+          adminRole: adminInfo?.role
+        });
+        throw new Error('Live user not found or access denied');
+      }
+
+      const accounts = await StrategyProviderAccount.findAll({
+        where: { user_id: liveUserId },
+        order: [['created_at', 'DESC']]
+      });
+
+      logger.info('Retrieved strategy provider accounts for live user', {
+        operationId,
+        liveUserId,
+        adminId: adminInfo?.id,
+        accountsCount: accounts.length
+      });
+
+      return {
+        // user: user.toJSON(),
+        accounts: accounts.map(account => account.toJSON())
+      };
+    } catch (error) {
+      logger.error('Failed to fetch live user strategy provider accounts', {
+        operationId,
+        liveUserId,
+        adminId: adminInfo?.id,
         error: error.message
       });
       throw error;
