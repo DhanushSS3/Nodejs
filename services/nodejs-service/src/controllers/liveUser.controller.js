@@ -1027,8 +1027,141 @@ async function getClosedOrderInstrumentSummaryAdminSecret(req, res) {
       error: error.message,
       stack: error.stack
     });
+
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 }
 
-module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret };
+/**
+ * Fetch monthly aggregated order quantity (lots) for a live user by email within a date range using admin secret
+ */
+async function getMonthlyOrderQuantityAdminSecret(req, res) {
+  try {
+    const expectedSecret = process.env.ADMIN_LIVE_USERS_SECRET || 'admin@livefxhub@123';
+    const providedSecret = req.headers['x-admin-secret'] || req.query.secret || req.body?.secret;
+
+    if (!providedSecret || providedSecret !== expectedSecret) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: invalid admin secret'
+      });
+    }
+
+    const emailInput = (req.query.email || req.body?.email || '').trim();
+    if (!emailInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const fromDateRaw = (req.query.from_date || req.body?.from_date || '').trim();
+    const toDateRaw = (req.query.to_date || req.body?.to_date || '').trim();
+
+    if (!fromDateRaw || !toDateRaw) {
+      return res.status(400).json({
+        success: false,
+        message: 'from_date and to_date are required (YYYY-MM-DD or ISO format)'
+      });
+    }
+
+    const fromDate = new Date(fromDateRaw);
+    const toDate = new Date(toDateRaw);
+
+    if (Number.isNaN(fromDate.valueOf()) || Number.isNaN(toDate.valueOf())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid from_date or to_date'
+      });
+    }
+
+    if (fromDate > toDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'from_date cannot be later than to_date'
+      });
+    }
+
+    const normalizedEmail = emailInput.toLowerCase();
+
+    const user = await LiveUser.findOne({
+      where: {
+        user_type: 'live',
+        [Op.and]: [where(fn('LOWER', col('email')), normalizedEmail)]
+      },
+      attributes: ['id', 'email', 'name', 'account_number']
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Live user not found for provided email'
+      });
+    }
+
+    const periodStart = new Date(fromDate);
+    periodStart.setHours(0, 0, 0, 0);
+    const periodEnd = new Date(toDate);
+    periodEnd.setHours(23, 59, 59, 999);
+
+    const whereClause = {
+      order_user_id: user.id,
+      created_at: {
+        [Op.between]: [periodStart, periodEnd]
+      }
+    };
+
+    const monthlyTotals = await LiveUserOrder.findAll({
+      where: whereClause,
+      attributes: [
+        [fn('YEAR', col('created_at')), 'year'],
+        [fn('MONTH', col('created_at')), 'month'],
+        [fn('SUM', col('order_quantity')), 'total_quantity']
+      ],
+      group: [fn('YEAR', col('created_at')), fn('MONTH', col('created_at'))],
+      raw: true
+    });
+
+    const monthFormatter = new Intl.DateTimeFormat('en-US', {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC'
+    });
+
+    const sortedTotals = monthlyTotals
+      .map((entry) => ({
+        year: Number(entry.year),
+        month: Number(entry.month),
+        total_quantity: entry.total_quantity
+      }))
+      .filter((entry) => Number.isFinite(entry.year) && Number.isFinite(entry.month))
+      .sort((a, b) => (a.year - b.year) || (a.month - b.month));
+
+    const monthlySummary = {};
+    let periodTotal = 0;
+
+    sortedTotals.forEach((entry) => {
+      const date = new Date(Date.UTC(entry.year, entry.month - 1, 1));
+      const label = monthFormatter.format(date);
+      const quantityNumber = entry.total_quantity !== null ? parseFloat(entry.total_quantity) : 0;
+      const formattedQuantity = Number.isFinite(quantityNumber) ? quantityNumber.toString() : '0';
+
+      monthlySummary[label] = `${formattedQuantity}lots`;
+      periodTotal += Number.isFinite(quantityNumber) ? quantityNumber : 0;
+    });
+
+    return res.status(200).json({
+      monthly_order_quantity_lots: monthlySummary,
+      total_order_quantity_lots: periodTotal.toString()
+    });
+  } catch (error) {
+    logger.error('getMonthlyOrderQuantityAdminSecret failed', {
+      error: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout, regenerateViewPassword, getUserInfo, getUserSessions, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret, getMonthlyOrderQuantityAdminSecret };

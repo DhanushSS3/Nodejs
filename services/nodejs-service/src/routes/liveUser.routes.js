@@ -1,5 +1,5 @@
 const express = require('express');
-const { signup, regenerateViewPassword, getUserInfo, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret } = require('../controllers/liveUser.controller');
+const { signup, regenerateViewPassword, getUserInfo, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret, getMonthlyOrderQuantityAdminSecret } = require('../controllers/liveUser.controller');
 const { body, param, query } = require('express-validator');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
@@ -351,6 +351,11 @@ router.get('/admin/closed-orders', getClosedOrdersByEmailAdminSecret);
  * Lightweight admin endpoint secured by static secret for closed order instrument summary
  */
 router.get('/admin/closed-orders/summary', getClosedOrderInstrumentSummaryAdminSecret);
+
+/**
+ * Lightweight admin endpoint secured by static secret for monthly order quantity aggregation
+ */
+router.get('/admin/orders/monthly-quantity', getMonthlyOrderQuantityAdminSecret);
 
 /**
  * @swagger
