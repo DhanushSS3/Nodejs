@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { redisCluster } = require('../../config/redis');
+const logger = require('../services/logger.service');
 
 // Redis cluster connection pool increased to 1000 connections for high-volume operations
 
@@ -222,14 +223,31 @@ async function removeUserSession(userId, sessionId, userType) {
 
 async function enforceSessionLimit(userId, userType) {
   const activeSessions = await getUserActiveSessions(userId, userType);
+  logger.info('Session check before enforcement', {
+    userId,
+    userType,
+    activeSessionsCount: activeSessions.length,
+    activeSessionIds: activeSessions.map(session => session.sessionId)
+  });
   
   if (activeSessions.length >= MAX_CONCURRENT_SESSIONS) {
     // Remove oldest sessions to make room for new one
     const sessionsToRemove = activeSessions.slice(0, activeSessions.length - MAX_CONCURRENT_SESSIONS + 1);
+    logger.info('Session limit exceeded, revoking oldest sessions', {
+      userId,
+      userType,
+      maxConcurrentSessions: MAX_CONCURRENT_SESSIONS,
+      sessionsToRemove: sessionsToRemove.map(session => session.sessionId)
+    });
     
     for (const session of sessionsToRemove) {
       // Delete the actual session data
       await deleteSession(userId, session.sessionId, userType);
+      logger.info('Revoked session due to limit enforcement', {
+        userId,
+        userType,
+        revokedSessionId: session.sessionId
+      });
       
       // Remove from sessions tracking
       await removeUserSession(userId, session.sessionId, userType);
@@ -254,6 +272,15 @@ async function storeSession(userId, sessionId, sessionData, userType, refreshTok
     
     // Add session to user's active sessions tracking
     await addUserSession(userId, sessionId, userType);
+    const updatedSessions = await getUserActiveSessions(userId, userType);
+    logger.info('Stored session in Redis', {
+      userId,
+      userType,
+      sessionId,
+      activeSessionsCount: updatedSessions.length,
+      activeSessionIds: updatedSessions.map(session => session.sessionId),
+      revokedSessions
+    });
     
     // If refresh token is provided, store it in a separate operation
     if (refreshToken) {
@@ -298,6 +325,11 @@ async function deleteSession(userId, sessionId, userType, refreshToken = null) {
   try {
     // Delete session first
     await redisCluster.del(key);
+    logger.info('Deleted session key from Redis', {
+      userId,
+      userType,
+      sessionId
+    });
     
     // Remove session from user's active sessions tracking
     await removeUserSession(userId, sessionId, userType);
