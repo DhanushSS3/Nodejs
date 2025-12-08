@@ -75,7 +75,7 @@ async function resetRateLimit({ email, ip, userType }) {
 }
 
 // --- SESSION MANAGEMENT ---
-const SESSION_TTL = 900; // 15 min
+const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 // --- OTP MANAGEMENT ---
