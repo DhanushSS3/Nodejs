@@ -85,6 +85,8 @@ async def _save_close_id_to_database(order_id: str, close_id: str, user_type: st
         )
         return True
         
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error(
             "[AUTOCUTOFF:CLOSE_ID_SAVE_FAILED] order_id=%s close_id=%s user=%s:%s error=%s",
@@ -99,6 +101,8 @@ async def _get_market_bid_ask(symbol: str) -> Tuple[Optional[float], Optional[fl
         bid = _safe_float(raw[0]) if raw and len(raw) > 0 else None
         ask = _safe_float(raw[1]) if raw and len(raw) > 1 else None
         return bid, ask
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error("_get_market_bid_ask error for %s: %s", symbol, e)
         return None, None
@@ -146,6 +150,8 @@ async def _compute_order_loss_usd(order: Dict, group: Dict, prices: Dict[str, Di
         try:
             conv = await convert_to_usd(pnl_native, str(profit_currency).upper(), prices_cache=prices or {}, strict=False)
             pnl_usd = float(conv or 0.0)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             pnl_usd = pnl_native
 
@@ -174,6 +180,8 @@ class LiquidationEngine:
                 await self._ch.declare_queue(db_update_queue, durable=True)
                 self._ex = self._ch.default_exchange
                 logger.info("LiquidationEngine connected to RabbitMQ for DB updates")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error("Failed to connect to RabbitMQ: %s", e)
                 self._conn = None
@@ -185,8 +193,55 @@ class LiquidationEngine:
         try:
             await publish_db_update(msg)
             logger.info("[AUTOCUTOFF:DB_UPDATE] Published close confirmation for order_id=%s", msg.get("order_id"))
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error("Failed to publish DB update from LiquidationEngine: %s", e)
+
+    async def _publish_db_update_with_retry(self, msg: dict, *, attempts: int = 3, base_delay: float = 0.3) -> bool:
+        """
+        Publish DB update with retries and shielding so cancellations don't skip the confirmation.
+        Returns True if publish succeeded, False otherwise.
+        """
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            publish_task = asyncio.create_task(self._publish_db_update(msg))
+            try:
+                await asyncio.shield(publish_task)
+                return True
+            except asyncio.CancelledError:
+                # Ensure the publish completes even though this coroutine was cancelled
+                if not publish_task.done():
+                    try:
+                        await asyncio.shield(publish_task)
+                    except Exception:
+                        pass
+                if attempt >= attempts:
+                    raise
+                logger.warning(
+                    "[AUTOCUTOFF:DB_UPDATE_CANCELLED] order_id=%s attempt=%s/%s - retrying after cancellation",
+                    msg.get("order_id"),
+                    attempt,
+                    attempts,
+                )
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "[AUTOCUTOFF:DB_UPDATE_RETRY] order_id=%s attempt=%s/%s error=%s",
+                    msg.get("order_id"),
+                    attempt,
+                    attempts,
+                    e,
+                )
+
+            await asyncio.sleep(base_delay * attempt)
+
+        logger.error(
+            "[AUTOCUTOFF:DB_UPDATE_FAILED_FINAL] order_id=%s error=%s",
+            msg.get("order_id"),
+            last_error,
+        )
+        return False
 
     async def close(self):
         """Close RabbitMQ connection"""
@@ -194,6 +249,8 @@ class LiquidationEngine:
             if self._conn and not self._conn.is_closed:
                 await self._conn.close()
                 logger.info("LiquidationEngine RabbitMQ connection closed")
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error("Error closing RabbitMQ connection: %s", e)
 
@@ -212,6 +269,8 @@ class LiquidationEngine:
                     return 999.0  # Return high margin level to prevent liquidation
                 
                 return margin_level
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning("[AutoCutoff] Failed to get margin level for %s:%s: %s", user_type, user_id, e)
         return 0.0
@@ -250,13 +309,19 @@ class LiquidationEngine:
                     if vals and len(vals) >= 2:
                         try:
                             b = float(vals[0]) if vals[0] is not None else None
+                        except asyncio.CancelledError:
+                            raise
                         except Exception:
                             b = None
                         try:
                             a = float(vals[1]) if vals[1] is not None else None
+                        except asyncio.CancelledError:
+                            raise
                         except Exception:
                             a = None
                         prices_cache[sym] = {"bid": b, "ask": a}
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 pass
 
@@ -293,9 +358,11 @@ class LiquidationEngine:
                 order_id = str(order.get("order_id"))
                 side = str(order.get("order_type") or "").upper()
                 
-                # 🆕 Set close context BEFORE creating payload for proper close_message attribution
+                # Set close context BEFORE creating payload for proper close_message attribution
                 try:
                     await set_autocutoff_context(order_id, user_type, user_id)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.warning(
                         "[AUTOCUTOFF:CONTEXT_SET_FAILED] order_id=%s error=%s",
@@ -317,6 +384,8 @@ class LiquidationEngine:
                 try:
                     ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
                     sending_orders = (ucfg.get("sending_orders") or "").strip().lower() if ucfg else ""
+                except asyncio.CancelledError:
+                    raise
                 except Exception:
                     sending_orders = ""
                 if user_type in ["live", "strategy_provider", "copy_follower"] and sending_orders == "barclays":
@@ -324,10 +393,12 @@ class LiquidationEngine:
                     close_id = generate_close_id()
                     payload["close_id"] = close_id
                     
-                    # 🆕 CRITICAL: Save close_id to database IMMEDIATELY before sending to provider
+                    # CRITICAL: Save close_id to database IMMEDIATELY before sending to provider
                     # This ensures close_id is persisted even if provider confirmation fails
                     try:
                         await _save_close_id_to_database(order_id, close_id, user_type, user_id)
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as e:
                         logger.error(
                             "[AUTOCUTOFF:CLOSE_ID_DB_SAVE_ERROR] order_id=%s close_id=%s error=%s",
@@ -363,6 +434,8 @@ class LiquidationEngine:
                                 has_tp = _is_active(od.get("take_profit")) if od else False
                             if not has_sl:
                                 has_sl = _is_active(od.get("stop_loss")) if od else False
+                        except asyncio.CancelledError:
+                            raise
                         except Exception:
                             pass
 
@@ -426,8 +499,14 @@ class LiquidationEngine:
                             "close_message": "Autocutoff",  # Explicit autocutoff message
                             "trigger_lifecycle_id": f"autocutoff_{order_id}",  # Synthetic autocutoff trigger ID
                         }
-                        await self._publish_db_update(db_msg)
-                        logger.info("[AUTOCUTOFF:LOCAL_CLOSE_CONFIRMED] order_id=%s close_message=Autocutoff flow=local", order_id)
+                        ok = await self._publish_db_update_with_retry(db_msg)
+                        if ok:
+                            logger.info("[AUTOCUTOFF:LOCAL_CLOSE_CONFIRMED] order_id=%s close_message=Autocutoff flow=local", order_id)
+                        else:
+                            logger.error("[AUTOCUTOFF:DB_UPDATE_FAILED_FINAL] order_id=%s", order_id)
+                    except asyncio.CancelledError:
+                        logger.warning("[AUTOCUTOFF:DB_UPDATE_CANCELLED_FINAL] order_id=%s - cancellation will propagate after confirmation", order_id)
+                        raise
                     except Exception as e:
                         logger.warning("[AUTOCUTOFF:DB_UPDATE_FAILED] order_id=%s error=%s", order_id, e)
                 else:
