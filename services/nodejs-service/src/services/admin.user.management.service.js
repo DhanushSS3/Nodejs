@@ -1,4 +1,4 @@
-const { LiveUser, DemoUser, LiveUserOrder, DemoUserOrder, StrategyProviderAccount } = require('../models');
+const { LiveUser, DemoUser, LiveUserOrder, DemoUserOrder, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('./logger.service');
 const redisUserCache = require('./redis.user.cache.service');
@@ -938,6 +938,92 @@ class AdminUserManagementService {
       logger.error('Failed to fetch live user strategy provider accounts', {
         operationId,
         liveUserId,
+        adminId: adminInfo?.id,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Fetches all copy follower accounts associated with a strategy provider
+   * @param {number} strategyProviderId - Strategy provider identifier
+   * @param {Model} ScopedLiveUser - Scoped LiveUser model for access validation
+   * @param {Object} adminInfo - Authenticated admin details
+   * @returns {Object} Strategy provider summary and follower accounts
+   */
+  async getCopyFollowersForStrategyProvider(strategyProviderId, ScopedLiveUser, adminInfo) {
+    const operationId = `get_strategy_provider_copy_followers_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    try {
+      if (!Number.isInteger(strategyProviderId) || strategyProviderId <= 0) {
+        throw new Error('Invalid strategy provider ID');
+      }
+
+      const strategyProvider = await StrategyProviderAccount.findByPk(strategyProviderId, {
+        attributes: [
+          'id',
+          'user_id',
+          'strategy_name',
+          'account_number',
+          'status',
+          'is_active',
+          'group',
+          'total_followers',
+          'total_investment',
+          'created_at',
+          'updated_at'
+        ]
+      });
+
+      if (!strategyProvider) {
+        logger.warn('Strategy provider not found for copy follower lookup', {
+          operationId,
+          strategyProviderId,
+          adminId: adminInfo?.id
+        });
+        throw new Error('Strategy provider not found or access denied');
+      }
+
+      if (ScopedLiveUser && typeof ScopedLiveUser.findByPk === 'function') {
+        const accessibleOwner = await ScopedLiveUser.findByPk(strategyProvider.user_id, {
+          attributes: ['id']
+        });
+
+        if (!accessibleOwner) {
+          logger.warn('Strategy provider owner not accessible for admin', {
+            operationId,
+            strategyProviderId,
+            adminId: adminInfo?.id
+          });
+          throw new Error('Strategy provider not found or access denied');
+        }
+      }
+
+      const followers = await CopyFollowerAccount.findAll({
+        where: { strategy_provider_id: strategyProviderId },
+        order: [['created_at', 'DESC']]
+      });
+
+      logger.info('Retrieved copy follower accounts for strategy provider', {
+        operationId,
+        strategyProviderId,
+        adminId: adminInfo?.id,
+        followersCount: followers.length
+      });
+
+      return {
+        strategy_provider: strategyProvider.toJSON(),
+        copy_followers: followers.map(follower => follower.toJSON())
+      };
+    } catch (error) {
+      if (error.message === 'Strategy provider not found or access denied' || error.message === 'Invalid strategy provider ID') {
+        throw error;
+      }
+
+      logger.error('Failed to fetch copy follower accounts for strategy provider', {
+        operationId,
+        strategyProviderId,
         adminId: adminInfo?.id,
         error: error.message
       });

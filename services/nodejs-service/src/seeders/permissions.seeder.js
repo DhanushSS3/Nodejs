@@ -43,6 +43,9 @@ class PermissionSeeder {
       // Strategy Provider Permissions
       { name: 'strategy_provider:read', description: 'View strategy provider account details' },
 
+      // Copy Follower Permissions
+      { name: 'copy_follower:read', description: 'View copy follower account details' },
+
       // Trading Permissions
       { name: 'trading:view', description: 'View trading data' },
       { name: 'trading:create', description: 'Create trading orders' },

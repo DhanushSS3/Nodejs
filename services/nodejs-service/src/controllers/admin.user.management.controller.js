@@ -1079,6 +1079,64 @@ class AdminUserManagementController {
       });
     }
   }
+
+  /**
+   * Fetch copy follower accounts for a strategy provider
+   * Requires 'copy_follower:read' permission
+   */
+  async getCopyFollowersForStrategyProvider(req, res, next) {
+    try {
+      const { strategy_provider_id: strategyProviderIdRaw } = req.query;
+      const admin = req.admin;
+
+      if (!strategyProviderIdRaw) {
+        return res.status(400).json({
+          success: false,
+          message: 'strategy_provider_id query parameter is required'
+        });
+      }
+
+      const strategyProviderId = parseInt(strategyProviderIdRaw, 10);
+      if (!Number.isInteger(strategyProviderId) || strategyProviderId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'strategy_provider_id must be a positive integer'
+        });
+      }
+
+      const ScopedLiveUser = req.scopedModels?.LiveUser;
+
+      const result = await adminUserManagementService.getCopyFollowersForStrategyProvider(
+        strategyProviderId,
+        ScopedLiveUser,
+        admin
+      );
+
+      return res.status(200).json({
+        data: result
+      });
+    } catch (error) {
+      if (error.message === 'Strategy provider not found or access denied') {
+        return res.status(404).json({
+          success: false,
+          message: 'Strategy provider not found or access denied'
+        });
+      }
+
+      if (error.message === 'Invalid strategy provider ID') {
+        return res.status(400).json({
+          success: false,
+          message: 'strategy_provider_id must be a positive integer'
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve copy follower accounts',
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = new AdminUserManagementController();

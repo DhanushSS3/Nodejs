@@ -79,6 +79,39 @@ router.get(
 
 /**
  * @swagger
+ * /api/admin/users/strategy-providers/copy-followers:
+ *   get:
+ *     summary: Fetch copy follower accounts associated with a strategy provider
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve all copy follower accounts belonging to a specific strategy provider using the strategy_provider_id query parameter. Requires 'copy_follower:read' permission.
+ *     parameters:
+ *       - in: query
+ *         name: strategy_provider_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the strategy provider whose copy follower accounts should be returned
+ *     responses:
+ *       200:
+ *         description: Copy follower accounts retrieved successfully
+ *       400:
+ *         description: Missing or invalid strategy provider ID
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Strategy provider not found or access denied
+ */
+router.get(
+  '/strategy-providers/copy-followers',
+  requirePermissions(['copy_follower:read']),
+  auditLog('GET_STRATEGY_PROVIDER_COPY_FOLLOWERS'),
+  adminUserManagementController.getCopyFollowersForStrategyProvider
+);
+
+/**
+ * @swagger
  * /api/admin/users/live-users/{userId}:
  *   put:
  *     summary: Update a live user's information
