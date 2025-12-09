@@ -29,6 +29,7 @@ from app.services.orders.order_repository import fetch_user_config as repo_fetch
 
 # Env-driven strict mode
 STRICT_MODE = os.getenv("PORTFOLIO_STRICT_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
+MARGIN_CACHE_STALE_MS = int(os.getenv("PORTFOLIO_MARGIN_CACHE_MAX_AGE_MS", "60000"))
 
 
 class PortfolioCalculatorListener:
@@ -906,13 +907,48 @@ class PortfolioCalculatorListener:
             except (TypeError, ValueError):
                 existing_all = None
 
+            now_ms = self._now_ms()
+            existing_ts_ms = None
+            if existing_pf and (existing_pf.get('ts') is not None):
+                try:
+                    existing_ts_ms = int(float(existing_pf.get('ts')))
+                except (TypeError, ValueError):
+                    existing_ts_ms = None
+
             executed_margin = existing_exe
             total_margin = existing_all
 
-            # Compute only if necessary
+            has_open_orders = bool(orders)
+            is_stale = False
+            if has_open_orders:
+                if existing_ts_ms is None:
+                    is_stale = True
+                else:
+                    try:
+                        is_stale = (now_ms - existing_ts_ms) > MARGIN_CACHE_STALE_MS
+                    except Exception:
+                        is_stale = True
+
+            zero_cached_margin = (
+                has_open_orders
+                and executed_margin is not None
+                and executed_margin <= 0.0
+                and ((total_margin is None) or (total_margin <= 0.0))
+            )
+
+            force_recompute = (
+                has_open_orders
+                and (
+                    executed_margin is None
+                    or (has_queued and total_margin is None)
+                    or zero_cached_margin
+                    or is_stale
+                )
+            )
+
             if has_queued:
-                if (executed_margin is None) or (total_margin is None):
-                    executed_margin, total_margin, _ = await compute_user_total_margin(
+                if force_recompute or executed_margin is None or total_margin is None:
+                    exec_margin_new, total_margin_new, _ = await compute_user_total_margin(
                         user_type=user_type,
                         user_id=user_id,
                         orders=orders,
@@ -920,9 +956,11 @@ class PortfolioCalculatorListener:
                         strict=False,
                         include_queued=True,
                     )
-            else:
-                if executed_margin is None:
-                    executed_margin, _, _ = await compute_user_total_margin(
+                    executed_margin = exec_margin_new if exec_margin_new is not None else executed_margin
+                    total_margin = total_margin_new if total_margin_new is not None else total_margin
+            elif has_open_orders:
+                if force_recompute or executed_margin is None:
+                    exec_margin_new, total_margin_new, _ = await compute_user_total_margin(
                         user_type=user_type,
                         user_id=user_id,
                         orders=orders,
@@ -930,7 +968,19 @@ class PortfolioCalculatorListener:
                         strict=False,
                         include_queued=False,
                     )
-                total_margin = executed_margin if executed_margin is not None else total_margin
+                    executed_margin = exec_margin_new if exec_margin_new is not None else executed_margin
+                    if total_margin_new is not None:
+                        total_margin = total_margin_new
+                elif total_margin is None:
+                    total_margin = executed_margin if executed_margin is not None else total_margin
+            else:
+                if executed_margin is None:
+                    executed_margin = 0.0
+                if total_margin is None:
+                    total_margin = executed_margin
+
+            executed_margin = float(executed_margin) if executed_margin is not None else 0.0
+            total_margin = float(total_margin) if total_margin is not None else executed_margin
 
             # Add margin fields to portfolio (as strings for Redis)
             if executed_margin is not None:
