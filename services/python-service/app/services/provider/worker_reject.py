@@ -478,6 +478,22 @@ class RejectWorker:
                             if not any_same_symbol:
                                 sym_set = f"symbol_holders:{symbol}:{user_type}"
                                 await redis_cluster.srem(sym_set, f"{user_type}:{user_id}")
+                                symbol_logger.info(
+                                    "[REJECT:SYMBOL_HOLDERS_REMOVE] user=%s:%s symbol=%s key=%s reason=%s",
+                                    user_type,
+                                    user_id,
+                                    symbol,
+                                    sym_set,
+                                    "placement_rejected_no_other_orders",
+                                )
+                            else:
+                                symbol_logger.info(
+                                    "[REJECT:SYMBOL_HOLDERS_SKIP] user=%s:%s symbol=%s reason=%s",
+                                    user_type,
+                                    user_id,
+                                    symbol,
+                                    "other_open_orders_present",
+                                )
                     except Exception:
                         logger.exception("[REJECT:SYMBOL_HOLDERS] cleanup failed")
                         
