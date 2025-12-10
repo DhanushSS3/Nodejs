@@ -2,9 +2,12 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import asyncio
 import os
 from dotenv import load_dotenv
+
 # Load environment variables from .env early
 # Try multiple possible .env locations
 env_paths = [
@@ -39,16 +42,36 @@ from .services.orders.provider_connection import get_provider_connection_manager
 from .services.pending.provider_pending_monitor import start_provider_pending_monitor
 from .services.pending.pending_monitor import start_pending_monitor
 
-# Configure logging with noise reduction
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+def _configure_logging():
+    """Send logs to stdout and a rotating application.log file with retention."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
-# Reduce noise from uvicorn lifespan errors (these are normal during shutdown)
-logging.getLogger("uvicorn.lifespan.on").setLevel(logging.CRITICAL)
-logging.getLogger("starlette.routing").setLevel(logging.WARNING)
+    root_logger = logging.getLogger()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logs_dir = Path(__file__).resolve().parents[1] / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = RotatingFileHandler(
+        filename=str(logs_dir / "application.log"),
+        maxBytes=20 * 1024 * 1024,  # 20 MB
+        backupCount=10,
+        encoding="utf-8"
+    )
+    file_handler.setFormatter(formatter)
+    file_handler._app_rotating = True  # prevent duplicates
 
+    # Avoid stacking duplicate handlers if main.py is reloaded in dev mode
+    if not any(getattr(h, "_app_rotating", False) for h in root_logger.handlers):
+        root_logger.addHandler(file_handler)
+
+    # Reduce noise from uvicorn lifespan errors (these are normal during shutdown)
+    logging.getLogger("uvicorn.lifespan.on").setLevel(logging.CRITICAL)
+    logging.getLogger("starlette.routing").setLevel(logging.WARNING)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager

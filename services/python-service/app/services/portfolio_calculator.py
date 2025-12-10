@@ -85,6 +85,9 @@ class PortfolioCalculatorListener:
         # Semaphore to limit concurrent Redis operations and prevent connection exhaustion
         self._redis_semaphore = asyncio.Semaphore(20)  # Limit to 20 concurrent Redis operations
 
+        # Track last known holder counts per symbol to emit logs only on change
+        self._symbol_holder_snapshots: Dict[str, Tuple[int, int, int, int]] = {}
+
     async def start_listener(self):
         """Start the market price update listener and calculation loop"""
         self.logger.info("Starting Portfolio Calculator Listener...")
@@ -1066,6 +1069,14 @@ class PortfolioCalculatorListener:
             demo_users = await self._fetch_symbol_holders(symbol, 'demo')
             strategy_provider_users = await self._fetch_symbol_holders(symbol, 'strategy_provider')
             copy_follower_users = await self._fetch_symbol_holders(symbol, 'copy_follower')
+
+            self._log_symbol_holder_counts(
+                symbol,
+                live_count=len(live_users or ()),
+                demo_count=len(demo_users or ()),
+                strategy_provider_count=len(strategy_provider_users or ()),
+                copy_follower_count=len(copy_follower_users or ()),
+            )
             
             # self.logger.info(f"📊 Portfolio calc: Found holders - live:{len(live_users)} demo:{len(demo_users)} strategy_provider:{len(strategy_provider_users)} copy_follower:{len(copy_follower_users)}")
             
@@ -1222,6 +1233,47 @@ class PortfolioCalculatorListener:
             new_users_added = after_size - before_size
             
             return new_users_added
+
+    def _log_symbol_holder_counts(
+        self,
+        symbol: str,
+        live_count: int,
+        demo_count: int,
+        strategy_provider_count: int,
+        copy_follower_count: int,
+    ) -> None:
+        """
+        Emit an info/warning log when the holder mix for a symbol changes.
+        Helps detect situations where a user unexpectedly drops out of symbol_holders.
+        """
+        snapshot = (live_count, demo_count, strategy_provider_count, copy_follower_count)
+        last_snapshot = self._symbol_holder_snapshots.get(symbol)
+        if last_snapshot == snapshot:
+            return
+
+        self._symbol_holder_snapshots[symbol] = snapshot
+        total_holders = sum(snapshot)
+
+        if total_holders == 0:
+            level = logging.WARNING
+            reason = "no_holders_for_symbol"
+        elif last_snapshot and last_snapshot[2] > 0 and strategy_provider_count == 0:
+            level = logging.WARNING
+            reason = "strategy_providers_dropped_to_zero"
+        else:
+            level = logging.INFO
+            reason = "holder_counts_changed"
+
+        self.logger.log(
+            level,
+            "symbol_holders_update symbol=%s reason=%s live=%d demo=%d strategy_provider=%d copy_follower=%d",
+            symbol,
+            reason,
+            live_count,
+            demo_count,
+            strategy_provider_count,
+            copy_follower_count,
+        )
     
     def _update_stats(self, symbol: str, users_affected: int):
         """Update internal statistics for monitoring"""
