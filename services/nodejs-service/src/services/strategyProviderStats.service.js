@@ -180,7 +180,7 @@ class StrategyProviderStatsService {
     // Current Equity = wallet_balance + net_profit
     // Provider Investment = provider_investment_amount (tracks their own deposits/withdrawals)
     
-    const currentEquity = parseFloat(strategyProvider.wallet_balance || 0) + parseFloat(strategyProvider.net_profit || 0);
+    const currentEquity = parseFloat(strategyProvider.wallet_balance || 0) ;
     const providerInvestment = parseFloat(strategyProvider.provider_investment_amount || 0);
     
     if (providerInvestment <= 0) return 0;
