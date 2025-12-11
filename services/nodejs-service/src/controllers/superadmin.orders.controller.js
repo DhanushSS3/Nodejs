@@ -7,7 +7,7 @@ const DemoUserOrder = require('../models/demoUserOrder.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const logger = require('../services/logger.service');
-const { createAuditLog } = require('../middlewares/audit.middleware');
+const adminAuditService = require('../services/admin.audit.service');
 
 function ok(res, data, message = 'OK') {
   return res.status(200).json({ success: true, message, data });
@@ -153,25 +153,25 @@ async function rebuildUser(req, res) {
 
     const response = ok(res, responseData, responseMessage);
     if (adminId) {
-      await createAuditLog(
-        adminId,
-        'ORDERS_REBUILD_USER',
-        req.ip,
-        { body: req.body, response: responseData },
-        'SUCCESS'
-      );
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_REBUILD_USER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: responseData },
+        status: 'SUCCESS',
+      });
     }
     return response;
   } catch (err) {
     if (req.admin?.id) {
-      await createAuditLog(
-        req.admin.id,
-        'ORDERS_REBUILD_USER',
-        req.ip,
-        { body: req.body },
-        'FAILED',
-        err.message
-      );
+      await adminAuditService.logAction({
+        adminId: Number(req.admin.id),
+        action: 'ORDERS_REBUILD_USER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
     }
     return bad(res, `Failed to rebuild user indices: ${err.message}`, 500);
   }
@@ -197,7 +197,7 @@ async function performUserRebuildFlow(user_type, user_id, options = {}) {
     baseResult = await OrdersIndexRebuildService.rebuildUserIndices(user_type, normalizedId);
   }
 
-  let data = baseResult;
+  let data = { base: baseResult };
   let message = shouldBackfill
     ? 'User holdings backfilled from SQL and indices rebuilt'
     : 'User indices rebuilt from holdings';
@@ -210,7 +210,7 @@ async function performUserRebuildFlow(user_type, user_id, options = {}) {
         normalizedId,
         { includeQueued: true }
       );
-      data = { base: baseResult, deep: deepResult };
+      data.deep = deepResult;
       message = `${message}; execution caches rebuilt`;
     } catch (e) {
       logger.warn('Deep execution-cache rebuild failed', { error: e.message, user_type, user_id: normalizedId });
@@ -227,11 +227,7 @@ async function performUserRebuildFlow(user_type, user_id, options = {}) {
         normalizedId,
         { deep: true, pruneSymbolHolders: Boolean(options.pruneSymbolHolders) }
       );
-      if (data && typeof data === 'object' && data !== baseResult && data.base) {
-        data = { ...data, prune: pruneResult };
-      } else {
-        data = { ...baseResult, prune: pruneResult };
-      }
+      data.prune = pruneResult;
       message = `${message}; stale Redis pruned`;
     } catch (e) {
       logger.warn('Prune against SQL failed', { error: e.message, user_type, user_id: normalizedId });
@@ -346,25 +342,25 @@ async function pruneUser(req, res) {
     const result = await OrdersBackfillService.pruneUserRedisAgainstSql(user_type, user_id, { deep, pruneSymbolHolders });
     const response = ok(res, result, 'Stale Redis entries pruned');
     if (adminId) {
-      await createAuditLog(
-        adminId,
-        'ORDERS_PRUNE_USER',
-        req.ip,
-        { body: req.body, result },
-        'SUCCESS'
-      );
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_PRUNE_USER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, result },
+        status: 'SUCCESS',
+      });
     }
     return response;
   } catch (err) {
     if (req.admin?.id) {
-      await createAuditLog(
-        req.admin.id,
-        'ORDERS_PRUNE_USER',
-        req.ip,
-        { body: req.body },
-        'FAILED',
-        err.message
-      );
+      await adminAuditService.logAction({
+        adminId: Number(req.admin.id),
+        action: 'ORDERS_PRUNE_USER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
     }
     return bad(res, `Failed to prune user Redis: ${err.message}`, 500);
   }
@@ -383,25 +379,25 @@ async function rebuildSymbol(req, res) {
     const result = await OrdersIndexRebuildService.rebuildSymbolHolders(symbol, scope);
     const response = ok(res, result, 'Symbol holders ensured from indices');
     if (adminId) {
-      await createAuditLog(
-        adminId,
-        'ORDERS_REBUILD_SYMBOL',
-        req.ip,
-        { body: req.body, result },
-        'SUCCESS'
-      );
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_REBUILD_SYMBOL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, result },
+        status: 'SUCCESS',
+      });
     }
     return response;
   } catch (err) {
     if (req.admin?.id) {
-      await createAuditLog(
-        req.admin.id,
-        'ORDERS_REBUILD_SYMBOL',
-        req.ip,
-        { body: req.body },
-        'FAILED',
-        err.message
-      );
+      await adminAuditService.logAction({
+        adminId: Number(req.admin.id),
+        action: 'ORDERS_REBUILD_SYMBOL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
     }
     return bad(res, `Failed to rebuild symbol holders: ${err.message}`, 500);
   }

@@ -216,7 +216,7 @@ class OrdersBackfillService {
       const odKey = `order_data:${o.order_id}`;
       const odMap = {
         order_id: o.order_id,
-        user_id: userId,  // ← MISSING FIELD ADDED!
+        user_id: userId,  
         symbol: o.symbol,
         order_type: o.order_type,
         order_price: o.order_price ?? '',
@@ -289,10 +289,11 @@ class OrdersBackfillService {
     // Determine group and provider flow
     let groupName = 'Standard';
     let sendingOrders = null;
+    let userContext = null;
     try {
-      const context = await this.deriveUserContext(userType, userId);
-      if (context.group) groupName = String(context.group);
-      if (context.sendingOrders) sendingOrders = String(context.sendingOrders).toLowerCase();
+      userContext = await this.deriveUserContext(userType, userId);
+      if (userContext.group) groupName = String(userContext.group);
+      if (userContext.sendingOrders) sendingOrders = String(userContext.sendingOrders);
     } catch (e) {
       logger.warn('Failed to derive user group/sending_orders; using defaults', { error: e.message, userType, userId });
     }
@@ -323,7 +324,7 @@ class OrdersBackfillService {
       const odKey = `order_data:${o.order_id}`;
       const odMap = {
         order_id: o.order_id,
-        user_id: userId,  // ← MISSING FIELD ADDED!
+        user_id: userId,  
         symbol: o.symbol,
         order_type: o.order_type,
         order_price: o.order_price ?? '',
@@ -334,7 +335,7 @@ class OrdersBackfillService {
         created_at: o.created_at || undefined,
         group: groupName,
         user_type: userType,
-        sending_orders: context?.sendingOrders || undefined,
+        sending_orders: userContext?.sendingOrders || undefined,
       };
       try { await this.redis.hset(odKey, odMap); } catch (e) {
         logger.warn('order_data HSET failed during deep rebuild', { error: e.message, order_id: o.order_id });
