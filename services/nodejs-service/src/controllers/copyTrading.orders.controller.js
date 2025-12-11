@@ -503,25 +503,6 @@ async function placeStrategyProviderOrder(req, res) {
     }
     mark('after_validate');
 
-    // Get strategy provider group for lot validation
-    const strategyProviderGroup = 'Standard'; // Default group for strategy providers
-    
-    // Validate lot size against group constraints
-    const lotValidation = await lotValidationService.validateLotSize(strategyProviderGroup, parsed.symbol, parsed.order_quantity);
-    if (!lotValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        message: lotValidation.message,
-        lot_constraints: {
-          provided_lot: lotValidation.lotSize,
-          min_lot: lotValidation.minLot,
-          max_lot: lotValidation.maxLot,
-          user_group: strategyProviderGroup,
-          symbol: parsed.symbol
-        }
-      });
-    }
-
     // Verify strategy provider account exists and belongs to user
     const strategyProvider = await StrategyProviderAccount.findOne({
       where: {
@@ -536,6 +517,25 @@ async function placeStrategyProviderOrder(req, res) {
       return res.status(404).json({ 
         success: false, 
         message: 'Strategy provider account not found or access denied' 
+      });
+    }
+
+    // Get strategy provider group for lot validation
+    const strategyProviderGroup = strategyProvider.group || 'Standard';
+    
+    // Validate lot size against group constraints
+    const lotValidation = await lotValidationService.validateLotSize(strategyProviderGroup, parsed.symbol, parsed.order_quantity);
+    if (!lotValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: lotValidation.message,
+        lot_constraints: {
+          provided_lot: lotValidation.lotSize,
+          min_lot: lotValidation.minLot,
+          max_lot: lotValidation.maxLot,
+          user_group: strategyProviderGroup,
+          symbol: parsed.symbol
+        }
       });
     }
 
