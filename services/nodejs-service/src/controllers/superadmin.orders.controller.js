@@ -7,6 +7,7 @@ const DemoUserOrder = require('../models/demoUserOrder.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const logger = require('../services/logger.service');
+const { createAuditLog } = require('../middlewares/audit.middleware');
 
 function ok(res, data, message = 'OK') {
   return res.status(200).json({ success: true, message, data });
@@ -113,6 +114,7 @@ async function getMarginStatus(req, res) {
 // body: { user_type: 'live'|'demo', user_id: string|number, include_queued?: boolean, backfill?: boolean, deep?: boolean, prune?: boolean, prune_symbol_holders?: boolean }
 async function rebuildUser(req, res) {
   try {
+    const adminId = req.admin?.id;
     const user_type = String(req.body.user_type || '').toLowerCase();
     const user_id = String(req.body.user_id || '').trim();
     const includeQueued = Boolean(req.body.include_queued);
@@ -149,8 +151,28 @@ async function rebuildUser(req, res) {
       responseMessage = `${responseMessage}; ${relatedRebuilds.length} associated copy-trading account(s) rebuilt`;
     }
 
-    return ok(res, responseData, responseMessage);
+    const response = ok(res, responseData, responseMessage);
+    if (adminId) {
+      await createAuditLog(
+        adminId,
+        'ORDERS_REBUILD_USER',
+        req.ip,
+        { body: req.body, response: responseData },
+        'SUCCESS'
+      );
+    }
+    return response;
   } catch (err) {
+    if (req.admin?.id) {
+      await createAuditLog(
+        req.admin.id,
+        'ORDERS_REBUILD_USER',
+        req.ip,
+        { body: req.body },
+        'FAILED',
+        err.message
+      );
+    }
     return bad(res, `Failed to rebuild user indices: ${err.message}`, 500);
   }
 }
@@ -311,6 +333,7 @@ async function rebuildChildAccount(user_type, user_id, options, processedSet) {
 // body: { user_type: 'live'|'demo', user_id: string|number, deep?: boolean, prune_symbol_holders?: boolean }
 async function pruneUser(req, res) {
   try {
+    const adminId = req.admin?.id;
     const user_type = String(req.body.user_type || '').toLowerCase();
     const user_id = String(req.body.user_id || '').trim();
     const deep = (req.body.deep === undefined) ? true : Boolean(req.body.deep);
@@ -321,8 +344,28 @@ async function pruneUser(req, res) {
     }
 
     const result = await OrdersBackfillService.pruneUserRedisAgainstSql(user_type, user_id, { deep, pruneSymbolHolders });
-    return ok(res, result, 'Stale Redis entries pruned');
+    const response = ok(res, result, 'Stale Redis entries pruned');
+    if (adminId) {
+      await createAuditLog(
+        adminId,
+        'ORDERS_PRUNE_USER',
+        req.ip,
+        { body: req.body, result },
+        'SUCCESS'
+      );
+    }
+    return response;
   } catch (err) {
+    if (req.admin?.id) {
+      await createAuditLog(
+        req.admin.id,
+        'ORDERS_PRUNE_USER',
+        req.ip,
+        { body: req.body },
+        'FAILED',
+        err.message
+      );
+    }
     return bad(res, `Failed to prune user Redis: ${err.message}`, 500);
   }
 }
@@ -331,14 +374,35 @@ async function pruneUser(req, res) {
 // body: { symbol: string, scope?: 'live'|'demo'|'both' }
 async function rebuildSymbol(req, res) {
   try {
+    const adminId = req.admin?.id;
     const symbol = String(req.body.symbol || '').trim();
     const scope = req.body.scope ? String(req.body.scope).toLowerCase() : 'both';
     if (!symbol) return bad(res, 'symbol is required');
     if (!['live', 'demo', 'both'].includes(scope)) return bad(res, 'scope must be live|demo|both');
 
     const result = await OrdersIndexRebuildService.rebuildSymbolHolders(symbol, scope);
-    return ok(res, result, 'Symbol holders ensured from indices');
+    const response = ok(res, result, 'Symbol holders ensured from indices');
+    if (adminId) {
+      await createAuditLog(
+        adminId,
+        'ORDERS_REBUILD_SYMBOL',
+        req.ip,
+        { body: req.body, result },
+        'SUCCESS'
+      );
+    }
+    return response;
   } catch (err) {
+    if (req.admin?.id) {
+      await createAuditLog(
+        req.admin.id,
+        'ORDERS_REBUILD_SYMBOL',
+        req.ip,
+        { body: req.body },
+        'FAILED',
+        err.message
+      );
+    }
     return bad(res, `Failed to rebuild symbol holders: ${err.message}`, 500);
   }
 }

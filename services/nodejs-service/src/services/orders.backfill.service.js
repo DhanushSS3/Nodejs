@@ -639,6 +639,20 @@ class OrdersBackfillService {
             if (!hasOther) {
               const holder = `${userType}:${userId}`;
               try { await this.redis.srem(`symbol_holders:${symbol}:${userType}`, holder); symbolHolderSrem += 1; } catch (_) {}
+              logger.symbolHolders('symbol_holders_remove', {
+                user_type: userType,
+                user_id: userId,
+                symbol,
+                key: `symbol_holders:${symbol}:${userType}`,
+                reason: 'backfill_prune_no_other_orders'
+              });
+            } else {
+              logger.symbolHolders('symbol_holders_skip', {
+                user_type: userType,
+                user_id: userId,
+                symbol,
+                reason: 'other_open_orders_present_during_prune'
+              });
             }
           } catch (_) {}
         }

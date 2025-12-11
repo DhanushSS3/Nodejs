@@ -70,6 +70,24 @@ const redisLogger = winston.createLogger({
   ]
 });
 
+// Dedicated symbol_holders logger (tracks membership changes separately)
+const symbolHoldersLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join(logsDir, 'symbol-holders-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '30d',
+      zippedArchive: true
+    })
+  ]
+});
+
 function writeApplicationLog(level, message, context) {
   const payload = {
     level,
@@ -278,6 +296,18 @@ class Logger {
    */
   static redis(message, context = {}) {
     redisLogger.info(message, {
+      timestamp: new Date().toISOString(),
+      ...context
+    });
+  }
+
+  /**
+   * Log symbol_holders membership changes
+   * @param {string} message
+   * @param {Object} context
+   */
+  static symbolHolders(message, context = {}) {
+    symbolHoldersLogger.info(message, {
       timestamp: new Date().toISOString(),
       ...context
     });
