@@ -44,8 +44,39 @@ async function resolveDepositTarget(userId, userType, authContext) {
         throw new DepositValidationError('Authentication required', 401);
       }
 
-      if (authContext.authAccountType !== 'live' || authContext.authUserId !== parsedTargetId) {
+      const isLiveSession = authContext.authAccountType === 'live';
+      const isStrategySession = authContext.authAccountType === 'strategy_provider';
+
+      if (!authContext.authUserId || authContext.authUserId !== parsedTargetId) {
         throw new DepositValidationError('You can only deposit into your own live account', 403);
+      }
+
+      if (!isLiveSession && !isStrategySession) {
+        throw new DepositValidationError('You can only deposit into your own live account', 403);
+      }
+
+      let initiatorUserId = parsedTargetId;
+      let initiatorUserType = 'live';
+
+      if (isStrategySession) {
+        if (!authContext.strategyProviderId) {
+          throw new DepositValidationError('Strategy provider context missing from token', 403);
+        }
+
+        const strategyAccount = await StrategyProviderAccount.findByPk(authContext.strategyProviderId, {
+          attributes: ['id', 'user_id', 'status', 'is_active', 'is_archived'],
+        });
+
+        if (!strategyAccount || strategyAccount.user_id !== parsedTargetId) {
+          throw new DepositValidationError('Strategy provider token is not linked to this live account', 403);
+        }
+
+        if (strategyAccount.is_archived || strategyAccount.status !== 1 || strategyAccount.is_active !== 1) {
+          throw new DepositValidationError('Strategy provider account is inactive or archived');
+        }
+
+        initiatorUserId = strategyAccount.id;
+        initiatorUserType = 'strategy_provider';
       }
 
       const liveUser = await LiveUser.findByPk(parsedTargetId, { attributes: ['id', 'status', 'is_active'] });
@@ -56,8 +87,8 @@ async function resolveDepositTarget(userId, userType, authContext) {
       return {
         targetUserId: parsedTargetId,
         targetUserType: 'live',
-        initiatorUserId: parsedTargetId,
-        initiatorUserType: 'live',
+        initiatorUserId,
+        initiatorUserType,
       };
     }
     case 'strategy_provider': {
