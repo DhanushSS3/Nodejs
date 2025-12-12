@@ -45,7 +45,7 @@ const LiveUser = sequelize.define('LiveUser', {
   copytrader_id: DataTypes.INTEGER,
   copytrading_status: { type: DataTypes.INTEGER, defaultValue: 0 },
   copytrading_alloted_time: DataTypes.DATE,
-  sending_orders: { type: DataTypes.STRING, allowNull: true, defaultValue: 'barclays' },
+  sending_orders: { type: DataTypes.STRING, allowNull: true, defaultValue: 'rock' },
   view_password: { type: DataTypes.STRING, allowNull: true },
   book: { type: DataTypes.STRING(5), allowNull: true },
 }, {

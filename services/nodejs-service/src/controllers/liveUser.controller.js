@@ -159,7 +159,7 @@ async function signup(req, res) {
         view_password: hashedViewPassword,
         book: book || null,
         // Set default values for live users
-        sending_orders: 'barclays',
+        sending_orders: 'rock',
         leverage: 100,
         ...optionalFields
       }, { transaction });
