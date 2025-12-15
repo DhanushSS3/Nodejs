@@ -210,31 +210,56 @@ class FinancialSummaryService {
    */
   static async _getDepositSummary(userId, userType, dateFilter) {
     try {
-      const whereCondition = {
+      const baseWhere = {
         user_id: userId,
         user_type: userType,
-        type: 'deposit',
         status: 'completed'
       };
 
-      // Add date filter if provided
+      const depositWhere = {
+        ...baseWhere,
+        type: 'deposit'
+      };
+
+      const transferInWhere = {
+        ...baseWhere,
+        type: 'transfer',
+        amount: { [Op.gt]: 0 }
+      };
+
       if (dateFilter) {
-        Object.assign(whereCondition, dateFilter);
+        Object.assign(depositWhere, dateFilter);
+        Object.assign(transferInWhere, dateFilter);
       }
 
-      // Get aggregated deposit data
-      const result = await UserTransaction.findOne({
-        where: whereCondition,
-        attributes: [
-          [UserTransaction.sequelize.fn('SUM', UserTransaction.sequelize.col('amount')), 'total_deposits'],
-          [UserTransaction.sequelize.fn('COUNT', UserTransaction.sequelize.col('id')), 'deposit_count']
-        ],
-        raw: true
-      });
+      const [depositResult, transferResult] = await Promise.all([
+        UserTransaction.findOne({
+          where: depositWhere,
+          attributes: [
+            [UserTransaction.sequelize.fn('SUM', UserTransaction.sequelize.col('amount')), 'total_amount'],
+            [UserTransaction.sequelize.fn('COUNT', UserTransaction.sequelize.col('id')), 'total_count']
+          ],
+          raw: true
+        }),
+        UserTransaction.findOne({
+          where: transferInWhere,
+          attributes: [
+            [UserTransaction.sequelize.fn('SUM', UserTransaction.sequelize.col('amount')), 'total_amount'],
+            [UserTransaction.sequelize.fn('COUNT', UserTransaction.sequelize.col('id')), 'total_count']
+          ],
+          raw: true
+        })
+      ]);
+
+      const depositSum = parseFloat(depositResult?.total_amount || 0);
+      const depositCount = parseInt(depositResult?.total_count || 0);
+
+      const transferSum = parseFloat(transferResult?.total_amount || 0);
+      const transferCount = parseInt(transferResult?.total_count || 0);
 
       return {
-        total_deposits: parseFloat(result?.total_deposits || 0),
-        deposit_count: parseInt(result?.deposit_count || 0)
+        total_deposits: depositSum + transferSum,
+        deposit_count: depositCount + transferCount
       };
 
     } catch (error) {
