@@ -1,4 +1,4 @@
-const { UserTransaction, LiveUser, DemoUser } = require('../models');
+const { UserTransaction, LiveUser, DemoUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 const sequelize = require('../config/db');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
@@ -442,6 +442,182 @@ class AdminTransactionService {
 
     } catch (error) {
       logger.error(`[${operationId}] Error fetching transaction statistics:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch wallet transactions for a specific strategy provider or copy follower account
+   * @param {Object} params
+   * @param {number} params.accountId
+   * @param {'strategy_provider'|'copy_follower'} params.accountType
+   * @param {number} [params.page=1]
+   * @param {number} [params.limit=20]
+   * @param {string|null} [params.type]
+   * @param {string|null} [params.status='completed']
+   * @param {string|null} [params.start_date]
+   * @param {string|null} [params.end_date]
+   * @param {Object} params.admin
+   * @returns {Promise<Object>}
+   */
+  async getAccountTransactions({
+    accountId,
+    accountType,
+    page = 1,
+    limit = 20,
+    type = null,
+    status = 'completed',
+    start_date = null,
+    end_date = null,
+    admin
+  }) {
+    const operationId = `admin_account_transactions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    try {
+      logger.info(`[${operationId}] Fetching ${accountType} wallet transactions`, {
+        accountId,
+        page,
+        limit,
+        type,
+        status,
+        admin_id: admin.id,
+        admin_role: admin.role
+      });
+
+      if (!['strategy_provider', 'copy_follower'].includes(accountType)) {
+        throw new Error('Invalid account type. Must be "strategy_provider" or "copy_follower"');
+      }
+
+      const AccountModel = accountType === 'strategy_provider'
+        ? StrategyProviderAccount
+        : CopyFollowerAccount;
+
+      const account = await AccountModel.findByPk(accountId);
+      if (!account) {
+        throw new Error(`${accountType === 'strategy_provider' ? 'Strategy provider' : 'Copy follower'} account not found`);
+      }
+
+      const owner = await LiveUser.findByPk(account.user_id, {
+        attributes: ['id', 'country_id', 'email', 'name']
+      });
+
+      if (!owner) {
+        throw new Error('Associated live user not found for this account');
+      }
+
+      if (admin.role !== 'superadmin' && admin.country_id && owner.country_id !== admin.country_id) {
+        throw new Error('You are not authorized to view transactions for this account');
+      }
+
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+      const offset = (pageNum - 1) * limitNum;
+
+      const whereClause = {
+        user_id: accountId,
+        user_type: accountType
+      };
+
+      if (status) {
+        whereClause.status = status;
+      }
+
+      if (type) {
+        whereClause.type = type;
+      }
+
+      if (start_date || end_date) {
+        whereClause.created_at = {};
+
+        if (start_date) {
+          const startDate = new Date(start_date);
+          if (isNaN(startDate.getTime())) {
+            throw new Error('Invalid start_date format. Use ISO 8601 format');
+          }
+          whereClause.created_at[Op.gte] = startDate;
+        }
+
+        if (end_date) {
+          const endDate = new Date(end_date);
+          if (isNaN(endDate.getTime())) {
+            throw new Error('Invalid end_date format. Use ISO 8601 format');
+          }
+          if (!end_date.includes('T')) {
+            endDate.setHours(23, 59, 59, 999);
+          }
+          whereClause.created_at[Op.lte] = endDate;
+        }
+      }
+
+      const { rows, count } = await UserTransaction.findAndCountAll({
+        where: whereClause,
+        order: [['created_at', 'DESC']],
+        limit: limitNum,
+        offset
+      });
+
+      const totalPages = Math.ceil(count / limitNum);
+
+      const formattedTransactions = rows.map(tx => ({
+        id: tx.id,
+        transaction_id: tx.transaction_id,
+        type: tx.type,
+        amount: tx.amount?.toString() ?? '0',
+        balance_before: tx.balance_before?.toString() ?? '0',
+        balance_after: tx.balance_after?.toString() ?? '0',
+        status: tx.status,
+        reference_id: tx.reference_id,
+        notes: tx.notes,
+        created_at: tx.created_at,
+        order_id: tx.order_id,
+        metadata: tx.metadata
+      }));
+
+      logger.info(`[${operationId}] Retrieved ${formattedTransactions.length} records`, {
+        accountId,
+        accountType,
+        total: count
+      });
+
+      const accountLabel = accountType === 'strategy_provider'
+        ? {
+          display_name: account.strategy_name,
+          account_number: account.account_number
+        }
+        : {
+          display_name: account.account_name,
+          account_number: account.account_number
+        };
+
+      return {
+        account: {
+          id: account.id,
+          type: accountType,
+          name: accountLabel.display_name,
+          account_number: accountLabel.account_number,
+          wallet_balance: account.wallet_balance?.toString() ?? '0',
+          owner: {
+            id: owner.id,
+            name: owner.name,
+            email: owner.email
+          }
+        },
+        transactions: formattedTransactions,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: count,
+          totalPages,
+          hasNextPage: pageNum < totalPages,
+          hasPreviousPage: pageNum > 1
+        }
+      };
+    } catch (error) {
+      logger.error(`[${operationId}] Failed to fetch account transactions`, {
+        accountId,
+        accountType,
+        error: error.message
+      });
       throw error;
     }
   }

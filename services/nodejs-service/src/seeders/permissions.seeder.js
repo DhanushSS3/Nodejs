@@ -39,6 +39,7 @@ class PermissionSeeder {
       { name: 'transaction:create', description: 'Create transactions (deposits/withdrawals)' },
       { name: 'transaction:approve', description: 'Approve pending transactions' },
       { name: 'transaction:stats', description: 'View transaction statistics and reports' },
+      { name: 'transaction:wallet_read', description: 'View strategy provider / copy follower wallet transactions' },
 
       // Strategy Provider Permissions
       { name: 'strategy_provider:read', description: 'View strategy provider account details' },

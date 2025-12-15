@@ -495,4 +495,177 @@ router.get('/method-types',
   adminTransactionController.getMethodTypes
 );
 
+/**
+ * @swagger
+ * /api/admin/transactions/strategy-providers/{accountId}/wallet-transactions:
+ *   get:
+ *     summary: Get wallet transactions for a specific strategy provider account
+ *     tags: [Admin Transactions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: accountId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Strategy provider account ID
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 100
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [deposit, withdraw, transfer, profit, loss, commission, swap, adjustment, performance_fee, performance_fee_earned]
+ *         description: Filter by transaction type
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [completed, pending, failed, cancelled]
+ *           default: completed
+ *       - in: query
+ *         name: start_date
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter transactions from this date (ISO 8601)
+ *       - in: query
+ *         name: end_date
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter transactions up to this date (ISO 8601)
+ *     responses:
+ *       200:
+ *         description: Wallet transactions retrieved successfully
+ *         content:
+ *           application/json:
+ *             example:
+ *               success: true
+ *               message: "Strategy provider wallet transactions retrieved successfully"
+ *               data:
+ *                 account:
+ *                   id: 32
+ *                   type: "strategy_provider"
+ *                   name: "Momentum Alpha Fund"
+ *                   account_number: "SP1730890123456"
+ *                   wallet_balance: "1520.230000"
+ *                   owner:
+ *                     id: 9
+ *                     name: "Jane Doe"
+ *                     email: "jane@example.com"
+ *                 transactions:
+ *                   - id: 4285
+ *                     transaction_id: "TXN5777510611023000"
+ *                     type: "profit"
+ *                     amount: "0.640000"
+ *                     balance_before: "159.790000"
+ *                     balance_after: "160.640000"
+ *                     status: "completed"
+ *                     reference_id: null
+ *                     notes: "Profit from order 3128684238000"
+ *                     created_at: "2025-12-15 05:45:10"
+ *                 pagination:
+ *                   page: 1
+ *                   limit: 20
+ *                   total: 42
+ *                   totalPages: 3
+ *                   hasNextPage: true
+ *                   hasPreviousPage: false
+ *       400:
+ *         description: Invalid parameters
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: Account not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get(
+  '/strategy-providers/:accountId/wallet-transactions',
+  requirePermissions(['transaction:wallet_read']),
+  auditLog('GET_SP_WALLET_TRANSACTIONS'),
+  adminTransactionController.getStrategyProviderWalletTransactions
+);
+
+/**
+ * @swagger
+ * /api/admin/transactions/copy-followers/{accountId}/wallet-transactions:
+ *   get:
+ *     summary: Get wallet transactions for a specific copy follower account
+ *     tags: [Admin Transactions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: accountId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Copy follower account ID
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 100
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [deposit, withdraw, transfer, profit, loss, commission, swap, adjustment, performance_fee, performance_fee_earned]
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [completed, pending, failed, cancelled]
+ *           default: completed
+ *       - in: query
+ *         name: start_date
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: end_date
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *     responses:
+ *       200:
+ *         description: Wallet transactions retrieved successfully
+ *       400:
+ *         description: Invalid parameters
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: Account not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get(
+  '/copy-followers/:accountId/wallet-transactions',
+  requirePermissions(['transaction:wallet_read']),
+  auditLog('GET_CF_WALLET_TRANSACTIONS'),
+  adminTransactionController.getCopyFollowerWalletTransactions
+);
+
 module.exports = router;
