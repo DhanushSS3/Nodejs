@@ -10,6 +10,7 @@ const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
 const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const { updateUserUsedMargin } = require('../services/user.margin.service');
+const { acquireUserLock, releaseUserLock } = require('../services/userLock.service');
 const portfolioEvents = require('../services/events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 const groupsCache = require('../services/groups.cache.service');
@@ -95,6 +96,7 @@ function validatePayload(body) {
 
 async function placeInstantOrder(req, res) {
   const operationId = `instant_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let userLock;
   try {
     // Timing start
     const t0 = process.hrtime.bigint();
@@ -167,6 +169,15 @@ async function placeInstantOrder(req, res) {
     // Ensure user places orders only for themselves (if token has id)
     if (tokenUserId && normalizeStr(parsed.user_id) !== normalizeStr(tokenUserId)) {
       return res.status(403).json({ success: false, message: 'Cannot place orders for another user' });
+    }
+
+    // Acquire per-user lock to serialize order operations
+    userLock = await acquireUserLock(parsed.user_type, parsed.user_id);
+    if (!userLock) {
+      return res.status(409).json({
+        success: false,
+        message: 'Another order action is in progress for this user. Please retry shortly.'
+      });
     }
 
     // Generate order_id in ord_YYYYMMDD_seq format using IdGeneratorService
@@ -823,6 +834,10 @@ async function placePendingOrder(req, res) {
   } catch (error) {
     logger.error('placePendingOrder internal error', { error: error.message, operationId });
     return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  } finally {
+    if (userLock) {
+      await releaseUserLock(userLock);
+    }
   }
 }
 
@@ -1147,6 +1162,7 @@ async function modifyPendingOrder(req, res) {
 
 async function closeOrder(req, res) {
   const operationId = `close_order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let userLock;
   try {
     // Structured request log (fire-and-forget)
     orderReqLogger.logOrderRequest({
@@ -1200,6 +1216,15 @@ async function closeOrder(req, res) {
     }
     if (!Number.isNaN(provided_close_price) && !(provided_close_price > 0)) {
       return res.status(400).json({ success: false, message: 'close_price must be greater than 0 when provided' });
+    }
+
+    // Acquire per-user lock to ensure serialized closes
+    userLock = await acquireUserLock(req_user_type, req_user_id);
+    if (!userLock) {
+      return res.status(409).json({
+        success: false,
+        message: 'Another close operation is running for this user. Please retry shortly.'
+      });
     }
 
     // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
@@ -1367,6 +1392,10 @@ async function closeOrder(req, res) {
   } catch (error) {
     logger.error('closeOrder internal error', { error: error.message });
     return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  } finally {
+    if (userLock) {
+      await releaseUserLock(userLock);
+    }
   }
 }
 
