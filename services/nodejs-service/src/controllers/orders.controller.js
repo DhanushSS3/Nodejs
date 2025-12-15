@@ -1202,123 +1202,50 @@ async function closeOrder(req, res) {
       return res.status(400).json({ success: false, message: 'close_price must be greater than 0 when provided' });
     }
 
-    // Load canonical order
-    const canonical = await _getCanonicalOrder(order_id);
-    let sqlRow = null;
-    
-    // Check if canonical data is incomplete (missing ids or essential fields)
-    const isCanonicalIncomplete = canonical && (
-      !canonical.user_id ||
-      !canonical.user_type ||
-      !(canonical.symbol || canonical.order_company_name) ||
-      !canonical.order_type ||
-      !(toNumber(canonical.order_price) > 0)
-    );
-    
-    if (!canonical || isCanonicalIncomplete) {
-      if (isCanonicalIncomplete) {
-        logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
-          order_id,
-          canonical_user_id: canonical.user_id,
-          canonical_user_type: canonical.user_type,
-          reason: 'Incomplete canonical data, falling back to SQL'
-        });
-      }
-      // Fallback to SQL
-      let OrderModel;
-      if (req_user_type === 'live') {
-        OrderModel = LiveUserOrder;
-      } else if (req_user_type === 'demo') {
-        OrderModel = DemoUserOrder;
-      } else if (req_user_type === 'strategy_provider') {
-        const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
-        OrderModel = StrategyProviderOrder;
-      } else if (req_user_type === 'copy_follower') {
-        const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
-        OrderModel = CopyFollowerOrder;
-      }
-      sqlRow = await OrderModel.findOne({ where: { order_id } });
-      if (!sqlRow) {
-        return res.status(404).json({ success: false, message: 'Order not found' });
-      }
-      // Basic ownership check with SQL row
-      const sqlUserId = normalizeStr(sqlRow.order_user_id);
-      const reqUserId = normalizeStr(req_user_id);
-      if (sqlUserId !== reqUserId) {
-        logger.error('🚨 ORDER_OWNERSHIP_FAILED_SQL', { 
-          order_id, 
-          sql_user_id: sqlRow.order_user_id, 
-          req_user_id, 
-          req_user_type,
-          normalized_sql: sqlUserId, 
-          normalized_req: reqUserId,
-          source: 'SQL_DATABASE'
-        });
-        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      }
-      // Must be currently OPEN
-      const stRow = (sqlRow.order_status || '').toString().toUpperCase();
-      if (stRow && stRow !== 'OPEN') {
-        return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${stRow})` });
-      }
-      // Trading hours based on symbol and default group if canonical missing
-      try {
-        const sym = normalizeStr(sqlRow.symbol || sqlRow.order_company_name).toUpperCase();
-        const gf = await groupsCache.getGroupFields('Standard', sym, ['type']);
-        const gType = gf && gf.type != null ? gf.type : null;
-        if (!_isMarketOpenByType(gType)) {
-          return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
-        }
-      } catch (e) {
-        logger.warn('GroupsCache trading-hours check failed (SQL fallback)', { error: e.message });
-      }
-    } else {
-      // Ownership check using canonical
-      const canonicalUserId = normalizeStr(canonical.user_id);
-      const reqUserId = normalizeStr(req_user_id);
-      const canonicalUserType = normalizeStr(canonical.user_type).toLowerCase();
-      if (canonicalUserId !== reqUserId || canonicalUserType !== req_user_type) {
-        logger.error('🚨 ORDER_OWNERSHIP_FAILED_REDIS', { 
-          order_id, 
-          canonical_user_id: canonical.user_id, 
-          canonical_user_type: canonical.user_type,
-          req_user_id, 
-          req_user_type,
-          normalized_canonical_id: canonicalUserId, 
-          normalized_req_id: reqUserId,
-          normalized_canonical_type: canonicalUserType,
-          source: 'REDIS_CANONICAL'
-        });
-        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      }
-      // Must be currently OPEN (engine/UI state). Do NOT use canonical.status here
-      // because provider close flow may set status=CLOSED pre-ack for routing.
-      const st = (canonical.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') {
-        return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
-      }
-      // Trading hours check (if non-crypto, block weekends)
-      const groupName = normalizeStr(canonical.group || 'Standard');
-      const symbol = normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase();
-      let gType = null;
-      try {
-        const gf = await groupsCache.getGroupFields(groupName, symbol, ['type']);
-        gType = gf && gf.type != null ? gf.type : null;
-      } catch (e) {
-        logger.warn('GroupsCache getGroupFields failed for close check', { error: e.message, groupName, symbol });
-      }
+    // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({
+        order_id,
+        user_id: req_user_id,
+        user_type: req_user_type,
+        symbolReq: normalizeStr(body.symbol).toUpperCase(),
+        orderTypeReq: normalizeStr(body.order_type).toUpperCase()
+      });
+    } catch (e) {
+      if (e && e.code === 'ORDER_NOT_FOUND') return res.status(404).json({ success: false, message: 'Order not found' });
+      if (e && e.code === 'ORDER_NOT_BELONG_TO_USER') return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      if (e && e.code === 'ORDER_NOT_OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${e.status || 'UNKNOWN'})` });
+      logger.warn('Resolver error in closeOrder', { order_id, error: e?.message });
+      return res.status(500).json({ success: false, message: 'Failed to resolve order' });
+    }
+    const canonical = ctx.canonical;
+    const sqlRow = ctx.row;
+    // Trading hours check (using resolved symbol and canonical group when available)
+    try {
+      const symbolForHours = ctx.symbol;
+      const groupName = normalizeStr(canonical?.group || 'Standard');
+      const gf = await groupsCache.getGroupFields(groupName, symbolForHours, ['type']);
+      const gType = gf && gf.type != null ? gf.type : null;
       if (!_isMarketOpenByType(gType)) {
         return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
       }
+    } catch (e) {
+      logger.warn('GroupsCache trading-hours check failed (resolver)', { error: e.message });
     }
 
     // Read triggers from canonical to decide cancel ids
-    const symbol = (canonical && canonical.symbol)
+    let symbol = (canonical && canonical.symbol)
       ? normalizeStr(canonical.symbol).toUpperCase()
       : (sqlRow ? normalizeStr(sqlRow.symbol || sqlRow.order_company_name).toUpperCase() : normalizeStr(body.symbol).toUpperCase());
-    const order_type = (canonical && canonical.order_type)
+    let order_type = (canonical && canonical.order_type)
       ? normalizeStr(canonical.order_type).toUpperCase()
       : (sqlRow ? normalizeStr(sqlRow.order_type).toUpperCase() : normalizeStr(body.order_type).toUpperCase());
+    // Override from resolver to guarantee normalized values
+    try {
+      if (ctx && ctx.symbol) symbol = ctx.symbol;
+      if (ctx && ctx.order_type) order_type = ctx.order_type;
+    } catch (_) {}
     const willCancelTP = canonical
       ? (canonical.take_profit != null && Number(canonical.take_profit) > 0)
       : (sqlRow ? (sqlRow.take_profit != null && Number(sqlRow.take_profit) > 0) : false);
@@ -1494,74 +1421,26 @@ async function addStopLoss(req, res) {
       return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
     }
 
-    // Load canonical order; fallback to SQL
-    const canonical = await _getCanonicalOrder(order_id);
-    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
-    let row = null;
-    
-    // Check if canonical data is incomplete (ids or essential fields missing)
-    const isCanonicalIncomplete = canonical && (
-      !canonical.user_id ||
-      !canonical.user_type ||
-      !(canonical.symbol || canonical.order_company_name) ||
-      !canonical.order_type ||
-      !(toNumber(canonical.order_price) > 0)
-    );
-    
-    if (!canonical || isCanonicalIncomplete) {
-      if (isCanonicalIncomplete) {
-        logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
-          order_id,
-          canonical_user_id: canonical.user_id,
-          canonical_user_type: canonical.user_type,
-          reason: 'Incomplete canonical data, falling back to SQL'
-        });
-      }
-      row = await OrderModel.findOne({ where: { order_id } });
-      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
-      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      const st = (row.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
-      // Repopulate/Correct canonical Redis key from SQL row for legacy/incomplete orders
-      try {
-        const canonKey = `order_data:${String(order_id)}`;
-        await redisCluster.hset(canonKey, {
-          order_id: String(order_id),
-          user_id: String(row.order_user_id),
-          user_type: String(user_type),
-          symbol: normalizeStr(row.symbol || row.order_company_name).toUpperCase(),
-          order_type: normalizeStr(row.order_type).toUpperCase(),
-          order_price: String(row.order_price ?? ''),
-          order_quantity: String(row.order_quantity ?? ''),
-          order_status: normalizeStr(row.order_status).toUpperCase(),
-        });
-        logger.warn('REPOP_CANONICAL_FROM_SQL (TP)', { order_id, user_id, user_type });
-      } catch (e) {
-        logger.warn('Failed to repopulate canonical from SQL (TP)', { order_id, error: e.message });
-      }
-    } else {
-      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
-        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      }
-      const st = (canonical.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
-    }
-
-    let symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
-    let order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
-    let entry_price_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_price : null) : canonical.order_price);
-    let order_quantity_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_quantity : null) : canonical.order_quantity);
-
-    // Resolver override (SL): prefer unified resolver outputs when available
+    // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
+    let ctx;
     try {
-      const ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
-      if (ctx && ctx.symbol) symbol = ctx.symbol;
-      if (ctx && ctx.order_type) order_type = ctx.order_type;
-      if (ctx && Number(ctx.entry_price) > 0) entry_price_num = Number(ctx.entry_price);
-      if (ctx && Number(ctx.order_quantity) > 0) order_quantity_num = Number(ctx.order_quantity);
+      ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
     } catch (e) {
-      logger.warn('Resolver override failed (SL)', { order_id, error: e.message });
+      if (e && e.code === 'ORDER_NOT_FOUND') return res.status(404).json({ success: false, message: 'Order not found' });
+      if (e && e.code === 'ORDER_NOT_BELONG_TO_USER') return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      if (e && e.code === 'ORDER_NOT_OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${e.status || 'UNKNOWN'})` });
+      logger.warn('Resolver error in addStopLoss', { order_id, error: e?.message });
+      return res.status(500).json({ success: false, message: 'Failed to resolve order' });
     }
+
+    const canonical = ctx.canonical;
+    const row = ctx.row;
+    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+
+    let symbol = ctx.symbol;
+    let order_type = ctx.order_type;
+    let entry_price_num = Number(ctx.entry_price);
+    let order_quantity_num = Number(ctx.order_quantity);
 
     // Fallback: try user_holdings if canonical/SQL missing entry price
     if (!(entry_price_num > 0)) {
@@ -1760,57 +1639,20 @@ async function addTakeProfit(req, res) {
       return res.status(403).json({ success: false, message: 'Cannot modify orders for another user' });
     }
 
-    const canonical = await _getCanonicalOrder(order_id);
-    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
-    let row = null;
-    
-    // Check if canonical data is incomplete (ids or essential fields missing)
-    const isCanonicalIncomplete = canonical && (
-      !canonical.user_id ||
-      !canonical.user_type ||
-      !(canonical.symbol || canonical.order_company_name) ||
-      !canonical.order_type ||
-      !(toNumber(canonical.order_price) > 0)
-    );
-    
-    if (!canonical || isCanonicalIncomplete) {
-      if (isCanonicalIncomplete) {
-        logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
-          order_id,
-          canonical_user_id: canonical.user_id,
-          canonical_user_type: canonical.user_type,
-          reason: 'Incomplete canonical data, falling back to SQL'
-        });
-      }
-      row = await OrderModel.findOne({ where: { order_id } });
-      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
-      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      const st = (row.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
-      // Repopulate/Correct canonical Redis key from SQL row for legacy/incomplete orders
-      try {
-        const canonKey = `order_data:${String(order_id)}`;
-        await redisCluster.hset(canonKey, {
-          order_id: String(order_id),
-          user_id: String(row.order_user_id),
-          user_type: String(user_type),
-          symbol: normalizeStr(row.symbol || row.order_company_name).toUpperCase(),
-          order_type: normalizeStr(row.order_type).toUpperCase(),
-          order_price: String(row.order_price ?? ''),
-          order_quantity: String(row.order_quantity ?? ''),
-          order_status: normalizeStr(row.order_status).toUpperCase(),
-        });
-        logger.warn('REPOP_CANONICAL_FROM_SQL (TP)', { order_id, user_id, user_type });
-      } catch (e) {
-        logger.warn('Failed to repopulate canonical from SQL (TP)', { order_id, error: e.message });
-      }
-    } else {
-      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
-        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      }
-      const st = (canonical.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
+    } catch (e) {
+      if (e && e.code === 'ORDER_NOT_FOUND') return res.status(404).json({ success: false, message: 'Order not found' });
+      if (e && e.code === 'ORDER_NOT_BELONG_TO_USER') return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      if (e && e.code === 'ORDER_NOT_OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${e.status || 'UNKNOWN'})` });
+      logger.warn('Resolver error in addTakeProfit', { order_id, error: e?.message });
+      return res.status(500).json({ success: false, message: 'Failed to resolve order' });
     }
+
+    const canonical = ctx.canonical;
+    const row = ctx.row;
 
     // Debug logging to understand the data flow (use WARN level to ensure visibility in prod logs)
     logger.warn('TakeProfit Debug Info', {
@@ -1836,29 +1678,9 @@ async function addTakeProfit(req, res) {
       } : null
     });
 
-    // Determine symbol and order_type with layered fallback logic.
-    // Start with the request payload (frontend already validated these fields),
-    // then override with canonical Redis data when present, and finally SQL row.
-    let symbol = symbolReq;
-    let order_type = order_typeReq;
-
-    if (canonical) {
-      if (canonical.symbol || canonical.order_company_name) {
-        symbol = normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase();
-      }
-      if (canonical.order_type) {
-        order_type = normalizeStr(canonical.order_type).toUpperCase();
-      }
-    }
-
-    if (row) {
-      if (row.symbol || row.order_company_name) {
-        symbol = normalizeStr(row.symbol || row.order_company_name).toUpperCase();
-      }
-      if (row.order_type) {
-        order_type = normalizeStr(row.order_type).toUpperCase();
-      }
-    }
+    // Use resolved values from resolver
+    let symbol = ctx.symbol;
+    let order_type = ctx.order_type;
 
     if (!symbol || !order_type) {
       logger.warn('TakeProfit: Missing symbol/order_type even after layered fallback', {
@@ -1874,19 +1696,8 @@ async function addTakeProfit(req, res) {
       });
     }
 
-    let entry_price_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_price : null) : canonical.order_price);
-    let order_quantity_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_quantity : null) : canonical.order_quantity);
-
-    // Resolver override (TP): prefer unified resolver outputs when available
-    try {
-      const ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
-      if (ctx && ctx.symbol) symbol = ctx.symbol;
-      if (ctx && ctx.order_type) order_type = ctx.order_type;
-      if (ctx && Number(ctx.entry_price) > 0) entry_price_num = Number(ctx.entry_price);
-      if (ctx && Number(ctx.order_quantity) > 0) order_quantity_num = Number(ctx.order_quantity);
-    } catch (e) {
-      logger.warn('Resolver override failed (TP)', { order_id, error: e.message });
-    }
+    let entry_price_num = Number(ctx.entry_price);
+    let order_quantity_num = Number(ctx.order_quantity);
 
     // Validate that symbol and order_type are available
     if (!symbol || !order_type) {
@@ -1977,6 +1788,7 @@ async function addTakeProfit(req, res) {
 
     const takeprofit_id = await idGenerator.generateTakeProfitId();
     try {
+      const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
       const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
       if (toUpdate) {
         await toUpdate.update({ takeprofit_id, status });
@@ -2109,27 +1921,23 @@ async function cancelStopLoss(req, res) {
         return res.status(409).json({ success: false, message: 'Order is closing/closed; cannot cancel stoploss' });
       }
     } catch (_) {}
-
-    // Load canonical order; fallback to SQL
-    const canonical = await _getCanonicalOrder(order_id);
-    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
-    let row = null;
-    if (!canonical) {
-      row = await OrderModel.findOne({ where: { order_id } });
-      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
-      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      const st = (row.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
-    } else {
-      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
-        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      }
-      const st = (canonical.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
+    } catch (e) {
+      if (e && e.code === 'ORDER_NOT_FOUND') return res.status(404).json({ success: false, message: 'Order not found' });
+      if (e && e.code === 'ORDER_NOT_BELONG_TO_USER') return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      if (e && e.code === 'ORDER_NOT_OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${e.status || 'UNKNOWN'})` });
+      logger.warn('Resolver error in cancelStopLoss', { order_id, error: e?.message });
+      return res.status(500).json({ success: false, message: 'Failed to resolve order' });
     }
 
-    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
-    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+    const canonical = ctx.canonical;
+    const row = ctx.row;
+
+    let symbol = ctx.symbol;
+    let order_type = ctx.order_type;
 
     // Validate an active SL exists (DB or Redis canonical/holdings/triggers)
     let hasSL = false;
@@ -2194,6 +2002,7 @@ async function cancelStopLoss(req, res) {
     // Generate cancel id and persist to SQL
     const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
     try {
+      const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
       const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
       if (toUpdate) {
         await toUpdate.update({ stoploss_cancel_id, status: statusIn });
@@ -2330,26 +2139,23 @@ async function cancelTakeProfit(req, res) {
       }
     } catch (_) {}
 
-    // Load canonical order; fallback to SQL
-    const canonical = await _getCanonicalOrder(order_id);
-    const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
-    let row = null;
-    if (!canonical) {
-      row = await OrderModel.findOne({ where: { order_id } });
-      if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
-      if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      const st = (row.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
-    } else {
-      if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
-        return res.status(403).json({ success: false, message: 'Order does not belong to user' });
-      }
-      const st = (canonical.order_status || '').toString().toUpperCase();
-      if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
+    // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
+    } catch (e) {
+      if (e && e.code === 'ORDER_NOT_FOUND') return res.status(404).json({ success: false, message: 'Order not found' });
+      if (e && e.code === 'ORDER_NOT_BELONG_TO_USER') return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      if (e && e.code === 'ORDER_NOT_OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${e.status || 'UNKNOWN'})` });
+      logger.warn('Resolver error in cancelTakeProfit', { order_id, error: e?.message });
+      return res.status(500).json({ success: false, message: 'Failed to resolve order' });
     }
 
-    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
-    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+    const canonical = ctx.canonical;
+    const row = ctx.row;
+
+    let symbol = ctx.symbol;
+    let order_type = ctx.order_type;
 
     // Validate an active TP exists (DB or Redis canonical/holdings/triggers)
     let hasTP = false;
@@ -2414,6 +2220,7 @@ async function cancelTakeProfit(req, res) {
     // Generate cancel id and persist to SQL
     const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
     try {
+      const OrderModel = user_type === 'live' ? LiveUserOrder : DemoUserOrder;
       const toUpdate = row || (await OrderModel.findOne({ where: { order_id } }));
       if (toUpdate) {
         await toUpdate.update({ takeprofit_cancel_id, status: statusIn });

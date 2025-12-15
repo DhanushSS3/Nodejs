@@ -1,6 +1,8 @@
 const logger = require('./logger.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
+const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
 const {
   fetchCanonicalOrder,
   isCanonicalIncomplete,
@@ -13,6 +15,8 @@ function getOrderModel(user_type) {
   const ut = String(user_type || '').toLowerCase();
   if (ut === 'live') return LiveUserOrder;
   if (ut === 'demo') return DemoUserOrder;
+  if (ut === 'strategy_provider') return StrategyProviderOrder;
+  if (ut === 'copy_follower') return CopyFollowerOrder;
   throw new Error('unsupported_user_type');
 }
 
