@@ -17,11 +17,14 @@ class FinancialSummaryController {
   static async getFinancialSummary(req, res) {
     try {
       // Extract user info from JWT token
-      const userId = req.user.sub || req.user.user_id || req.user.id;
+      const baseUserId = req.user.sub || req.user.user_id || req.user.id;
       const userType = req.user.account_type || req.user.user_type;
+      const strategyProviderAccountId = req.user.strategy_provider_id
+        || req.user.strategyProviderId
+        || req.user.strategy_provider_account_id;
       const allowedUserTypes = ['live', 'demo', 'strategy_provider'];
 
-      if (!userId) {
+      if (!baseUserId) {
         return res.status(400).json({
           success: false,
           message: 'User ID not found in authentication token'
@@ -33,6 +36,24 @@ class FinancialSummaryController {
           success: false,
           message: `Invalid or missing user type in authentication token. Allowed types: ${allowedUserTypes.join(', ')}`
         });
+      }
+
+      let targetAccountId = baseUserId;
+      if (userType === 'strategy_provider') {
+        if (!strategyProviderAccountId) {
+          return res.status(400).json({
+            success: false,
+            message: 'Strategy provider account ID not found in authentication token'
+          });
+        }
+
+        targetAccountId = parseInt(strategyProviderAccountId, 10);
+        if (Number.isNaN(targetAccountId) || targetAccountId <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Strategy provider account ID must be a positive integer'
+          });
+        }
       }
 
       // Extract and validate date parameters
@@ -53,7 +74,8 @@ class FinancialSummaryController {
       }
 
       logger.info('Financial summary request', {
-        userId,
+        userId: baseUserId,
+        accountId: targetAccountId,
         userType,
         startDate,
         endDate,
@@ -62,7 +84,7 @@ class FinancialSummaryController {
 
       // Get financial summary
       const summary = await FinancialSummaryService.getFinancialSummary(
-        userId,
+        targetAccountId,
         userType,
         startDate,
         endDate
@@ -79,7 +101,8 @@ class FinancialSummaryController {
       logger.error('Error in getFinancialSummary controller', {
         error: error.message,
         stack: error.stack,
-        userId: req.user?.sub || req.user?.user_id || req.user?.id,
+        userId: baseUserId,
+        accountId: targetAccountId,
         userType: req.user?.account_type || req.user?.user_type
       });
 
