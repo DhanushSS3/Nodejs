@@ -1862,8 +1862,8 @@ async function addTakeProfit(req, res) {
       });
     }
 
-    let entry_price_num = toNumber(canonical ? canonical.order_price : (row ? row.order_price : null));
-    const order_quantity_num = toNumber(canonical ? canonical.order_quantity : (row ? row.order_quantity : null));
+    let entry_price_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_price : null) : canonical.order_price);
+    const order_quantity_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_quantity : null) : canonical.order_quantity);
 
     // Validate that symbol and order_type are available
     if (!symbol || !order_type) {
