@@ -3,6 +3,12 @@ const sequelize = require('../config/db');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 
+const createHttpError = (statusCode, message) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
 class AdminTransactionService {
   /**
    * Get filtered transactions with pagination and total sum
@@ -485,7 +491,7 @@ class AdminTransactionService {
       });
 
       if (!['strategy_provider', 'copy_follower'].includes(accountType)) {
-        throw new Error('Invalid account type. Must be "strategy_provider" or "copy_follower"');
+        throw createHttpError(400, 'Invalid account type. Must be "strategy_provider" or "copy_follower"');
       }
 
       const AccountModel = accountType === 'strategy_provider'
@@ -494,7 +500,10 @@ class AdminTransactionService {
 
       const account = await AccountModel.findByPk(accountId);
       if (!account) {
-        throw new Error(`${accountType === 'strategy_provider' ? 'Strategy provider' : 'Copy follower'} account not found`);
+        throw createHttpError(
+          404,
+          `${accountType === 'strategy_provider' ? 'Strategy provider' : 'Copy follower'} account not found`
+        );
       }
 
       const owner = await LiveUser.findByPk(account.user_id, {
@@ -502,11 +511,11 @@ class AdminTransactionService {
       });
 
       if (!owner) {
-        throw new Error('Associated live user not found for this account');
+        throw createHttpError(404, 'Associated live user not found for this account');
       }
 
       if (admin.role !== 'superadmin' && admin.country_id && owner.country_id !== admin.country_id) {
-        throw new Error('You are not authorized to view transactions for this account');
+        throw createHttpError(403, 'You are not authorized to view transactions for this account');
       }
 
       const pageNum = Math.max(1, parseInt(page));
@@ -532,7 +541,7 @@ class AdminTransactionService {
         if (start_date) {
           const startDate = new Date(start_date);
           if (isNaN(startDate.getTime())) {
-            throw new Error('Invalid start_date format. Use ISO 8601 format');
+            throw createHttpError(400, 'Invalid start_date format. Use ISO 8601 format');
           }
           whereClause.created_at[Op.gte] = startDate;
         }
@@ -540,7 +549,7 @@ class AdminTransactionService {
         if (end_date) {
           const endDate = new Date(end_date);
           if (isNaN(endDate.getTime())) {
-            throw new Error('Invalid end_date format. Use ISO 8601 format');
+            throw createHttpError(400, 'Invalid end_date format. Use ISO 8601 format');
           }
           if (!end_date.includes('T')) {
             endDate.setHours(23, 59, 59, 999);

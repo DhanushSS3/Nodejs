@@ -301,9 +301,14 @@ class AdminTransactionController {
         error
       );
 
-      res.status(500).json({
+      const statusCode = error.statusCode || 500;
+      const message = error.statusCode
+        ? error.message
+        : 'Failed to retrieve wallet transactions';
+
+      res.status(statusCode).json({
         success: false,
-        message: 'Failed to retrieve wallet transactions',
+        message,
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
