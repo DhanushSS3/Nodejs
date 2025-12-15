@@ -19,6 +19,7 @@ class FinancialSummaryController {
       // Extract user info from JWT token
       const userId = req.user.sub || req.user.user_id || req.user.id;
       const userType = req.user.account_type || req.user.user_type;
+      const allowedUserTypes = ['live', 'demo', 'strategy_provider'];
 
       if (!userId) {
         return res.status(400).json({
@@ -27,10 +28,10 @@ class FinancialSummaryController {
         });
       }
 
-      if (!userType || !['live', 'demo'].includes(userType)) {
+      if (!userType || !allowedUserTypes.includes(userType)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid or missing user type in authentication token'
+          message: `Invalid or missing user type in authentication token. Allowed types: ${allowedUserTypes.join(', ')}`
         });
       }
 

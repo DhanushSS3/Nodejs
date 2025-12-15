@@ -1,8 +1,10 @@
 const { Op } = require('sequelize');
 const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
 const UserTransaction = require('../models/userTransaction.model');
 const logger = require('./logger.service');
 
@@ -116,6 +118,11 @@ class FinancialSummaryService {
       return {
         UserModel: DemoUser,
         OrderModel: DemoUserOrder
+      };
+    } else if (userType === 'strategy_provider') {
+      return {
+        UserModel: StrategyProviderAccount,
+        OrderModel: StrategyProviderOrder
       };
     } else {
       throw new Error(`Invalid user type: ${userType}`);
