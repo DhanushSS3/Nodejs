@@ -903,7 +903,7 @@ class AdminOrderManagementService {
               const payoutKey = `close_payout_applied:${String(orderId)}`;
               const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
               if (nx) {
-                const { applyOrderClosePayout } = require('./order.close.payout.service');
+                const { applyOrderClosePayout } = require('./order.payout.service');
                 await applyOrderClosePayout({
                   userType: userType,
                   userId: parseInt(userId, 10),

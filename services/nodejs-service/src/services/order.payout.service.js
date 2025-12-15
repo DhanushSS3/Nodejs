@@ -33,7 +33,7 @@ function toNum(v) {
 /**
  * Apply order close payout atomically:
  * - Update user's wallet_balance by netProfit
- * - Create two transaction records: commission (debit) and profit/loss (credit/debit)
+ * - Create three transaction records: commission (debit), profit/loss (credit/debit), and swap (debit/credit)
  *
  * IMPORTANT: This function does NOT implement idempotency by itself.
  * Callers must guard with an external idempotency key (e.g., Redis NX) per order_id.
@@ -55,10 +55,14 @@ async function applyOrderClosePayout({
   const sw = toNum(swap);
   const pUsd = toNum(profitUsd);
 
-  // Profit/Loss transaction amount aggregates profit_usd and swap
-  // so that (profit_loss + (-commission)) == net_profit
-  const profitLossAmount = np + com; // equals profit_usd + swap (if np = profit_usd - com + swap)
+  // Profit/Loss transaction amount excludes swap (handled separately)
+  // so that (profit_loss + (-commission) + swap) == net_profit
+  const profitLossAmount = pUsd - com; // profit_usd minus commission only
   const profitLossType = profitLossAmount >= 0 ? 'profit' : 'loss';
+  
+  // Swap transaction amount (positive = credit, negative = debit)
+  const swapAmount = sw;
+  const swapType = swapAmount >= 0 ? 'swap' : 'swap'; // swap type is always 'swap'
 
   const UserModel = getUserModel(String(userType));
 
@@ -108,7 +112,37 @@ async function applyOrderClosePayout({
       runningBalance = after;
     }
 
-    // 2) Profit/Loss record
+    // 2) Swap record (if swap amount exists)
+    if (sw !== 0) {
+      const txnId = await idGenerator.generateTransactionId();
+      const amount = swapAmount; // Can be positive (credit) or negative (debit)
+      const after = runningBalance + amount;
+      await UserTransaction.create({
+        transaction_id: txnId,
+        user_id: parseInt(String(userId), 10),
+        user_type: String(userType),
+        order_id: orderPk || null,
+        type: 'swap',
+        amount: amount,
+        balance_before: runningBalance,
+        balance_after: after,
+        status: 'completed',
+        notes: `Swap charges for order ${orderIdStr || orderPk || ''}`,
+        metadata: {
+          order_id: orderIdStr,
+          order_pk: orderPk,
+          symbol,
+          order_type: orderType,
+          commission: com,
+          profit_usd: pUsd,
+          net_profit: np,
+          swap: sw,
+        },
+      }, { transaction: t });
+      runningBalance = after;
+    }
+
+    // 3) Profit/Loss record (excluding swap)
     {
       const txnId = await idGenerator.generateTransactionId();
       const amount = profitLossType === 'profit' ? Math.abs(profitLossAmount) : -Math.abs(profitLossAmount);
@@ -129,7 +163,7 @@ async function applyOrderClosePayout({
           order_pk: orderPk,
           symbol,
           order_type: orderType,
-          commission,
+          commission: com,
           profit_usd: pUsd,
           net_profit: np,
           swap: sw,
@@ -171,7 +205,7 @@ async function applyOrderClosePayout({
         order_quantity: 0, // Would need to be passed from caller
         order_duration_days: 0, // Would need to be calculated from order creation date
         total_swap_accumulated: sw,
-        final_swap_transaction_id: null, // Swap is included in profit/loss transaction
+        final_swap_transaction_id: null, // Swap transaction created separately
         closure_date: new Date().toISOString(),
         net_profit_before_swap: pUsd,
         net_profit_after_swap: np
