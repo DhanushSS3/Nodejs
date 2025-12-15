@@ -18,6 +18,7 @@ const LiveUser = require('../models/liveUser.model');
 const DemoUser = require('../models/demoUser.model');
 const { applyOrderClosePayout } = require('../services/order.payout.service');
 const lotValidationService = require('../services/lot.validation.service');
+const { resolveOpenOrder } = require('../services/order.resolver.service');
 
 // Create reusable axios instance with HTTP keep-alive for Python service calls
 const pythonServiceAxios = axios.create({
@@ -1546,10 +1547,21 @@ async function addStopLoss(req, res) {
       if (st && st !== 'OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN (current: ${st})` });
     }
 
-    const symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
-    const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
-    let entry_price_num = toNumber(canonical ? canonical.order_price : row.order_price);
-    const order_quantity_num = toNumber(canonical ? canonical.order_quantity : row.order_quantity);
+    let symbol = canonical ? normalizeStr(canonical.symbol || canonical.order_company_name).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
+    let order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
+    let entry_price_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_price : null) : canonical.order_price);
+    let order_quantity_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_quantity : null) : canonical.order_quantity);
+
+    // Resolver override (SL): prefer unified resolver outputs when available
+    try {
+      const ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
+      if (ctx && ctx.symbol) symbol = ctx.symbol;
+      if (ctx && ctx.order_type) order_type = ctx.order_type;
+      if (ctx && Number(ctx.entry_price) > 0) entry_price_num = Number(ctx.entry_price);
+      if (ctx && Number(ctx.order_quantity) > 0) order_quantity_num = Number(ctx.order_quantity);
+    } catch (e) {
+      logger.warn('Resolver override failed (SL)', { order_id, error: e.message });
+    }
 
     // Fallback: try user_holdings if canonical/SQL missing entry price
     if (!(entry_price_num > 0)) {
@@ -1863,7 +1875,18 @@ async function addTakeProfit(req, res) {
     }
 
     let entry_price_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_price : null) : canonical.order_price);
-    const order_quantity_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_quantity : null) : canonical.order_quantity);
+    let order_quantity_num = toNumber((!canonical || isCanonicalIncomplete) ? (row ? row.order_quantity : null) : canonical.order_quantity);
+
+    // Resolver override (TP): prefer unified resolver outputs when available
+    try {
+      const ctx = await resolveOpenOrder({ order_id, user_id, user_type, symbolReq, orderTypeReq });
+      if (ctx && ctx.symbol) symbol = ctx.symbol;
+      if (ctx && ctx.order_type) order_type = ctx.order_type;
+      if (ctx && Number(ctx.entry_price) > 0) entry_price_num = Number(ctx.entry_price);
+      if (ctx && Number(ctx.order_quantity) > 0) order_quantity_num = Number(ctx.order_quantity);
+    } catch (e) {
+      logger.warn('Resolver override failed (TP)', { order_id, error: e.message });
+    }
 
     // Validate that symbol and order_type are available
     if (!symbol || !order_type) {
