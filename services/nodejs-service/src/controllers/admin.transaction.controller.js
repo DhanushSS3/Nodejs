@@ -17,6 +17,10 @@ const VALID_TRANSACTION_TYPES = [
 const VALID_TRANSACTION_STATUSES = ['completed', 'pending', 'failed', 'cancelled'];
 
 class AdminTransactionController {
+  constructor() {
+    this.getStrategyProviderWalletTransactions = this.getStrategyProviderWalletTransactions.bind(this);
+    this.getCopyFollowerWalletTransactions = this.getCopyFollowerWalletTransactions.bind(this);
+  }
   /**
    * Get filtered deposit transactions with pagination and total sum
    * GET /api/admin/transactions/deposits
