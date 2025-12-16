@@ -154,6 +154,22 @@ class Logger {
   }
 
   /**
+   * Log debug-level message (mirrors info logging but tagged as debug)
+   * @param {string} message
+   * @param {Object} context
+   */
+  static debug(message, context = {}) {
+    const payload = {
+      level: 'debug',
+      timestamp: new Date().toISOString(),
+      message,
+      ...context
+    };
+    nativeConsoleLog(JSON.stringify(payload));
+    writeApplicationLog('info', message, { level: 'debug', ...context });
+  }
+
+  /**
    * Log warning message with context
    * @param {string} message 
    * @param {Object} context 
