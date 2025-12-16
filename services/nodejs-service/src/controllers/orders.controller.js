@@ -1510,12 +1510,12 @@ async function addStopLoss(req, res) {
     const user_id = normalizeStr(body.user_id);
     const user_type = normalizeStr(body.user_type).toLowerCase();
     const symbolReq = normalizeStr(body.symbol).toUpperCase();
-    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const orderTypeReq = normalizeStr(body.order_type).toUpperCase();
     const stop_loss = toNumber(body.stop_loss);
     const status = normalizeStr(body.status || 'STOPLOSS');
     const order_status_in = normalizeStr(body.order_status || 'OPEN');
 
-    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(orderTypeReq)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
     }
     if (!(stop_loss > 0)) {
@@ -1790,7 +1790,7 @@ async function addTakeProfit(req, res) {
       logger.warn('TakeProfit: Missing symbol/order_type even after layered fallback', {
         order_id,
         symbolReq,
-        order_typeReq,
+        orderTypeReq,
         canonical_exists: !!canonical,
         row_exists: !!row,
         canonical_symbol: canonical?.symbol || canonical?.order_company_name,
