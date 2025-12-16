@@ -1106,6 +1106,7 @@ async function getMonthlyOrderQuantityAdminSecret(req, res) {
 
     const whereClause = {
       order_user_id: user.id,
+      order_status: 'CLOSED',
       created_at: {
         [Op.between]: [periodStart, periodEnd]
       }
