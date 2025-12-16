@@ -37,6 +37,12 @@ async function releaseUserLock(lock) {
     return;
   }
 
+  logger.debug('Attempting to release user lock', {
+    lockKey: lock.lockKey,
+    userType: lock.userType,
+    userId: lock.userId
+  });
+
   try {
     const released = await redisCluster.eval(RELEASE_LUA, 1, lock.lockKey, lock.token);
     if (released !== 1) {
@@ -62,6 +68,11 @@ async function releaseUserLock(lock) {
         found: currentToken
       });
     }
+    logger.debug('User lock released cleanly', {
+      lockKey: lock.lockKey,
+      userType: lock.userType,
+      userId: lock.userId
+    });
   } catch (error) {
     logger.warn('Failed to release user lock', { error: error.message, lockKey: lock.lockKey, userType: lock.userType, userId: lock.userId });
     try {
