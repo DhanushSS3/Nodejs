@@ -339,6 +339,48 @@ router.post('/pending/modify', authenticateJWT, ordersController.modifyPendingOr
  */
 router.post('/close', authenticateJWT, ordersController.closeOrder);
 
+// POST /api/orders/close-all
+/**
+ * @swagger
+ * /api/orders/close-all:
+ *   post:
+ *     summary: Close all open orders for the authenticated user
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - user_id
+ *               - user_type
+ *             properties:
+ *               user_id:
+ *                 type: string
+ *                 description: Explicit user ID (even if provided via JWT)
+ *               user_type:
+ *                 type: string
+ *                 enum: [live, demo, strategy_provider, copy_follower]
+ *               include_copy_followers:
+ *                 type: boolean
+ *                 description: Strategy providers always close follower orders; this flag is ignored if false.
+ *     responses:
+ *       200:
+ *         description: All orders closed successfully
+ *       207:
+ *         description: Some orders failed to close
+ *       400:
+ *         description: Invalid payload
+ *       403:
+ *         description: Forbidden (JWT/user checks)
+ *       409:
+ *         description: Another close operation already running
+ */
+router.post('/close-all', authenticateJWT, ordersController.closeAllOrders);
+
 // POST /api/orders/stoploss/add
 /**
  * @swagger

@@ -1,6 +1,4 @@
 const axios = require('axios');
-const http = require('http');
-const https = require('https');
 const logger = require('../services/logger.service');
 const orderReqLogger = require('../services/order.request.logger');
 const timingLogger = require('../services/perf.timing.logger');
@@ -20,27 +18,8 @@ const DemoUser = require('../models/demoUser.model');
 const { applyOrderClosePayout } = require('../services/order.payout.service');
 const lotValidationService = require('../services/lot.validation.service');
 const { resolveOpenOrder } = require('../services/order.resolver.service');
-
-// Create reusable axios instance with HTTP keep-alive for Python service calls
-const pythonServiceAxios = axios.create({
-  timeout: 15000,
-  headers: {
-    'Content-Type': 'application/json',
-    'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub'
-  },
-  httpAgent: new http.Agent({ 
-    keepAlive: true,
-    keepAliveMsecs: 30000,  // Keep connections alive for 30 seconds
-    maxSockets: 50,         // Max concurrent connections per host
-    maxFreeSockets: 10      // Max idle connections to keep open
-  }),
-  httpsAgent: new https.Agent({ 
-    keepAlive: true,
-    keepAliveMsecs: 30000,
-    maxSockets: 50,
-    maxFreeSockets: 10
-  })
-});
+const closeAllOrdersService = require('../services/orders.closeAll.service');
+const { pythonServiceAxios } = require('../services/python.service');
 
 function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
@@ -1414,6 +1393,87 @@ async function closeOrder(req, res) {
   }
 }
 
+async function closeAllOrders(req, res) {
+  const operationId = `close_all_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    orderReqLogger.logOrderRequest({
+      endpoint: 'closeAllOrders',
+      operationId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      ip: req.ip,
+      user: req.user,
+      headers: req.headers,
+      body: req.body
+    }).catch(() => {});
+
+    const user = req.user || {};
+    const tokenUserId = getTokenUserId(user);
+    const role = user.role || user.user_role;
+    const isSelfTrading = user.is_self_trading;
+    const userStatus = user.status;
+
+    const body = req.body || {};
+    const req_user_type = normalizeStr(body.user_type).toLowerCase();
+    const req_user_id = normalizeStr(body.user_id);
+    const requestedIncludeFollowers = body.include_copy_followers;
+
+    const isInternalAuth = req.headers['x-internal-auth'];
+    const isCopyTradingCall = req_user_type === 'copy_follower' || req_user_type === 'strategy_provider';
+
+    if (role && role !== 'trader' && !isInternalAuth && !isCopyTradingCall) {
+      return res.status(403).json({ success: false, message: 'User role not allowed for close all' });
+    }
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1' && !isInternalAuth && !isCopyTradingCall) {
+      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    }
+    if (userStatus !== undefined && String(userStatus) === '0' && !isInternalAuth && !isCopyTradingCall) {
+      return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
+    }
+
+    if (!req_user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(req_user_type)) {
+      return res.status(400).json({ success: false, message: 'user_type must be live, demo, strategy_provider, or copy_follower' });
+    }
+    if (!req_user_id) {
+      return res.status(400).json({ success: false, message: 'user_id is required' });
+    }
+    if (tokenUserId && normalizeStr(req_user_id) !== normalizeStr(tokenUserId) && !isInternalAuth) {
+      return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
+    }
+
+    const includeCopyFollowers = req_user_type === 'strategy_provider';
+    if (req_user_type === 'strategy_provider' && (requestedIncludeFollowers === false || requestedIncludeFollowers === 'false')) {
+      logger.warn('closeAllOrders: include_copy_followers cannot be disabled for strategy providers', {
+        userId: req_user_id,
+        requestedIncludeFollowers
+      });
+    }
+
+    const summary = await closeAllOrdersService.closeAll({
+      userType: req_user_type,
+      userId: req_user_id,
+      includeCopyFollowers
+    });
+
+    if (!summary.lockAcquired) {
+      return res.status(409).json({
+        success: false,
+        message: 'Another close operation is running for this user. Please retry shortly.',
+        errors: summary.errors
+      });
+    }
+
+    if (summary.closeFailed > 0) {
+      return res.status(207).json({ success: false, data: summary, message: 'One or more orders failed to close' });
+    }
+
+    return res.status(200).json({ success: true, data: summary });
+  } catch (error) {
+    logger.error('closeAllOrders internal error', { error: error.message, stack: error.stack });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
 async function addStopLoss(req, res) {
   const operationId = `add_stoploss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
@@ -2569,4 +2629,16 @@ async function getClosedOrders(req, res) {
   }
 }
 
-module.exports = { placeInstantOrder, placePendingOrder, closeOrder, addStopLoss, addTakeProfit, cancelStopLoss, cancelTakeProfit, cancelPendingOrder, modifyPendingOrder, getClosedOrders };
+module.exports = {
+  placeInstantOrder,
+  placePendingOrder,
+  closeOrder,
+  closeAllOrders,
+  addStopLoss,
+  addTakeProfit,
+  cancelStopLoss,
+  cancelTakeProfit,
+  cancelPendingOrder,
+  modifyPendingOrder,
+  getClosedOrders
+};
