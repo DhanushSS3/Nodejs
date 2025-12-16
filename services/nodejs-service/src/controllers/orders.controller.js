@@ -1728,12 +1728,12 @@ async function addTakeProfit(req, res) {
     const user_id = normalizeStr(body.user_id);
     const user_type = normalizeStr(body.user_type).toLowerCase();
     const symbolReq = normalizeStr(body.symbol).toUpperCase();
-    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const orderTypeReq = normalizeStr(body.order_type).toUpperCase();
     const take_profit = toNumber(body.take_profit);
     const status = normalizeStr(body.status || 'TAKEPROFIT');
     const order_status_in = normalizeStr(body.order_status || 'OPEN');
 
-    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(orderTypeReq)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
     }
     if (!(take_profit > 0)) {
@@ -2006,11 +2006,11 @@ async function cancelStopLoss(req, res) {
     const user_id = normalizeStr(body.user_id);
     const user_type = normalizeStr(body.user_type).toLowerCase();
     const symbolReq = normalizeStr(body.symbol).toUpperCase();
-    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const orderTypeReq = normalizeStr(body.order_type).toUpperCase();
     const statusIn = normalizeStr(body.status || 'STOPLOSS-CANCEL');
     const order_status_in = normalizeStr(body.order_status || 'OPEN');
 
-    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(orderTypeReq)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
     }
     if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
@@ -2223,11 +2223,11 @@ async function cancelTakeProfit(req, res) {
     const user_id = normalizeStr(body.user_id);
     const user_type = normalizeStr(body.user_type).toLowerCase();
     const symbolReq = normalizeStr(body.symbol).toUpperCase();
-    const order_typeReq = normalizeStr(body.order_type).toUpperCase();
+    const orderTypeReq = normalizeStr(body.order_type).toUpperCase();
     const statusIn = normalizeStr(body.status || 'TAKEPROFIT-CANCEL');
     const order_status_in = normalizeStr(body.order_status || 'OPEN');
 
-    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(order_typeReq)) {
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY', 'SELL'].includes(orderTypeReq)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
     }
     if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
