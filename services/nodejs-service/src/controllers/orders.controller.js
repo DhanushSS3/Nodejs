@@ -172,6 +172,11 @@ async function placeInstantOrder(req, res) {
     }
 
     // Acquire per-user lock to serialize order operations
+    logger.debug('Attempting to acquire user lock for placement', {
+      userType: parsed.user_type,
+      userId: parsed.user_id,
+      operationId
+    });
     userLock = await acquireUserLock(parsed.user_type, parsed.user_id);
     if (!userLock) {
       return res.status(409).json({
@@ -537,6 +542,16 @@ async function placeInstantOrder(req, res) {
   } catch (error) {
     logger.transactionFailure('instant_place', error, { operationId });
     return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  } finally {
+    if (userLock) {
+      logger.debug('Releasing user lock for placement', {
+        lockKey: userLock.lockKey,
+        userType: userLock.userType,
+        userId: userLock.userId,
+        operationId
+      });
+      await releaseUserLock(userLock);
+    }
   }
 }
 
