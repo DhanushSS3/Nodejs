@@ -10,9 +10,9 @@ else
 end
 `;
 
-const DEFAULT_TTL_SECONDS = parseInt(process.env.USER_LOCK_TTL_SECONDS || '15', 10);
+const DEFAULT_TTL_SECONDS = parseInt(process.env.USER_LOCK_TTL_SECONDS || '2', 10);
 
-async function acquireUserLock(userType, userId, ttlSeconds = DEFAULT_TTL_SECONDS) {
+async function acquireUserLock(userType, userId, ttlSeconds = DEFAULT_TTL_SECONDS, context = {}) {
   if (!userType || !userId) {
     return null;
   }
@@ -25,7 +25,7 @@ async function acquireUserLock(userType, userId, ttlSeconds = DEFAULT_TTL_SECOND
     if (!acquired) {
       return null;
     }
-    return { lockKey, token };
+    return { lockKey, token, userType, userId, context };
   } catch (error) {
     logger.error('Failed to acquire user lock', { error: error.message, lockKey });
     return null;
@@ -38,9 +38,46 @@ async function releaseUserLock(lock) {
   }
 
   try {
-    await redisCluster.eval(RELEASE_LUA, 1, lock.lockKey, lock.token);
+    const released = await redisCluster.eval(RELEASE_LUA, 1, lock.lockKey, lock.token);
+    if (released !== 1) {
+      const currentToken = await redisCluster.get(lock.lockKey);
+      if (currentToken === null) {
+        logger.debug('User lock already expired before release', { lockKey: lock.lockKey, userType: lock.userType, userId: lock.userId });
+        return;
+      }
+      if (currentToken === lock.token) {
+        await redisCluster.del(lock.lockKey);
+        logger.warn('User lock release script returned 0 but token matched - forced delete', {
+          lockKey: lock.lockKey,
+          userType: lock.userType,
+          userId: lock.userId
+        });
+        return;
+      }
+      logger.warn('User lock token mismatch on release', {
+        lockKey: lock.lockKey,
+        userType: lock.userType,
+        userId: lock.userId,
+        expected: lock.token,
+        found: currentToken
+      });
+    }
   } catch (error) {
-    logger.warn('Failed to release user lock', { error: error.message, lockKey: lock.lockKey });
+    logger.warn('Failed to release user lock', { error: error.message, lockKey: lock.lockKey, userType: lock.userType, userId: lock.userId });
+    try {
+      const currentToken = await redisCluster.get(lock.lockKey);
+      if (currentToken === lock.token) {
+        await redisCluster.del(lock.lockKey);
+        logger.warn('Fallback deleted user lock after release error', { lockKey: lock.lockKey, userType: lock.userType, userId: lock.userId });
+      }
+    } catch (fallbackErr) {
+      logger.error('Failed to cleanup user lock after release error', {
+        error: fallbackErr.message,
+        lockKey: lock.lockKey,
+        userType: lock.userType,
+        userId: lock.userId
+      });
+    }
   }
 }
 
