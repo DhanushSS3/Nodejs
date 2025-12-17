@@ -99,6 +99,45 @@ async def _fetch_email_from_db(user_type: str, user_id: str) -> Optional[str]:
     return None
 
 
+async def _fetch_account_number_from_db(user_type: str, user_id: str) -> Optional[str]:
+    """Fetch account_number from database for different user types"""
+    pool = await _get_mysql_pool()
+    if not pool:
+        return None
+
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+    query = None
+    params = (uid,)
+
+    user_type = (user_type or "").lower()
+    if user_type == "live":
+        query = "SELECT account_number FROM live_users WHERE id=%s LIMIT 1"
+    elif user_type == "demo":
+        query = "SELECT account_number FROM demo_users WHERE id=%s LIMIT 1"
+    elif user_type == "strategy_provider":
+        query = "SELECT account_number FROM strategy_provider_accounts WHERE id=%s LIMIT 1"
+    elif user_type == "copy_follower":
+        query = "SELECT account_number FROM copy_follower_accounts WHERE id=%s LIMIT 1"
+
+    if not query:
+        return None
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                row = await cur.fetchone()
+                if row and row[0]:
+                    return str(row[0])
+    except Exception as e:
+        logger.error("AutoCutoffWatcher: Failed to fetch account_number via DB for %s:%s: %s", user_type, user_id, e)
+    return None
+
+
 async def _get_margin_level(user_type: str, user_id: str) -> float:
     try:
         # Fetch only required fields to reduce payload
@@ -224,8 +263,11 @@ async def _handle_user(user_type: str, user_id: str, notifier: EmailNotifier, li
                 pass
         
         email = await _get_user_email(user_type, user_id)
-        logger.info("AutoCutoffWatcher: sending alert email to %s for %s:%s", email, user_type, user_id)
-        ok = await notifier.send_alert(user_type=user_type, user_id=user_id, email=email, margin_level=ml, threshold=cutoff_level)
+        account_number = await _fetch_account_number_from_db(user_type, user_id)
+        # Fallback to user_id if account_number not found
+        display_account_number = account_number if account_number else user_id
+        logger.info("AutoCutoffWatcher: sending alert email to %s for %s:%s (%s)", email, user_type, user_id, display_account_number)
+        ok = await notifier.send_alert(user_type=user_type, user_id=user_id, account_number=display_account_number, email=email, margin_level=ml, threshold=cutoff_level)
         if ok:
             logger.info("AutoCutoffWatcher: alert email sent successfully to %s for %s:%s", email, user_type, user_id)
         else:

@@ -27,8 +27,8 @@ class EmailNotifier:
         self.password = os.getenv("EMAIL_PASS")
         self.sender = os.getenv("EMAIL_FROM", self.username or "noreply@example.com")
 
-    def _build_message(self, *, to_addr: str, user_type: str, user_id: str, margin_level: float, threshold: float) -> MIMEMultipart:
-        subject_label, body_context = self._build_contextual_text(user_type=user_type, user_id=user_id)
+    def _build_message(self, *, to_addr: str, user_type: str, user_id: str, account_number: str, margin_level: float, threshold: float) -> MIMEMultipart:
+        subject_label, body_context = self._build_contextual_text(user_type=user_type, account_number=account_number)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"{subject_label}: Level {margin_level:.2f}% below {threshold:.0f}%"
@@ -48,14 +48,14 @@ class EmailNotifier:
         text = (
             f"Hello,\n\n"
             f"{intro_line}\n"
-            f"Account Reference: {user_type}:{user_id}\n\n"
+            f"Account Reference: {account_number}\n\n"
             f"{footer_line}\n"
         )
         html = (
             f"<html><body>"
             f"<p>Hello,</p>"
             f"<p>{intro_line}</p>"
-            f"<p><strong>Account Reference:</strong> <code>{user_type}:{user_id}</code></p>"
+            f"<p><strong>Account Reference:</strong> <code>{account_number}</code></p>"
             f"<p>{footer_line}</p>"
             f"</body></html>"
         )
@@ -63,26 +63,26 @@ class EmailNotifier:
         msg.attach(MIMEText(html, "html"))
         return msg
 
-    def _build_contextual_text(self, *, user_type: str, user_id: str) -> tuple[str, str]:
+    def _build_contextual_text(self, *, user_type: str, account_number: str) -> tuple[str, str]:
         normalized = (user_type or "").lower()
         if normalized == "strategy_provider":
             return (
                 "Strategy Provider Margin Alert",
-                f"strategy provider account (ID {user_id})"
+                f"strategy provider account ({account_number})"
             )
         if normalized == "copy_follower":
             return (
                 "Copy Follower Margin Alert",
-                f"copy follower account (ID {user_id})"
+                f"copy follower account ({account_number})"
             )
         if normalized == "demo":
             return (
                 "Demo Account Margin Alert",
-                f"demo account (ID {user_id})"
+                f"demo account ({account_number})"
             )
         return (
             "Margin Alert",
-            f"live trading account (ID {user_id})"
+            f"live trading account ({account_number})"
         )
 
     def _send_blocking(self, *, to_addr: str, msg: MIMEMultipart) -> None:
@@ -105,13 +105,13 @@ class EmailNotifier:
                     server.login(self.username, self.password)
                 server.sendmail(self.sender, [to_addr], msg.as_string())
 
-    async def _send(self, *, user_type: str, user_id: str, email: str, margin_level: float, threshold: float) -> None:
+    async def _send(self, *, user_type: str, user_id: str, account_number: str, email: str, margin_level: float, threshold: float) -> None:
         if not self.host or not self.port or not self.sender:
             raise RuntimeError("Email configuration missing (EMAIL_HOST/EMAIL_PORT/EMAIL_FROM)")
-        msg = self._build_message(to_addr=email, user_type=user_type, user_id=user_id, margin_level=margin_level, threshold=threshold)
+        msg = self._build_message(to_addr=email, user_type=user_type, user_id=user_id, account_number=account_number, margin_level=margin_level, threshold=threshold)
         await asyncio.to_thread(self._send_blocking, to_addr=email, msg=msg)
 
-    async def send_alert(self, *, user_type: str, user_id: str, email: Optional[str], margin_level: float, threshold: float) -> bool:
+    async def send_alert(self, *, user_type: str, user_id: str, account_number: str, email: Optional[str], margin_level: float, threshold: float) -> bool:
         if not email:
             logger.warning("EmailNotifier: missing email for %s:%s; skipping alert.", user_type, user_id)
             return False
@@ -119,7 +119,7 @@ class EmailNotifier:
         delays = [0.1, 0.5, 1.0]
         for i, d in enumerate(delays):
             try:
-                await self._send(user_type=user_type, user_id=user_id, email=email, margin_level=margin_level, threshold=threshold)
+                await self._send(user_type=user_type, user_id=user_id, account_number=account_number, email=email, margin_level=margin_level, threshold=threshold)
                 logger.info("[AutoCutoff OTP] WARNING email sent | user=%s:%s | to=%s | ml=%.2f | thr=%.0f", user_type, user_id, email, margin_level, threshold)
                 logger.info("[AutoCutoff Email] sent to=%s user=%s:%s ml=%.2f thr=%.0f", email, user_type, user_id, margin_level, threshold)
                 return True
