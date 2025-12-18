@@ -44,7 +44,7 @@ function addConnection(userKey, ws) {
     userConnections.set(userKey, []);
   }
   userConnections.get(userKey).push(ws);
-  
+
   // Update count
   const c = userConnCounts.get(userKey) || 0;
   userConnCounts.set(userKey, c + 1);
@@ -63,7 +63,7 @@ function removeConnection(userKey, ws) {
       userConnections.delete(userKey);
     }
   }
-  
+
   // Update count
   const c = userConnCounts.get(userKey) || 0;
   const n = Math.max(0, c - 1);
@@ -90,29 +90,29 @@ function decConn(userKey) {
 // Safely convert various timestamp representations to ISO string
 function toIsoTimeSafe(v) {
   if (v === undefined || v === null || v === '') return undefined;
-  
+
   // If it's already a Date object
   if (v instanceof Date) {
     return !Number.isNaN(v.getTime()) ? v.toISOString() : undefined;
   }
-  
+
   // numeric (ms) or numeric string
   const n = Number(v);
   if (Number.isFinite(n)) {
     const d = new Date(n);
     if (!Number.isNaN(d.getTime())) return d.toISOString();
   }
-  
+
   // try parse ISO or other string formats
   const d2 = new Date(String(v));
   if (!Number.isNaN(d2.getTime())) return d2.toISOString();
-  
+
   return undefined;
 }
 
 async function fetchAccountSummary(userType, userId) {
   let Model, row;
-  
+
   if (userType === 'strategy_provider') {
     // For strategy providers, get data from StrategyProviderAccount model
     Model = StrategyProviderAccount;
@@ -145,7 +145,7 @@ async function fetchAccountSummary(userType, userId) {
 
 async function fetchOrdersFromDB(userType, userId) {
   let OrderModel, rows;
-  
+
   if (userType === 'strategy_provider') {
     // For strategy providers, get orders from StrategyProviderOrder model
     OrderModel = StrategyProviderOrder;
@@ -159,11 +159,11 @@ async function fetchOrdersFromDB(userType, userId) {
     OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
     rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
   }
-  
+
   const open = [];
   const pending = [];
   const rejected = [];
-  
+
   for (const r of rows) {
     const base = {
       order_id: r.order_id,
@@ -182,20 +182,20 @@ async function fetchOrdersFromDB(userType, userId) {
       close_message: r.close_message,
       created_at: toIsoTimeSafe(r.created_at),
     };
-    
+
     // Add copy trading specific fields for copy followers
     if (userType === 'copy_follower') {
       base.master_order_id = r.master_order_id;
       base.copy_status = r.copy_status;
       base.strategy_provider_id = r.strategy_provider_id;
     }
-    
+
     // Add copy trading specific fields for strategy providers
     if (userType === 'strategy_provider') {
       base.copy_distribution_status = r.copy_distribution_status;
       base.is_master_order = r.is_master_order;
     }
-    
+
     const status = String(r.order_status).toUpperCase();
     if (status === 'OPEN') open.push(base);
     else if (status === 'PENDING') pending.push(base);
@@ -279,10 +279,9 @@ function buildPayload({ balance, margin, openOrders, pendingOrders, rejectedOrde
   };
 }
 
-function startPortfolioWSServer(server) {
-  // By default, ws allows connections from all origins.
-  // If you want to restrict, use verifyClient or handle 'origin' header manually.
-  const wss = new WebSocketServer({ server, path: '/ws/portfolio' });
+function createPortfolioWSServer() {
+  // Use noServer mode to handle upgrade manually
+  const wss = new WebSocketServer({ noServer: true, path: '/ws/portfolio' });
   const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
   wss.on('connection', async (ws, req) => {
@@ -328,11 +327,11 @@ function startPortfolioWSServer(server) {
       ws.close(4500, 'Unable to validate session');
       return;
     }
-    
+
     if (copyFollowerAccountId) {
       // Copy follower account connection - validate ownership
       const mainUserId = user.sub || user.user_id || user.id;
-      
+
       try {
         const CopyFollowerAccount = require('../../models/copyFollowerAccount.model');
         copyFollowerAccount = await CopyFollowerAccount.findOne({
@@ -343,25 +342,25 @@ function startPortfolioWSServer(server) {
             is_active: 1
           }
         });
-        
+
         if (!copyFollowerAccount) {
           ws.close(4403, 'Copy follower account not found or access denied');
           return;
         }
-        
+
         userId = copyFollowerAccount.id; // Use copy follower account ID as userId
         userType = 'copy_follower';
-        
+
       } catch (error) {
-        logger.error('Copy follower account validation failed', { 
-          error: error.message, 
+        logger.error('Copy follower account validation failed', {
+          error: error.message,
           copyFollowerAccountId,
-          mainUserId 
+          mainUserId
         });
         ws.close(4500, 'Internal server error during account validation');
         return;
       }
-      
+
     } else if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
       // Strategy provider: use strategy_provider_id as userId
       userId = user.strategy_provider_id;
@@ -371,7 +370,7 @@ function startPortfolioWSServer(server) {
       userId = user.sub || user.user_id || user.id;
       userType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
     }
-    
+
     const userKey = getUserKey(userType, userId);
     ws._sessionMeta = {
       sessionOwnerId,
@@ -390,10 +389,10 @@ function startPortfolioWSServer(server) {
       if (!ws._removedFromLimit) {
         removeConnection(userKey, ws);
       }
-      logger.info('WS portfolio closed', { 
-        userId, 
-        userType, 
-        remainingConnections: userConnCounts.get(userKey) || 0 
+      logger.info('WS portfolio closed', {
+        userId,
+        userType,
+        remainingConnections: userConnCounts.get(userKey) || 0
       });
     });
 
@@ -404,11 +403,11 @@ function startPortfolioWSServer(server) {
     const pingInterval = setInterval(() => {
       if (!alive) { clearInterval(pingInterval); return; }
       if (ws.isAlive === false) {
-        try { ws.terminate(); } catch (_) {}
+        try { ws.terminate(); } catch (_) { }
         return;
       }
       ws.isAlive = false;
-      try { ws.ping(); } catch (_) {}
+      try { ws.ping(); } catch (_) { }
     }, 30000);
 
     // Helper: send a snapshot
@@ -438,7 +437,7 @@ function startPortfolioWSServer(server) {
           (isOrderUpdate && (reasonStr === 'pending_confirmed' || reasonStr === 'pending_cancelled' || reasonStr === 'local_pending_cancel' || reasonStr === 'pending_modified' || reasonStr === 'pending_triggered' || reasonStr === 'order_opened' || reasonStr === 'order_closed' || reasonStr === 'stoploss_triggered' || reasonStr === 'takeprofit_triggered' || reasonStr === 'stoploss_cancelled' || reasonStr === 'takeprofit_cancelled')) ||
           (isOrderUpdate && (updateStatus === 'PENDING' || updateStatus === 'REJECTED' || updateStatus === 'CANCELLED' || updateStatus === 'OPEN' || updateStatus === 'CLOSED'))
         );
-        
+
         // Debug logging for pending confirmation events
         if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
           logger.info('WebSocket processing pending confirmation - force refresh check', {
@@ -453,7 +452,7 @@ function startPortfolioWSServer(server) {
             updateStatus
           });
         }
-        
+
         if (evt && evt.type === 'order_pending_confirmed') {
           logger.info('WebSocket processing dedicated pending confirmation - force refresh check', {
             userId,
@@ -490,7 +489,7 @@ function startPortfolioWSServer(server) {
             });
             await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
           }
-          
+
           if (evt && evt.type === 'order_pending_confirmed') {
             logger.info('Adding delay for dedicated pending confirmation database fetch to ensure consistency', {
               userId,
@@ -499,7 +498,7 @@ function startPortfolioWSServer(server) {
             });
             await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
           }
-          
+
           const dbOrders = await fetchOrdersFromDB(userType, userId);
           ws._lastPending = dbOrders.pending;
           ws._lastRejected = dbOrders.rejected;
@@ -530,7 +529,7 @@ function startPortfolioWSServer(server) {
               pendingOrderIds: dbOrders.pending.map(o => o.order_id)
             });
           }
-          
+
           if (evt && evt.type === 'order_pending_confirmed') {
             logger.info('Database fetch completed for dedicated pending confirmation', {
               userId,
@@ -549,7 +548,7 @@ function startPortfolioWSServer(server) {
           pendingOrders: ws._lastPending || [],
           rejectedOrders: ws._lastRejected || [],
         });
-        
+
         // Debug logging for pending confirmation WebSocket sends
         if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
           logger.info('WebSocket sending pending confirmation update to client', {
@@ -562,7 +561,7 @@ function startPortfolioWSServer(server) {
             snapshotReason: reason
           });
         }
-        
+
         if (evt && evt.type === 'order_pending_confirmed') {
           logger.info('WebSocket sending dedicated pending confirmation update to client', {
             userId,
@@ -573,7 +572,7 @@ function startPortfolioWSServer(server) {
             snapshotReason: reason
           });
         }
-        
+
         ws.send(JSON.stringify(payload));
       } catch (e) {
         logger.error('WS sendSnapshot failed', { error: e.message, userId, userType, reason, evt });
@@ -586,7 +585,7 @@ function startPortfolioWSServer(server) {
     // Event-driven updates: subscribe to user events
     const unsubscribe = portfolioEvents.onUserUpdate(userType, userId, async (evt) => {
       if (!alive) return;
-      
+
       // Debug logging for pending order events
       if (evt && (evt.type === 'order_update' && evt.reason === 'pending_confirmed')) {
         logger.info('WebSocket received pending confirmation event', {
@@ -597,7 +596,7 @@ function startPortfolioWSServer(server) {
           orderId: evt.order_id
         });
       }
-      
+
       if (evt && evt.type === 'order_pending_confirmed') {
         logger.info('WebSocket received dedicated pending confirmation event', {
           userId,
@@ -606,7 +605,7 @@ function startPortfolioWSServer(server) {
           orderId: evt.order_id
         });
       }
-      
+
       await sendSnapshot('event', evt);
     });
 
@@ -618,8 +617,8 @@ function startPortfolioWSServer(server) {
 
     // Cleanup on close
     ws.on('close', () => {
-      try { unsubscribe && unsubscribe(); } catch (_) {}
-      try { clearInterval(resync); } catch (_) {}
+      try { unsubscribe && unsubscribe(); } catch (_) { }
+      try { clearInterval(resync); } catch (_) { }
     });
   });
 
@@ -627,4 +626,4 @@ function startPortfolioWSServer(server) {
   return wss;
 }
 
-module.exports = { startPortfolioWSServer };
+module.exports = { createPortfolioWSServer };

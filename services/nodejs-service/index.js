@@ -11,13 +11,14 @@ const CatalogEligibilityCronService = require('./src/services/cron/catalogEligib
 const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEquityMonitor.worker');
 
 const PORT = process.env.PORT || 3000;
-const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
-const { startAdminOrdersWSServer } = require('./src/services/ws/admin.orders.ws');
+const { createPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
+const { createAdminOrdersWSServer } = require('./src/services/ws/admin.orders.ws');
 
 // Global references for graceful shutdown
 let server = null;
 let rabbitConnection = null;
-let wsServer = null;
+let wssPortfolio = null;
+let wssAdmin = null;
 
 (async () => {
   try {
@@ -69,20 +70,36 @@ let wsServer = null;
       console.log(`🚀 Server running on port ${PORT}`);
     });
 
-    // 5. Start WebSocket server for portfolio updates
+    // 5. Start WebSocket servers
     try {
-      startPortfolioWSServer(server);
-      console.log('✅ WebSocket server (/ws/portfolio) started');
-    } catch (wsErr) {
-      console.error('❌ Failed to start WebSocket server', wsErr);
-    }
+      const url = require('url');
 
-    // 5b. Start Admin Orders WebSocket server
-    try {
-      startAdminOrdersWSServer(server);
-      console.log('✅ Admin WebSocket server (/ws/admin/orders) started');
-    } catch (adminWsErr) {
-      console.error('❌ Failed to start Admin WebSocket server', adminWsErr);
+      // Create WS servers (headless - noServer: true)
+      wssPortfolio = createPortfolioWSServer();
+      wssAdmin = createAdminOrdersWSServer();
+
+      console.log('✅ WebSocket servers created (Headless Mode)');
+
+      // Handle Upgrade Manually
+      server.on('upgrade', (request, socket, head) => {
+        const pathname = url.parse(request.url).pathname;
+
+        if (pathname === '/ws/portfolio') {
+          wssPortfolio.handleUpgrade(request, socket, head, (ws) => {
+            wssPortfolio.emit('connection', ws, request);
+          });
+        } else if (pathname === '/ws/admin/orders') {
+          wssAdmin.handleUpgrade(request, socket, head, (ws) => {
+            wssAdmin.emit('connection', ws, request);
+          });
+        } else {
+          socket.destroy();
+        }
+      });
+      console.log('✅ WebSocket upgrade handler attached');
+
+    } catch (wsErr) {
+      console.error('❌ Failed to start WebSocket servers', wsErr);
     }
 
     // 6. Start swap scheduler
@@ -134,12 +151,15 @@ async function gracefulShutdown(signal) {
       console.log('✅ HTTP server closed');
     }
 
-    // 2. Stop WebSocket server
-    if (wsServer) {
-      console.log('🔄 Closing WebSocket server...');
-      // WebSocket server should close with HTTP server
-      console.log('✅ WebSocket server closed');
+    // 2. Stop WebSocket servers
+    console.log('🔄 Closing WebSocket servers...');
+    if (wssPortfolio) {
+      try { wssPortfolio.close(); } catch (_) { }
     }
+    if (wssAdmin) {
+      try { wssAdmin.close(); } catch (_) { }
+    }
+    console.log('✅ WebSocket servers closed');
 
     // 3. Stop RabbitMQ consumer
     try {
