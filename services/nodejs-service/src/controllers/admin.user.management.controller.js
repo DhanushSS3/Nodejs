@@ -68,7 +68,7 @@ class AdminUserManagementController {
 
       // Use scoped model to ensure country-level access control
       const ScopedLiveUser = req.scopedModels.LiveUser;
-      
+
       const updatedUser = await adminUserManagementService.updateLiveUser(
         userIdInt,
         updateData,
@@ -141,7 +141,7 @@ class AdminUserManagementController {
 
       // Use scoped model to ensure country-level access control
       const ScopedDemoUser = req.scopedModels.DemoUser;
-      
+
       const updatedUser = await adminUserManagementService.updateDemoUser(
         userIdInt,
         updateData,
@@ -195,10 +195,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminUserManagementService.getUserOpenOrders(
         userType,
         userIdInt,
@@ -246,10 +246,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const orders = await adminUserManagementService.getUserClosedOrders(
         userType,
         userIdInt,
@@ -298,10 +298,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const orders = await adminUserManagementService.getUserPendingOrders(
         userType,
         userIdInt,
@@ -338,34 +338,34 @@ class AdminUserManagementController {
 
       // Validate userType parameter
       if (!['live', 'demo'].includes(userType)) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid user type. Must be "live" or "demo"' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid user type. Must be "live" or "demo"'
         });
       }
 
       // Validate userId parameter
       const userIdInt = parseInt(userId, 10);
       if (isNaN(userIdInt) || userIdInt <= 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid user ID. Must be a positive integer.' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid user ID. Must be a positive integer.'
         });
       }
 
       // Basic payload validation
       if (!orderData.symbol || !orderData.order_type || !orderData.order_price || !orderData.order_quantity) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Missing required fields: symbol, order_type, order_price, order_quantity' 
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields: symbol, order_type, order_price, order_quantity'
         });
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.placeInstantOrder(
         admin,
         userType,
@@ -378,30 +378,30 @@ class AdminUserManagementController {
 
     } catch (error) {
       if (error.message === 'User not found or access denied') {
-        return res.status(404).json({ 
-          success: false, 
-          message: `${req.params.userType} user not found or access denied` 
+        return res.status(404).json({
+          success: false,
+          message: `${req.params.userType} user not found or access denied`
         });
       }
 
       if (error.message.includes('Invalid payload fields')) {
-        return res.status(400).json({ 
-          success: false, 
-          message: error.message 
+        return res.status(400).json({
+          success: false,
+          message: error.message
         });
       }
 
       if (error.message.includes('DB error')) {
-        return res.status(500).json({ 
-          success: false, 
-          message: 'Database error occurred' 
+        return res.status(500).json({
+          success: false,
+          message: 'Database error occurred'
         });
       }
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -409,22 +409,22 @@ class AdminUserManagementController {
       }
 
       if (error.message.includes('Python service error')) {
-        return res.status(500).json({ 
-          success: false, 
-          message: error.message 
+        return res.status(500).json({
+          success: false,
+          message: error.message
         });
       }
 
       if (error.message.includes('Order conflict')) {
-        return res.status(409).json({ 
-          success: false, 
-          message: error.message 
+        return res.status(409).json({
+          success: false,
+          message: error.message
         });
       }
 
-      res.status(500).json({ 
-        success: false, 
-        message: error.message || 'Failed to place instant order' 
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to place instant order'
       });
     }
   }
@@ -455,10 +455,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.closeOrder(
         admin,
         userType,
@@ -485,8 +485,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -519,10 +519,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.placePendingOrder(
         admin,
         userType,
@@ -544,8 +544,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -583,10 +583,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.modifyPendingOrder(
         admin,
         userType,
@@ -641,13 +641,13 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       // For DELETE requests, cancelData can be empty or from query params
       const cancelData = req.body || {};
-      
+
       const result = await adminOrderManagementService.cancelPendingOrder(
         admin,
         userType,
@@ -674,8 +674,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -718,10 +718,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.setStopLoss(
         admin,
         userType,
@@ -748,8 +748,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -786,10 +786,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.removeStopLoss(
         admin,
         userType,
@@ -816,8 +816,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -860,10 +860,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.setTakeProfit(
         admin,
         userType,
@@ -890,8 +890,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -928,10 +928,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const result = await adminOrderManagementService.removeTakeProfit(
         admin,
         userType,
@@ -958,8 +958,8 @@ class AdminUserManagementController {
 
       // Handle AdminOrderError with preserved status codes
       if (error.name === 'AdminOrderError') {
-        return res.status(error.statusCode).json({ 
-          success: false, 
+        return res.status(error.statusCode).json({
+          success: false,
           message: error.message,
           reason: error.reason,
           error: error.detail
@@ -994,10 +994,10 @@ class AdminUserManagementController {
       }
 
       // Use scoped model to ensure country-level access control
-      const ScopedUserModel = userType === 'live' 
-        ? req.scopedModels.LiveUser 
+      const ScopedUserModel = userType === 'live'
+        ? req.scopedModels.LiveUser
         : req.scopedModels.DemoUser;
-      
+
       const orders = await adminUserManagementService.getUserRejectedOrders(
         userType,
         userIdInt,
@@ -1135,6 +1135,82 @@ class AdminUserManagementController {
         message: 'Failed to retrieve copy follower accounts',
         error: error.message
       });
+    }
+  }
+
+  /**
+   * Fetches closed orders for a specific strategy provider with pagination
+   * Requires 'copytrading:orders:read' permission
+   */
+  async getStrategyProviderClosedOrders(req, res, next) {
+    try {
+      const { strategyProviderId } = req.params;
+      const { page, limit } = req.query;
+      const admin = req.admin;
+
+      // Validate strategyProviderId parameter
+      const providerIdInt = parseInt(strategyProviderId, 10);
+      if (isNaN(providerIdInt) || providerIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid strategy provider ID. Must be a positive integer.' });
+      }
+
+      const orders = await adminOrderManagementService.getStrategyProviderClosedOrders(
+        providerIdInt,
+        admin,
+        { page, limit }
+      );
+
+      // Return only the orders array directly
+      res.status(200).json(orders);
+
+    } catch (error) {
+      if (error.message === 'Strategy provider account not found') {
+        return res.status(404).json({ error: 'Strategy provider account not found' });
+      }
+
+      if (error.message.includes('Invalid strategy provider ID')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: 'Failed to retrieve strategy provider closed orders' });
+    }
+  }
+
+  /**
+   * Fetches closed orders for a specific copy follower with pagination
+   * Requires 'copytrading:orders:read' permission
+   */
+  async getCopyFollowerClosedOrders(req, res, next) {
+    try {
+      const { copyFollowerId } = req.params;
+      const { page, limit } = req.query;
+      const admin = req.admin;
+
+      // Validate copyFollowerId parameter
+      const followerIdInt = parseInt(copyFollowerId, 10);
+      if (isNaN(followerIdInt) || followerIdInt <= 0) {
+        return res.status(400).json({ error: 'Invalid copy follower ID. Must be a positive integer.' });
+      }
+
+      const orders = await adminOrderManagementService.getCopyFollowerClosedOrders(
+        followerIdInt,
+        admin,
+        { page, limit }
+      );
+
+      // Return only the orders array directly
+      res.status(200).json(orders);
+
+    } catch (error) {
+      if (error.message === 'Copy follower account not found') {
+        return res.status(404).json({ error: 'Copy follower account not found' });
+      }
+
+      if (error.message.includes('Invalid copy follower ID')) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: 'Failed to retrieve copy follower closed orders' });
     }
   }
 }

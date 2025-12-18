@@ -112,6 +112,134 @@ router.get(
 
 /**
  * @swagger
+ * /api/admin/users/strategy-providers/{strategyProviderId}/closed-orders:
+ *   get:
+ *     summary: Fetch closed orders for a strategy provider account
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve closed orders for a strategy provider with pagination. Requires 'copytrading:orders:read' permission.
+ *     parameters:
+ *       - in: path
+ *         name: strategyProviderId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the strategy provider account
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of orders per page
+ *     responses:
+ *       200:
+ *         description: Strategy provider closed orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id: 
+ *                     type: integer
+ *                   order_status:
+ *                     type: string
+ *                     example: CLOSED
+ *                   net_profit:
+ *                     type: number
+ *       400:
+ *         description: Invalid parameters
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: Strategy provider not found
+ */
+router.get(
+  '/strategy-providers/:strategyProviderId/closed-orders',
+  requirePermissions(['copytrading:orders:read']),
+  auditLog('GET_STRATEGY_PROVIDER_CLOSED_ORDERS'),
+  adminUserManagementController.getStrategyProviderClosedOrders
+);
+
+/**
+ * @swagger
+ * /api/admin/users/copy-followers/{copyFollowerId}/closed-orders:
+ *   get:
+ *     summary: Fetch closed orders for a copy follower account
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Retrieve closed orders for a copy follower with pagination. Requires 'copytrading:orders:read' permission.
+ *     parameters:
+ *       - in: path
+ *         name: copyFollowerId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The ID of the copy follower account
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of orders per page
+ *     responses:
+ *       200:
+ *         description: Copy follower closed orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id: 
+ *                     type: integer
+ *                   order_status:
+ *                     type: string
+ *                     example: CLOSED
+ *                   net_profit:
+ *                     type: number
+ *       400:
+ *         description: Invalid parameters
+ *       403:
+ *         description: Insufficient permissions
+ *       404:
+ *         description: Copy follower not found
+ */
+router.get(
+  '/copy-followers/:copyFollowerId/closed-orders',
+  requirePermissions(['copytrading:orders:read']),
+  auditLog('GET_COPY_FOLLOWER_CLOSED_ORDERS'),
+  adminUserManagementController.getCopyFollowerClosedOrders
+);
+
+/**
+ * @swagger
  * /api/admin/users/live-users/{userId}:
  *   put:
  *     summary: Update a live user's information
