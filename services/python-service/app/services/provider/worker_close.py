@@ -701,6 +701,22 @@ class CloseWorker:
                         "[CLOSE:DB_PUBLISH_ERROR] order_id=%s error=%s", 
                         order_id_dbg, str(e)
                     )
+                
+                # 🆕 Clean up close_pending lock after publishing confirmation
+                # This ensures lock is removed even if DB consumer fails
+                try:
+                    close_pending_key = f"order_close_pending:{payload.get('order_id')}"
+                    await redis_cluster.delete(close_pending_key)
+                    logger.info(
+                        "[CLOSE:PENDING_LOCK_CLEANUP] order_id=%s close_pending_key=%s",
+                        order_id_dbg, close_pending_key
+                    )
+                except Exception as cleanup_err:
+                    logger.warning(
+                        "[CLOSE:PENDING_LOCK_CLEANUP_FAILED] order_id=%s error=%s",
+                        order_id_dbg, str(cleanup_err)
+                    )
+                    # Non-fatal - lock will expire after TTL
             finally:
                 await release_lock(lock_key, token)
                 try:

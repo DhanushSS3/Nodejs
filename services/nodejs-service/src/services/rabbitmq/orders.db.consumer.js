@@ -169,13 +169,13 @@ async function handleOrderRejectionRecord(msg) {
 
 async function handleCloseIdUpdate(msg) {
   const { order_id, user_id, user_type, close_id } = msg || {};
-  
+
   if (!order_id || !user_id || !user_type || !close_id) {
     throw new Error('Missing required fields in close_id update message');
   }
 
   const OrderModel = getOrderModel(String(user_type));
-  
+
   logger.info('Processing close_id update', {
     order_id: String(order_id),
     user_id: String(user_id),
@@ -275,7 +275,7 @@ async function applyDbUpdate(msg) {
     symbol,
     close_origin,
   } = msg || {};
-  
+
   // Enhanced logging for DB update processing
   logger.info('DB update processing started', {
     messageType: type,
@@ -299,12 +299,12 @@ async function applyDbUpdate(msg) {
     },
     timestamp: new Date().toISOString()
   });
-  
+
   // Validate required fields - order_id is always required
   if (!order_id) {
     throw new Error('Missing order_id in DB update message');
   }
-  
+
   // For some message types (like ORDER_PENDING_CANCEL), user_id and user_type might be empty
   // We'll look them up from the database if needed
   if (!user_id || !user_type) {
@@ -320,7 +320,7 @@ async function applyDbUpdate(msg) {
   const processingKey = `order_processing:${String(order_id)}`;
   let processingId = null;
   let lockAcquired = false;
-  
+
   try {
     // Check if this order is currently being processed
     const isProcessing = await redisCluster.get(processingKey);
@@ -338,12 +338,12 @@ async function applyDbUpdate(msg) {
       });
       throw err;
     }
-    
+
     // Mark order as being processed (with 60-second timeout)
     processingId = `${process.pid}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     await redisCluster.setex(processingKey, 60, processingId);
     lockAcquired = true;
-    
+
     logger.info('Order processing lock acquired', {
       messageType: String(type),
       order_id: String(order_id),
@@ -351,7 +351,7 @@ async function applyDbUpdate(msg) {
       processingKey,
       timestamp: new Date().toISOString()
     });
-    
+
   } catch (error) {
     logger.warn('Failed to check order processing status', {
       messageType: String(type),
@@ -360,7 +360,7 @@ async function applyDbUpdate(msg) {
     });
     // Continue processing if Redis fails (better to risk duplicate than lose message)
   }
-  
+
   // Helper function to release processing lock
   const releaseProcessingLock = async () => {
     if (lockAcquired && processingId) {
@@ -387,16 +387,16 @@ async function applyDbUpdate(msg) {
   // If user_type is missing, try to get it from Redis canonical data
   let resolvedUserType = user_type;
   let resolvedUserId = user_id;
-  
+
   if (!user_type || !user_id) {
     try {
       const canonicalKey = `order_data:${String(order_id)}`;
       const canonical = await redisCluster.hgetall(canonicalKey);
-      
+
       if (canonical && Object.keys(canonical).length > 0) {
         resolvedUserType = resolvedUserType || canonical.user_type;
         resolvedUserId = resolvedUserId || canonical.user_id;
-        
+
         logger.info('Resolved missing user info from Redis canonical data', {
           order_id: String(order_id),
           originalUserType: String(user_type || 'empty'),
@@ -409,7 +409,7 @@ async function applyDbUpdate(msg) {
           order_id: String(order_id),
           canonicalKey
         });
-        
+
         // Fallback: Try to determine user_type from order_id pattern or database lookup
         // Copy follower orders typically have specific patterns or we can query the database
         try {
@@ -419,7 +419,7 @@ async function applyDbUpdate(msg) {
             where: { order_id: String(order_id) },
             attributes: ['order_user_id']
           });
-          
+
           if (copyFollowerOrder) {
             resolvedUserType = 'copy_follower';
             resolvedUserId = String(copyFollowerOrder.order_user_id);
@@ -435,7 +435,7 @@ async function applyDbUpdate(msg) {
               where: { order_id: String(order_id) },
               attributes: ['order_user_id']
             });
-            
+
             if (strategyProviderOrder) {
               resolvedUserType = 'strategy_provider';
               resolvedUserId = String(strategyProviderOrder.order_user_id);
@@ -451,7 +451,7 @@ async function applyDbUpdate(msg) {
                 where: { order_id: String(order_id) },
                 attributes: ['order_user_id']
               });
-              
+
               if (liveUserOrder) {
                 resolvedUserType = 'live';
                 resolvedUserId = String(liveUserOrder.order_user_id);
@@ -477,12 +477,12 @@ async function applyDbUpdate(msg) {
       });
     }
   }
-  
+
   // Final validation after attempted resolution
   if (!resolvedUserType) {
     throw new Error(`Cannot determine user_type for order ${order_id}. Message user_type: "${user_type}", Redis lookup failed.`);
   }
-  
+
   const OrderModel = getOrderModel(String(resolvedUserType));
   logger.info('DB consumer received message', {
     type,
@@ -510,7 +510,7 @@ async function applyDbUpdate(msg) {
   // Start database transaction with row-level locking to prevent race conditions
   const transaction = await sequelize.transaction();
   let row = null;
-  
+
   try {
     logger.info('Starting database transaction for order update', {
       orderId: String(order_id),
@@ -520,716 +520,716 @@ async function applyDbUpdate(msg) {
     });
 
     // Attempt to find existing row with row-level lock
-    row = await OrderModel.findOne({ 
+    row = await OrderModel.findOne({
       where: { order_id: String(order_id) },
       lock: transaction.LOCK.UPDATE, // Row-level lock to prevent concurrent updates
       transaction
     });
-  if (!row) {
-    // If missing, fetch minimal required fields from Redis canonical order_data:{order_id}
-    try {
-      const key = `order_data:${String(order_id)}`;
-      const canonical = await redisCluster.hgetall(key);
-      if (!canonical || Object.keys(canonical).length === 0) {
-        logger.warn('Canonical order not found in Redis for DB backfill', { order_id });
-      } else {
-        const symbol = canonical.symbol || canonical.order_company_name; // normalized by services
-        const order_type = canonical.order_type;
-        const order_quantity = canonical.order_quantity ?? '0';
-        const price = order_price != null ? String(order_price) : (canonical.order_price ?? '0');
-        const status = String(order_status || canonical.order_status || 'OPEN');
-        // Round to 8 decimals to match DECIMAL(18,8)
-        const marginStr = margin != null && Number.isFinite(Number(margin))
-          ? Number(margin).toFixed(8)
-          : (canonical.margin ?? null);
-        const contractValueStr = contract_value != null && Number.isFinite(Number(contract_value))
-          ? Number(contract_value).toFixed(8)
-          : (canonical.contract_value ?? null);
-        const commissionStr = commission != null && Number.isFinite(Number(commission))
-          ? Number(commission).toFixed(8)
-          : (canonical.commission ?? canonical.commission_entry ?? null);
-
-        if (!symbol || !order_type) {
-          logger.warn('Missing required fields in canonical order for SQL create', { order_id, symbol, order_type });
+    if (!row) {
+      // If missing, fetch minimal required fields from Redis canonical order_data:{order_id}
+      try {
+        const key = `order_data:${String(order_id)}`;
+        const canonical = await redisCluster.hgetall(key);
+        if (!canonical || Object.keys(canonical).length === 0) {
+          logger.warn('Canonical order not found in Redis for DB backfill', { order_id });
         } else {
-          row = await OrderModel.create({
-            order_id: String(order_id),
-            order_user_id: parseInt(String(user_id), 10),
-            symbol: String(symbol).toUpperCase(),
-            order_type: String(order_type).toUpperCase(),
-            order_status: status,
-            order_price: String(price),
-            order_quantity: String(order_quantity),
-            contract_value: contractValueStr != null ? String(contractValueStr) : null,
-            margin: marginStr != null ? String(marginStr) : null,
-            commission: commissionStr != null ? String(commissionStr) : null,
-            placed_by: 'user'
-          }, { transaction }); // Add transaction to create operation
-          logger.info('Created SQL order row from Redis canonical for DB update', { order_id, transactionId: transaction.id });
+          const symbol = canonical.symbol || canonical.order_company_name; // normalized by services
+          const order_type = canonical.order_type;
+          const order_quantity = canonical.order_quantity ?? '0';
+          const price = order_price != null ? String(order_price) : (canonical.order_price ?? '0');
+          const status = String(order_status || canonical.order_status || 'OPEN');
+          // Round to 8 decimals to match DECIMAL(18,8)
+          const marginStr = margin != null && Number.isFinite(Number(margin))
+            ? Number(margin).toFixed(8)
+            : (canonical.margin ?? null);
+          const contractValueStr = contract_value != null && Number.isFinite(Number(contract_value))
+            ? Number(contract_value).toFixed(8)
+            : (canonical.contract_value ?? null);
+          const commissionStr = commission != null && Number.isFinite(Number(commission))
+            ? Number(commission).toFixed(8)
+            : (canonical.commission ?? canonical.commission_entry ?? null);
+
+          if (!symbol || !order_type) {
+            logger.warn('Missing required fields in canonical order for SQL create', { order_id, symbol, order_type });
+          } else {
+            row = await OrderModel.create({
+              order_id: String(order_id),
+              order_user_id: parseInt(String(user_id), 10),
+              symbol: String(symbol).toUpperCase(),
+              order_type: String(order_type).toUpperCase(),
+              order_status: status,
+              order_price: String(price),
+              order_quantity: String(order_quantity),
+              contract_value: contractValueStr != null ? String(contractValueStr) : null,
+              margin: marginStr != null ? String(marginStr) : null,
+              commission: commissionStr != null ? String(commissionStr) : null,
+              placed_by: 'user'
+            }, { transaction }); // Add transaction to create operation
+            logger.info('Created SQL order row from Redis canonical for DB update', { order_id, transactionId: transaction.id });
+          }
+        }
+      } catch (e) {
+        logger.error('Failed to backfill SQL order from Redis canonical', { order_id, error: e.message });
+      }
+    }
+
+    // Wallet payout and transaction records (idempotent per order)
+    try {
+      if (type === 'ORDER_CLOSE_CONFIRMED') {
+        const payoutKey = `close_payout_applied:${String(order_id)}`;
+        const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
+        if (nx) {
+          const OrderModelP = getOrderModel(String(user_type));
+          let rowP = row;
+          if (!rowP) {
+            try { rowP = await OrderModelP.findOne({ where: { order_id: String(order_id) } }); } catch (_) { }
+          }
+          const orderPk = rowP?.id ?? null;
+          const symbolP = rowP?.symbol ?? undefined;
+          const orderTypeP = rowP?.order_type ?? undefined;
+
+          // Apply payout for all user types (live, demo, strategy_provider, copy_follower)
+          // Use original net profit - performance fee will be calculated after transaction
+          await applyOrderClosePayout({
+            userType: String(user_type),
+            userId: parseInt(String(user_id), 10),
+            orderPk,
+            orderIdStr: String(order_id),
+            netProfit: Number(net_profit) || 0,
+            commission: Number(commission) || 0,
+            profitUsd: Number(msg.profit_usd) || 0,
+            swap: Number(swap) || 0,
+            symbol: symbolP ? String(symbolP).toUpperCase() : undefined,
+            orderType: orderTypeP ? String(orderTypeP).toUpperCase() : undefined,
+          });
+
+          // Trigger a WS snapshot refresh for wallet balance
+          try {
+            portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
+              type: 'wallet_balance_update',
+              order_id: String(order_id),
+            });
+          } catch (e) {
+            logger.warn('Failed to emit WS after payout', { error: e.message, order_id: String(order_id) });
+          }
+        } else {
+          logger.info('Skip payout; already applied for order', { order_id: String(order_id) });
         }
       }
     } catch (e) {
-      logger.error('Failed to backfill SQL order from Redis canonical', { order_id, error: e.message });
+      logger.error('Failed to apply payout on close', { error: e.message, order_id: String(order_id) });
     }
-  }
 
-  // Wallet payout and transaction records (idempotent per order)
-  try {
-    if (type === 'ORDER_CLOSE_CONFIRMED') {
-      const payoutKey = `close_payout_applied:${String(order_id)}`;
-      const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
-      if (nx) {
-        const OrderModelP = getOrderModel(String(user_type));
-        let rowP = row;
-        if (!rowP) {
-          try { rowP = await OrderModelP.findOne({ where: { order_id: String(order_id) } }); } catch (_) {}
-        }
-        const orderPk = rowP?.id ?? null;
-        const symbolP = rowP?.symbol ?? undefined;
-        const orderTypeP = rowP?.order_type ?? undefined;
+    // User net_profit increment is now handled by applyOrderClosePayout service
+    // Removed from here to avoid double accounting
 
-        // Apply payout for all user types (live, demo, strategy_provider, copy_follower)
-        // Use original net profit - performance fee will be calculated after transaction
-        await applyOrderClosePayout({
-          userType: String(user_type),
-          userId: parseInt(String(user_id), 10),
-          orderPk,
-          orderIdStr: String(order_id),
-          netProfit: Number(net_profit) || 0,
-          commission: Number(commission) || 0,
-          profitUsd: Number(msg.profit_usd) || 0,
-          swap: Number(swap) || 0,
-          symbol: symbolP ? String(symbolP).toUpperCase() : undefined,
-          orderType: orderTypeP ? String(orderTypeP).toUpperCase() : undefined,
-        });
-
-        // Trigger a WS snapshot refresh for wallet balance
-        try {
-          portfolioEvents.emitUserUpdate(String(user_type), String(user_id), {
-            type: 'wallet_balance_update',
-            order_id: String(order_id),
-          });
-        } catch (e) {
-          logger.warn('Failed to emit WS after payout', { error: e.message, order_id: String(order_id) });
-        }
-      } else {
-        logger.info('Skip payout; already applied for order', { order_id: String(order_id) });
+    // If still no row, nothing else we can do; avoid throwing to prevent poison messages
+    if (!row) {
+      logger.warn('Skipping DB order update; SQL row not found and could not be created', { order_id });
+    } else {
+      const updateFields = {};
+      if (order_status) updateFields.order_status = String(order_status);
+      // Default for pending-cancel confirmations if publisher forgot to set order_status
+      if (!order_status && String(type) === 'ORDER_PENDING_CANCEL') {
+        updateFields.order_status = 'CANCELLED';
       }
-    }
-  } catch (e) {
-    logger.error('Failed to apply payout on close', { error: e.message, order_id: String(order_id) });
-  }
+      // Default for order rejection confirmations if publisher forgot to set order_status
+      if (!order_status && String(type) === 'ORDER_REJECTED') {
+        updateFields.order_status = 'REJECTED';
+      }
+      if (order_type) updateFields.order_type = normalizeOrderType(order_type);
+      if (order_price != null) updateFields.order_price = String(order_price);
+      if (order_quantity != null) updateFields.order_quantity = String(order_quantity);
+      // Update symbol if provided (especially for ORDER_PENDING_TRIGGERED)
+      if (symbol && String(type) === 'ORDER_PENDING_TRIGGERED') {
+        updateFields.symbol = String(symbol).toUpperCase();
+      }
+      if (margin != null && Number.isFinite(Number(margin))) {
+        updateFields.margin = Number(margin).toFixed(8);
+      }
+      if (contract_value != null && Number.isFinite(Number(contract_value))) {
+        updateFields.contract_value = Number(contract_value).toFixed(8);
+      }
+      if (commission != null && Number.isFinite(Number(commission))) {
+        updateFields.commission = Number(commission).toFixed(8);
+      }
+      // Trigger fields
+      if (stop_loss != null && Number.isFinite(Number(stop_loss))) {
+        updateFields.stop_loss = Number(stop_loss).toFixed(8);
+      }
+      if (take_profit != null && Number.isFinite(Number(take_profit))) {
+        updateFields.take_profit = Number(take_profit).toFixed(8);
+      }
+      // Cancel trigger messages: explicitly nullify columns
+      if (type === 'ORDER_STOPLOSS_CANCEL') {
+        updateFields.stop_loss = null;
+      }
+      if (type === 'ORDER_TAKEPROFIT_CANCEL') {
+        updateFields.take_profit = null;
+      }
+      // Close-specific fields
+      if (close_price != null && Number.isFinite(Number(close_price))) {
+        updateFields.close_price = Number(close_price).toFixed(8);
+      }
+      if (net_profit != null && Number.isFinite(Number(net_profit))) {
+        updateFields.net_profit = Number(net_profit).toFixed(8);
+      }
+      if (swap != null && Number.isFinite(Number(swap))) {
+        updateFields.swap = Number(swap).toFixed(8);
+      }
 
-  // User net_profit increment is now handled by applyOrderClosePayout service
-  // Removed from here to avoid double accounting
+      // Enhanced close message mapping based on close scenario
+      if (type === 'ORDER_CLOSE_CONFIRMED') {
+        try {
+          let closeMsg = null;
 
-  // If still no row, nothing else we can do; avoid throwing to prevent poison messages
-  if (!row) {
-    logger.warn('Skipping DB order update; SQL row not found and could not be created', { order_id });
-  } else {
-    const updateFields = {};
-    if (order_status) updateFields.order_status = String(order_status);
-    // Default for pending-cancel confirmations if publisher forgot to set order_status
-    if (!order_status && String(type) === 'ORDER_PENDING_CANCEL') {
-      updateFields.order_status = 'CANCELLED';
-    }
-    // Default for order rejection confirmations if publisher forgot to set order_status
-    if (!order_status && String(type) === 'ORDER_REJECTED') {
-      updateFields.order_status = 'REJECTED';
-    }
-    if (order_type) updateFields.order_type = normalizeOrderType(order_type);
-    if (order_price != null) updateFields.order_price = String(order_price);
-    if (order_quantity != null) updateFields.order_quantity = String(order_quantity);
-    // Update symbol if provided (especially for ORDER_PENDING_TRIGGERED)
-    if (symbol && String(type) === 'ORDER_PENDING_TRIGGERED') {
-      updateFields.symbol = String(symbol).toUpperCase();
-    }
-    if (margin != null && Number.isFinite(Number(margin))) {
-      updateFields.margin = Number(margin).toFixed(8);
-    }
-    if (contract_value != null && Number.isFinite(Number(contract_value))) {
-      updateFields.contract_value = Number(contract_value).toFixed(8);
-    }
-    if (commission != null && Number.isFinite(Number(commission))) {
-      updateFields.commission = Number(commission).toFixed(8);
-    }
-    // Trigger fields
-    if (stop_loss != null && Number.isFinite(Number(stop_loss))) {
-      updateFields.stop_loss = Number(stop_loss).toFixed(8);
-    }
-    if (take_profit != null && Number.isFinite(Number(take_profit))) {
-      updateFields.take_profit = Number(take_profit).toFixed(8);
-    }
-    // Cancel trigger messages: explicitly nullify columns
-    if (type === 'ORDER_STOPLOSS_CANCEL') {
-      updateFields.stop_loss = null;
-    }
-    if (type === 'ORDER_TAKEPROFIT_CANCEL') {
-      updateFields.take_profit = null;
-    }
-    // Close-specific fields
-    if (close_price != null && Number.isFinite(Number(close_price))) {
-      updateFields.close_price = Number(close_price).toFixed(8);
-    }
-    if (net_profit != null && Number.isFinite(Number(net_profit))) {
-      updateFields.net_profit = Number(net_profit).toFixed(8);
-    }
-    if (swap != null && Number.isFinite(Number(swap))) {
-      updateFields.swap = Number(swap).toFixed(8);
-    }
+          // Priority 1: Use explicit close_message if provided in payload
+          if (close_message && String(close_message).trim()) {
+            closeMsg = String(close_message).trim();
+          }
+          // Priority 2: Determine from trigger_lifecycle_id
+          else if (trigger_lifecycle_id) {
+            let slId = row.stoploss_id || null;
+            let tpId = row.takeprofit_id || null;
+            let clsId = row.close_id || null;
 
-    // Enhanced close message mapping based on close scenario
-    if (type === 'ORDER_CLOSE_CONFIRMED') {
-      try {
-        let closeMsg = null;
-        
-        // Priority 1: Use explicit close_message if provided in payload
-        if (close_message && String(close_message).trim()) {
-          closeMsg = String(close_message).trim();
-        }
-        // Priority 2: Determine from trigger_lifecycle_id
-        else if (trigger_lifecycle_id) {
-          let slId = row.stoploss_id || null;
-          let tpId = row.takeprofit_id || null;
-          let clsId = row.close_id || null;
-          
-          // Fallback to Redis canonical if SQL row lacks these ids
-          if (!slId || !tpId || !clsId) {
-            try {
-              const canonical = await redisCluster.hgetall(`order_data:${String(order_id)}`);
-              if (canonical) {
-                if (!slId && canonical.stoploss_id) slId = String(canonical.stoploss_id);
-                if (!tpId && canonical.takeprofit_id) tpId = String(canonical.takeprofit_id);
-                if (!clsId && canonical.close_id) clsId = String(canonical.close_id);
+            // Fallback to Redis canonical if SQL row lacks these ids
+            if (!slId || !tpId || !clsId) {
+              try {
+                const canonical = await redisCluster.hgetall(`order_data:${String(order_id)}`);
+                if (canonical) {
+                  if (!slId && canonical.stoploss_id) slId = String(canonical.stoploss_id);
+                  if (!tpId && canonical.takeprofit_id) tpId = String(canonical.takeprofit_id);
+                  if (!clsId && canonical.close_id) clsId = String(canonical.close_id);
+                }
+              } catch (e) {
+                // best effort only
               }
-            } catch (e) {
-              // best effort only
+            }
+
+            const trig = String(trigger_lifecycle_id);
+            console.log("trigger_lifecycle_id:", trig, "slId:", slId, "tpId:", tpId, "clsId:", clsId);
+            if (slId && trig === String(slId)) {
+              closeMsg = 'Stoploss';
+            } else if (tpId && trig === String(tpId)) {
+              closeMsg = 'Takeprofit';
+            } else if (clsId && trig === String(clsId)) {
+              closeMsg = 'Closed';
+            } else if (trig.includes('trigger_stoploss_')) {
+              // Handle synthetic stoploss trigger IDs
+              closeMsg = 'Stoploss';
+            } else if (trig.includes('trigger_takeprofit_')) {
+              // Handle synthetic takeprofit trigger IDs
+              closeMsg = 'Takeprofit';
+            } else {
+              // Check if trigger ID indicates autocutoff
+              if (trig.includes('autocutoff') || trig.includes('liquidation') || trig.includes('margin_call')) {
+                closeMsg = 'Autocutoff';
+              } else {
+                closeMsg = 'Closed'; // Default for unknown triggers
+              }
             }
           }
-          
-          const trig = String(trigger_lifecycle_id);
-          console.log("trigger_lifecycle_id:", trig, "slId:", slId, "tpId:", tpId, "clsId:", clsId);
-          if (slId && trig === String(slId)) {
-            closeMsg = 'Stoploss';
-          } else if (tpId && trig === String(tpId)) {
-            closeMsg = 'Takeprofit';
-          } else if (clsId && trig === String(clsId)) {
+          // Priority 3: Default fallback
+          else {
             closeMsg = 'Closed';
-          } else if (trig.includes('trigger_stoploss_')) {
-            // Handle synthetic stoploss trigger IDs
-            closeMsg = 'Stoploss';
-          } else if (trig.includes('trigger_takeprofit_')) {
-            // Handle synthetic takeprofit trigger IDs
-            closeMsg = 'Takeprofit';
-          } else {
-            // Check if trigger ID indicates autocutoff
-            if (trig.includes('autocutoff') || trig.includes('liquidation') || trig.includes('margin_call')) {
-              closeMsg = 'Autocutoff';
-            } else {
-              closeMsg = 'Closed'; // Default for unknown triggers
-            }
+          }
+
+          if (closeMsg) {
+            updateFields.close_message = closeMsg;
+            logger.info('Set close_message for order', {
+              order_id: String(order_id),
+              close_message: closeMsg,
+              trigger_lifecycle_id: trigger_lifecycle_id || 'none',
+              detection_method: close_message ? 'explicit' : (trigger_lifecycle_id ? 'trigger_id' : 'default')
+            });
+          }
+        } catch (e) {
+          logger.warn('Failed to set close_message', { error: e.message, order_id: String(order_id) });
+          // Set default close_message on error
+          updateFields.close_message = 'Closed';
+        }
+      }
+
+      // Fallback: if status transitions to OPEN and no explicit order_type provided, convert existing pending type to BUY/SELL
+      try {
+        const willBeOpen = Object.prototype.hasOwnProperty.call(updateFields, 'order_status') && String(updateFields.order_status).toUpperCase() === 'OPEN';
+        const lacksType = !Object.prototype.hasOwnProperty.call(updateFields, 'order_type');
+        if (willBeOpen && lacksType && row && row.order_type) {
+          const cur = String(row.order_type).toUpperCase();
+          const norm = normalizeOrderType(cur);
+          if (norm !== cur) {
+            updateFields.order_type = norm;
           }
         }
-        // Priority 3: Default fallback
-        else {
-          closeMsg = 'Closed';
-        }
-        
-        if (closeMsg) {
-          updateFields.close_message = closeMsg;
-          logger.info('Set close_message for order', { 
-            order_id: String(order_id), 
-            close_message: closeMsg, 
-            trigger_lifecycle_id: trigger_lifecycle_id || 'none',
-            detection_method: close_message ? 'explicit' : (trigger_lifecycle_id ? 'trigger_id' : 'default')
+      } catch (_) { }
+
+      if (type === 'ORDER_CLOSE_CONFIRMED') {
+        const requiredFields = ['close_price', 'net_profit', 'commission', 'profit_usd'];
+        const missingCloseFields = requiredFields.filter((field) => msg[field] == null);
+        if (missingCloseFields.length > 0) {
+          logger.warn('Close confirmation missing expected financial fields', {
+            order_id: String(order_id),
+            missingCloseFields,
+            payloadKeys: Object.keys(msg || {}),
+            close_origin: close_origin || 'unknown',
           });
         }
-      } catch (e) {
-        logger.warn('Failed to set close_message', { error: e.message, order_id: String(order_id) });
-        // Set default close_message on error
-        updateFields.close_message = 'Closed';
-      }
-    }
-
-    // Fallback: if status transitions to OPEN and no explicit order_type provided, convert existing pending type to BUY/SELL
-    try {
-      const willBeOpen = Object.prototype.hasOwnProperty.call(updateFields, 'order_status') && String(updateFields.order_status).toUpperCase() === 'OPEN';
-      const lacksType = !Object.prototype.hasOwnProperty.call(updateFields, 'order_type');
-      if (willBeOpen && lacksType && row && row.order_type) {
-        const cur = String(row.order_type).toUpperCase();
-        const norm = normalizeOrderType(cur);
-        if (norm !== cur) {
-          updateFields.order_type = norm;
+        if (!row && close_origin === 'local') {
+          logger.warn('Local close confirmation arrived without SQL row; will rely on payload only', {
+            order_id: String(order_id),
+            user_id: String(user_id),
+            user_type: String(user_type),
+          });
         }
       }
-    } catch (_) {}
 
-    if (type === 'ORDER_CLOSE_CONFIRMED') {
-      const requiredFields = ['close_price', 'net_profit', 'commission', 'profit_usd'];
-      const missingCloseFields = requiredFields.filter((field) => msg[field] == null);
-      if (missingCloseFields.length > 0) {
-        logger.warn('Close confirmation missing expected financial fields', {
-          order_id: String(order_id),
-          missingCloseFields,
-          payloadKeys: Object.keys(msg || {}),
-          close_origin: close_origin || 'unknown',
-        });
-      }
-      if (!row && close_origin === 'local') {
-        logger.warn('Local close confirmation arrived without SQL row; will rely on payload only', {
-          order_id: String(order_id),
-          user_id: String(user_id),
-          user_type: String(user_type),
-        });
-      }
-    }
-
-    if (Object.keys(updateFields).length > 0) {
-      const dbUpdateStartTime = Date.now();
-      if (close_origin) {
-        logger.info('Processing close confirmation with origin metadata', {
-          orderId: String(order_id),
-          close_origin,
-          messageType: type,
-        });
-      }
-      const before = {
-        margin: row.margin != null ? row.margin.toString() : null,
-        commission: row.commission != null ? row.commission.toString() : null,
-        order_price: row.order_price != null ? row.order_price.toString() : null,
-        order_status: row.order_status,
-        close_price: row.close_price != null ? row.close_price.toString() : null,
-        net_profit: row.net_profit != null ? row.net_profit.toString() : null,
-        swap: row.swap != null ? row.swap.toString() : null,
-        stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
-        take_profit: row.take_profit != null ? row.take_profit.toString() : null,
-      };
-      
-      logger.info('DB update about to execute with transaction', {
-        orderId: String(order_id),
-        messageType: type,
-        updateFields: updateFields,
-        beforeValues: before,
-        transactionId: transaction.id,
-        concurrentProcessing: {
-          userId: String(user_id),
-          userType: String(user_type),
-          timestamp: new Date().toISOString()
-        }
-      });
-      
-      await row.update(updateFields, { transaction });
-      const dbUpdateTime = Date.now() - dbUpdateStartTime;
-      
-      const after = {
-        margin: row.margin != null ? row.margin.toString() : null,
-        commission: row.commission != null ? row.commission.toString() : null,
-        order_price: row.order_price != null ? row.order_price.toString() : null,
-        order_status: row.order_status,
-        close_price: row.close_price != null ? row.close_price.toString() : null,
-        net_profit: row.net_profit != null ? row.net_profit.toString() : null,
-        swap: row.swap != null ? row.swap.toString() : null,
-        stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
-        take_profit: row.take_profit != null ? row.take_profit.toString() : null,
-      };
-      
-      // Detect partial updates
-      const partialUpdateDetection = {
-        statusUpdated: before.order_status !== after.order_status,
-        financialsUpdated: (before.net_profit !== after.net_profit || 
-                           before.commission !== after.commission || 
-                           before.close_price !== after.close_price),
-        marginUpdated: before.margin !== after.margin,
-        isCloseMessage: type === 'ORDER_CLOSE_CONFIRMED',
-        hasAllCloseFields: !!(after.close_price && after.net_profit && after.commission)
-      };
-      
-      logger.info('DB consumer applied order update', { 
-        orderId: String(order_id), 
-        messageType: type,
-        before, 
-        updateFields, 
-        after,
-        dbUpdateTimeMs: dbUpdateTime,
-        partialUpdateDetection,
-        timestamp: new Date().toISOString()
-      });
-      // Mirror updates into Redis except for pending cancel finalization (keys were deleted by worker)
-      if (String(type) !== 'ORDER_PENDING_CANCEL') {
-        try {
-          const userTypeStr = String(user_type);
-          const userIdStr = String(user_id);
-          const hashTag = `${userTypeStr}:${userIdStr}`;
-          const orderKey = `user_holdings:{${hashTag}}:${String(order_id)}`;
-          const orderDataKey = `order_data:${String(order_id)}`;
-          const indexKey = `user_orders_index:{${hashTag}}`;
-          const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
-          // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
-          const pUser = redisCluster.pipeline();
-          let redisIndexAction = null;
-          // Maintain index membership based on order_status when provided
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
-            const st = String(updateFields.order_status).toUpperCase();
-            if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED' || st === 'QUEUED') {
-              pUser.srem(indexKey, String(order_id));
-              redisIndexAction = 'srem';
-            } else if (st === 'OPEN' || st === 'PENDING') {
-              // Ensure presence in index for OPEN and PENDING
-              pUser.sadd(indexKey, String(order_id));
-              redisIndexAction = 'sadd';
-            }
-            // Mirror order_status into user_holdings for immediate WS/UI visibility
-            pUser.hset(orderKey, 'order_status', st);
-          } else {
-            // Default behavior (for trigger updates not changing status): ensure presence
-            pUser.sadd(indexKey, String(order_id));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
-            if (updateFields.stop_loss === null) {
-              pUser.hdel(orderKey, 'stop_loss');
-            } else {
-              pUser.hset(orderKey, 'stop_loss', String(updateFields.stop_loss));
-            }
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
-            if (updateFields.take_profit === null) {
-              pUser.hdel(orderKey, 'take_profit');
-            } else {
-              pUser.hset(orderKey, 'take_profit', String(updateFields.take_profit));
-            }
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
-            pUser.hset(orderKey, 'order_type', String(updateFields.order_type).toUpperCase());
-          }
-          // Mirror common numeric fields used by UI
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
-            pUser.hset(orderKey, 'order_price', String(updateFields.order_price));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_quantity')) {
-            pUser.hset(orderKey, 'order_quantity', String(updateFields.order_quantity));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
-            pUser.hset(orderKey, 'contract_value', String(updateFields.contract_value));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
-            pUser.hset(orderKey, 'commission', String(updateFields.commission));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
-            pUser.hset(orderKey, 'net_profit', String(updateFields.net_profit));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
-            pUser.hset(orderKey, 'close_price', String(updateFields.close_price));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
-            pUser.hset(orderKey, 'swap', String(updateFields.swap));
-          }
-          await pUser.exec();
-
-          logRedisAudit('order_redis_pipeline_applied', {
-            hashTag,
-            userType: userTypeStr,
-            userId: userIdStr,
+      if (Object.keys(updateFields).length > 0) {
+        const dbUpdateStartTime = Date.now();
+        if (close_origin) {
+          logger.info('Processing close confirmation with origin metadata', {
             orderId: String(order_id),
-            orderKey,
-            indexKey,
-            orderDataKey,
-            orderStatus: updateFields.order_status,
-            indexAction: redisIndexAction || 'upsert',
-            fieldsUpdated: Object.keys(updateFields || {})
+            close_origin,
+            messageType: type,
           });
+        }
+        const before = {
+          margin: row.margin != null ? row.margin.toString() : null,
+          commission: row.commission != null ? row.commission.toString() : null,
+          order_price: row.order_price != null ? row.order_price.toString() : null,
+          order_status: row.order_status,
+          close_price: row.close_price != null ? row.close_price.toString() : null,
+          net_profit: row.net_profit != null ? row.net_profit.toString() : null,
+          swap: row.swap != null ? row.swap.toString() : null,
+          stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
+          take_profit: row.take_profit != null ? row.take_profit.toString() : null,
+        };
 
-          const statusIsClosed = Object.prototype.hasOwnProperty.call(updateFields, 'order_status')
-            && String(updateFields.order_status).toUpperCase() === 'CLOSED';
-          if (statusIsClosed) {
-            try {
-              const cleanupPipe = redisCluster.pipeline();
-              cleanupPipe.srem(indexKey, String(order_id));
-              cleanupPipe.del(orderKey);
-              await cleanupPipe.exec();
-              logRedisAudit('order_redis_removed_after_close', {
-                hashTag,
-                userType: userTypeStr,
-                userId: userIdStr,
-                orderId: String(order_id),
-                orderKey,
-                indexKey,
-                reason: 'status_closed'
-              });
-            } catch (cleanupErr) {
-              logger.warn('Failed to cleanup user holdings after close', { error: cleanupErr.message, order_id: String(order_id) });
+        logger.info('DB update about to execute with transaction', {
+          orderId: String(order_id),
+          messageType: type,
+          updateFields: updateFields,
+          beforeValues: before,
+          transactionId: transaction.id,
+          concurrentProcessing: {
+            userId: String(user_id),
+            userType: String(user_type),
+            timestamp: new Date().toISOString()
+          }
+        });
+
+        await row.update(updateFields, { transaction });
+        const dbUpdateTime = Date.now() - dbUpdateStartTime;
+
+        const after = {
+          margin: row.margin != null ? row.margin.toString() : null,
+          commission: row.commission != null ? row.commission.toString() : null,
+          order_price: row.order_price != null ? row.order_price.toString() : null,
+          order_status: row.order_status,
+          close_price: row.close_price != null ? row.close_price.toString() : null,
+          net_profit: row.net_profit != null ? row.net_profit.toString() : null,
+          swap: row.swap != null ? row.swap.toString() : null,
+          stop_loss: row.stop_loss != null ? row.stop_loss.toString() : null,
+          take_profit: row.take_profit != null ? row.take_profit.toString() : null,
+        };
+
+        // Detect partial updates
+        const partialUpdateDetection = {
+          statusUpdated: before.order_status !== after.order_status,
+          financialsUpdated: (before.net_profit !== after.net_profit ||
+            before.commission !== after.commission ||
+            before.close_price !== after.close_price),
+          marginUpdated: before.margin !== after.margin,
+          isCloseMessage: type === 'ORDER_CLOSE_CONFIRMED',
+          hasAllCloseFields: !!(after.close_price && after.net_profit && after.commission)
+        };
+
+        logger.info('DB consumer applied order update', {
+          orderId: String(order_id),
+          messageType: type,
+          before,
+          updateFields,
+          after,
+          dbUpdateTimeMs: dbUpdateTime,
+          partialUpdateDetection,
+          timestamp: new Date().toISOString()
+        });
+        // Mirror updates into Redis except for pending cancel finalization (keys were deleted by worker)
+        if (String(type) !== 'ORDER_PENDING_CANCEL') {
+          try {
+            const userTypeStr = String(user_type);
+            const userIdStr = String(user_id);
+            const hashTag = `${userTypeStr}:${userIdStr}`;
+            const orderKey = `user_holdings:{${hashTag}}:${String(order_id)}`;
+            const orderDataKey = `order_data:${String(order_id)}`;
+            const indexKey = `user_orders_index:{${hashTag}}`;
+            const symbolUpper = row?.symbol ? String(row.symbol).toUpperCase() : undefined;
+            // 1) User-slot pipeline: user_holdings + user_orders_index share the same hash tag slot
+            const pUser = redisCluster.pipeline();
+            let redisIndexAction = null;
+            // Maintain index membership based on order_status when provided
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
+              const st = String(updateFields.order_status).toUpperCase();
+              if (st === 'REJECTED' || st === 'CLOSED' || st === 'CANCELLED' || st === 'QUEUED') {
+                pUser.srem(indexKey, String(order_id));
+                redisIndexAction = 'srem';
+              } else if (st === 'OPEN' || st === 'PENDING') {
+                // Ensure presence in index for OPEN and PENDING
+                pUser.sadd(indexKey, String(order_id));
+                redisIndexAction = 'sadd';
+              }
+              // Mirror order_status into user_holdings for immediate WS/UI visibility
+              pUser.hset(orderKey, 'order_status', st);
+            } else {
+              // Default behavior (for trigger updates not changing status): ensure presence
+              pUser.sadd(indexKey, String(order_id));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
+              if (updateFields.stop_loss === null) {
+                pUser.hdel(orderKey, 'stop_loss');
+              } else {
+                pUser.hset(orderKey, 'stop_loss', String(updateFields.stop_loss));
+              }
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
+              if (updateFields.take_profit === null) {
+                pUser.hdel(orderKey, 'take_profit');
+              } else {
+                pUser.hset(orderKey, 'take_profit', String(updateFields.take_profit));
+              }
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
+              pUser.hset(orderKey, 'order_type', String(updateFields.order_type).toUpperCase());
+            }
+            // Mirror common numeric fields used by UI
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
+              pUser.hset(orderKey, 'order_price', String(updateFields.order_price));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_quantity')) {
+              pUser.hset(orderKey, 'order_quantity', String(updateFields.order_quantity));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
+              pUser.hset(orderKey, 'contract_value', String(updateFields.contract_value));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
+              pUser.hset(orderKey, 'commission', String(updateFields.commission));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
+              pUser.hset(orderKey, 'net_profit', String(updateFields.net_profit));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
+              pUser.hset(orderKey, 'close_price', String(updateFields.close_price));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
+              pUser.hset(orderKey, 'swap', String(updateFields.swap));
+            }
+            await pUser.exec();
+
+            logRedisAudit('order_redis_pipeline_applied', {
+              hashTag,
+              userType: userTypeStr,
+              userId: userIdStr,
+              orderId: String(order_id),
+              orderKey,
+              indexKey,
+              orderDataKey,
+              orderStatus: updateFields.order_status,
+              indexAction: redisIndexAction || 'upsert',
+              fieldsUpdated: Object.keys(updateFields || {})
+            });
+
+            const statusIsClosed = Object.prototype.hasOwnProperty.call(updateFields, 'order_status')
+              && String(updateFields.order_status).toUpperCase() === 'CLOSED';
+            if (statusIsClosed) {
+              try {
+                const cleanupPipe = redisCluster.pipeline();
+                cleanupPipe.srem(indexKey, String(order_id));
+                cleanupPipe.del(orderKey);
+                await cleanupPipe.exec();
+                logRedisAudit('order_redis_removed_after_close', {
+                  hashTag,
+                  userType: userTypeStr,
+                  userId: userIdStr,
+                  orderId: String(order_id),
+                  orderKey,
+                  indexKey,
+                  reason: 'status_closed'
+                });
+              } catch (cleanupErr) {
+                logger.warn('Failed to cleanup user holdings after close', { error: cleanupErr.message, order_id: String(order_id) });
+              }
+
+              try {
+                await redisCluster.del(orderDataKey);
+                logRedisAudit('order_redis_order_data_deleted', {
+                  hashTag,
+                  userType: userTypeStr,
+                  userId: userIdStr,
+                  orderId: String(order_id),
+                  orderDataKey,
+                  reason: 'status_closed'
+                });
+              } catch (delErr) {
+                logger.warn('Failed to delete canonical order_data after close', { error: delErr.message, order_id: String(order_id) });
+              }
+
+              if (symbolUpper) {
+                try {
+                  const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
+                  await redisCluster.srem(symKey, hashTag);
+                } catch (symErr) {
+                  logger.warn('symbol_holders cleanup failed after close', { error: symErr.message, symbol: symbolUpper, user: hashTag });
+                }
+              }
             }
 
-            try {
-              await redisCluster.del(orderDataKey);
-              logRedisAudit('order_redis_order_data_deleted', {
-                hashTag,
-                userType: userTypeStr,
-                userId: userIdStr,
-                orderId: String(order_id),
-                orderDataKey,
-                reason: 'status_closed'
-              });
-            } catch (delErr) {
-              logger.warn('Failed to delete canonical order_data after close', { error: delErr.message, order_id: String(order_id) });
+            // 2) order_data pipeline (separate slot)
+            const pOd = redisCluster.pipeline();
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
+              pOd.hset(orderDataKey, 'order_status', String(updateFields.order_status).toUpperCase());
             }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
+              if (updateFields.stop_loss === null) pOd.hdel(orderDataKey, 'stop_loss');
+              else pOd.hset(orderDataKey, 'stop_loss', String(updateFields.stop_loss));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
+              if (updateFields.take_profit === null) pOd.hdel(orderDataKey, 'take_profit');
+              else pOd.hset(orderDataKey, 'take_profit', String(updateFields.take_profit));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
+              pOd.hset(orderDataKey, 'order_type', String(updateFields.order_type).toUpperCase());
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
+              pOd.hset(orderDataKey, 'order_price', String(updateFields.order_price));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'order_quantity')) {
+              pOd.hset(orderDataKey, 'order_quantity', String(updateFields.order_quantity));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
+              pOd.hset(orderDataKey, 'contract_value', String(updateFields.contract_value));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
+              pOd.hset(orderDataKey, 'commission', String(updateFields.commission));
+              // For OPEN confirmations, also persist entry commission breakdown into canonical
+              if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+                pOd.hset(orderDataKey, 'commission_entry', String(updateFields.commission));
+              }
+            }
+            if (commission_entry_msg != null) {
+              pOd.hset(orderDataKey, 'commission_entry', String(commission_entry_msg));
+            }
+            if (commission_exit_msg != null) {
+              pOd.hset(orderDataKey, 'commission_exit', String(commission_exit_msg));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
+              pOd.hset(orderDataKey, 'net_profit', String(updateFields.net_profit));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
+              pOd.hset(orderDataKey, 'close_price', String(updateFields.close_price));
+            }
+            if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
+              pOd.hset(orderDataKey, 'swap', String(updateFields.swap));
+            }
+            await pOd.exec();
 
-            if (symbolUpper) {
+            // 3) symbol_holders (separate slot): only add for OPEN orders
+            if (symbolUpper && String(updateFields.order_status || row.order_status).toUpperCase() === 'OPEN') {
               try {
                 const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
-                await redisCluster.srem(symKey, hashTag);
-              } catch (symErr) {
-                logger.warn('symbol_holders cleanup failed after close', { error: symErr.message, symbol: symbolUpper, user: hashTag });
+                await redisCluster.sadd(symKey, hashTag);
+              } catch (e2) {
+                logger.warn('symbol_holders sadd failed', { error: e2.message, symbol: symbolUpper, user: hashTag });
               }
             }
+          } catch (e) {
+            logger.warn('Failed to mirror trigger to Redis holdings', { error: e.message, order_id: String(order_id) });
           }
+        } else {
+          logger.info('Skip Redis mirror for ORDER_PENDING_CANCEL (keys were removed by worker)', { order_id: String(order_id) });
+        }
 
-          // 2) order_data pipeline (separate slot)
-          const pOd = redisCluster.pipeline();
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_status')) {
-            pOd.hset(orderDataKey, 'order_status', String(updateFields.order_status).toUpperCase());
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'stop_loss')) {
-            if (updateFields.stop_loss === null) pOd.hdel(orderDataKey, 'stop_loss');
-            else pOd.hset(orderDataKey, 'stop_loss', String(updateFields.stop_loss));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'take_profit')) {
-            if (updateFields.take_profit === null) pOd.hdel(orderDataKey, 'take_profit');
-            else pOd.hset(orderDataKey, 'take_profit', String(updateFields.take_profit));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_type')) {
-            pOd.hset(orderDataKey, 'order_type', String(updateFields.order_type).toUpperCase());
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_price')) {
-            pOd.hset(orderDataKey, 'order_price', String(updateFields.order_price));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'order_quantity')) {
-            pOd.hset(orderDataKey, 'order_quantity', String(updateFields.order_quantity));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'contract_value')) {
-            pOd.hset(orderDataKey, 'contract_value', String(updateFields.contract_value));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'commission')) {
-            pOd.hset(orderDataKey, 'commission', String(updateFields.commission));
-            // For OPEN confirmations, also persist entry commission breakdown into canonical
-            if (String(type) === 'ORDER_OPEN_CONFIRMED') {
-              pOd.hset(orderDataKey, 'commission_entry', String(updateFields.commission));
+        // Emit event for this user's portfolio stream
+        try {
+          // Hydrate WS update for PENDING confirmation with core fields if not present
+          let updateForWs = { ...updateFields };
+          if (String(type) === 'ORDER_PENDING_CONFIRMED') {
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && row?.symbol) {
+              updateForWs.symbol = String(row.symbol).toUpperCase();
+            }
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_type') && row?.order_type) {
+              updateForWs.order_type = String(row.order_type).toUpperCase();
+            }
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_price') && row?.order_price != null) {
+              updateForWs.order_price = String(row.order_price);
+            }
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
+              updateForWs.order_quantity = String(row.order_quantity);
             }
           }
-          if (commission_entry_msg != null) {
-            pOd.hset(orderDataKey, 'commission_entry', String(commission_entry_msg));
-          }
-          if (commission_exit_msg != null) {
-            pOd.hset(orderDataKey, 'commission_exit', String(commission_exit_msg));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'net_profit')) {
-            pOd.hset(orderDataKey, 'net_profit', String(updateFields.net_profit));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'close_price')) {
-            pOd.hset(orderDataKey, 'close_price', String(updateFields.close_price));
-          }
-          if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
-            pOd.hset(orderDataKey, 'swap', String(updateFields.swap));
-          }
-          await pOd.exec();
-
-          // 3) symbol_holders (separate slot): only add for OPEN orders
-          if (symbolUpper && String(updateFields.order_status || row.order_status).toUpperCase() === 'OPEN') {
-            try {
-              const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
-              await redisCluster.sadd(symKey, hashTag);
-            } catch (e2) {
-              logger.warn('symbol_holders sadd failed', { error: e2.message, symbol: symbolUpper, user: hashTag });
+          // Hydrate WS update for ORDER_PENDING_TRIGGERED with fields from message
+          if (String(type) === 'ORDER_PENDING_TRIGGERED') {
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && symbol) {
+              updateForWs.symbol = String(symbol).toUpperCase();
+            }
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && order_quantity) {
+              updateForWs.order_quantity = String(order_quantity);
+            }
+            // Also include from row if message fields are missing
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && row?.symbol) {
+              updateForWs.symbol = String(row.symbol).toUpperCase();
+            }
+            if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
+              updateForWs.order_quantity = String(row.order_quantity);
             }
           }
-        } catch (e) {
-          logger.warn('Failed to mirror trigger to Redis holdings', { error: e.message, order_id: String(order_id) });
-        }
-      } else {
-        logger.info('Skip Redis mirror for ORDER_PENDING_CANCEL (keys were removed by worker)', { order_id: String(order_id) });
-      }
-
-      // Emit event for this user's portfolio stream
-      try {
-        // Hydrate WS update for PENDING confirmation with core fields if not present
-        let updateForWs = { ...updateFields };
-        if (String(type) === 'ORDER_PENDING_CONFIRMED') {
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && row?.symbol) {
-            updateForWs.symbol = String(row.symbol).toUpperCase();
-          }
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_type') && row?.order_type) {
-            updateForWs.order_type = String(row.order_type).toUpperCase();
-          }
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_price') && row?.order_price != null) {
-            updateForWs.order_price = String(row.order_price);
-          }
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
-            updateForWs.order_quantity = String(row.order_quantity);
-          }
-        }
-        // Hydrate WS update for ORDER_PENDING_TRIGGERED with fields from message
-        if (String(type) === 'ORDER_PENDING_TRIGGERED') {
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && symbol) {
-            updateForWs.symbol = String(symbol).toUpperCase();
-          }
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && order_quantity) {
-            updateForWs.order_quantity = String(order_quantity);
-          }
-          // Also include from row if message fields are missing
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'symbol') && row?.symbol) {
-            updateForWs.symbol = String(row.symbol).toUpperCase();
-          }
-          if (!Object.prototype.hasOwnProperty.call(updateForWs, 'order_quantity') && row?.order_quantity != null) {
-            updateForWs.order_quantity = String(row.order_quantity);
-          }
-        }
-        const wsPayload = {
-          type: 'order_update',
-          order_id: String(order_id),
-          update: updateForWs,
-        };
-        if (String(type) === 'ORDER_PENDING_CONFIRMED') {
-          wsPayload.reason = 'pending_confirmed';
-        }
-        if (String(type) === 'ORDER_PENDING_CANCEL') {
-          wsPayload.reason = 'pending_cancelled';
-        }
-        if (String(type) === 'ORDER_OPEN_CONFIRMED') {
-          wsPayload.reason = 'order_opened';
-        }
-        if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
-          wsPayload.reason = 'order_closed';
-        }
-        if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
-          wsPayload.reason = 'stoploss_triggered';
-        }
-        if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
-          wsPayload.reason = 'takeprofit_triggered';
-        }
-        if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
-          wsPayload.reason = 'stoploss_cancelled';
-        }
-        if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
-          wsPayload.reason = 'takeprofit_cancelled';
-        }
-        portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), wsPayload);
-        
-        logger.info('WebSocket event emitted for order update', {
-          messageType: String(type),
-          orderId: String(order_id),
-          userType: String(resolvedUserType),
-          userId: String(resolvedUserId || user_id),
-          wsPayloadType: wsPayload.type,
-          wsPayloadReason: wsPayload.reason,
-          updateFields: Object.keys(updateForWs)
-        });
-        
-        // Emit dedicated events for specific order state changes to trigger immediate UI updates
-        if (String(type) === 'ORDER_PENDING_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'order_pending_confirmed',
+          const wsPayload = {
+            type: 'order_update',
             order_id: String(order_id),
             update: updateForWs,
-            reason: 'pending_confirmed'
-          });
-          
-          logger.info('Dedicated WebSocket event emitted for pending confirmation', {
+          };
+          if (String(type) === 'ORDER_PENDING_CONFIRMED') {
+            wsPayload.reason = 'pending_confirmed';
+          }
+          if (String(type) === 'ORDER_PENDING_CANCEL') {
+            wsPayload.reason = 'pending_cancelled';
+          }
+          if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+            wsPayload.reason = 'order_opened';
+          }
+          if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
+            wsPayload.reason = 'order_closed';
+          }
+          if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
+            wsPayload.reason = 'stoploss_triggered';
+          }
+          if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
+            wsPayload.reason = 'takeprofit_triggered';
+          }
+          if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
+            wsPayload.reason = 'stoploss_cancelled';
+          }
+          if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
+            wsPayload.reason = 'takeprofit_cancelled';
+          }
+          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), wsPayload);
+
+          logger.info('WebSocket event emitted for order update', {
+            messageType: String(type),
             orderId: String(order_id),
             userType: String(resolvedUserType),
             userId: String(resolvedUserId || user_id),
-            eventType: 'order_pending_confirmed',
+            wsPayloadType: wsPayload.type,
+            wsPayloadReason: wsPayload.reason,
             updateFields: Object.keys(updateForWs)
           });
+
+          // Emit dedicated events for specific order state changes to trigger immediate UI updates
+          if (String(type) === 'ORDER_PENDING_CONFIRMED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'order_pending_confirmed',
+              order_id: String(order_id),
+              update: updateForWs,
+              reason: 'pending_confirmed'
+            });
+
+            logger.info('Dedicated WebSocket event emitted for pending confirmation', {
+              orderId: String(order_id),
+              userType: String(resolvedUserType),
+              userId: String(resolvedUserId || user_id),
+              eventType: 'order_pending_confirmed',
+              updateFields: Object.keys(updateForWs)
+            });
+          }
+          if (String(type) === 'ORDER_PENDING_CANCEL') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'order_pending_cancelled',
+              order_id: String(order_id),
+              update: updateForWs,
+              reason: 'pending_cancelled'
+            });
+          }
+          // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
+          if (String(type) === 'ORDER_REJECTED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'order_rejected',
+              order_id: String(order_id),
+            });
+          }
+          // Emit immediate event for order opened to refresh UI instantly
+          if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'order_opened',
+              order_id: String(order_id),
+              update: updateForWs,
+            });
+          }
+          // Emit immediate event for order closed to refresh UI instantly
+          if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'order_closed',
+              order_id: String(order_id),
+              update: updateForWs,
+            });
+          }
+          // Emit immediate event for stoploss triggered to refresh UI instantly
+          if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'stoploss_triggered',
+              order_id: String(order_id),
+              update: updateForWs,
+            });
+          }
+          // Emit immediate event for takeprofit triggered to refresh UI instantly
+          if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'takeprofit_triggered',
+              order_id: String(order_id),
+              update: updateForWs,
+            });
+          }
+          // Emit immediate event for stoploss cancelled to refresh UI instantly
+          if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'stoploss_cancelled',
+              order_id: String(order_id),
+              update: updateForWs,
+            });
+          }
+          // Emit immediate event for takeprofit cancelled to refresh UI instantly
+          if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'takeprofit_cancelled',
+              order_id: String(order_id),
+              update: updateForWs,
+            });
+          }
+          // Emit immediate event for pending order triggers to refresh UI instantly
+          if (String(type) === 'ORDER_PENDING_TRIGGERED') {
+            portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
+              type: 'order_update',
+              order_id: String(order_id),
+              reason: 'pending_triggered',
+              update: updateForWs,
+            });
+          }
+        } catch (e) {
+          logger.warn('Failed to emit portfolio event after order update', { error: e.message });
         }
-        if (String(type) === 'ORDER_PENDING_CANCEL') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'order_pending_cancelled',
-            order_id: String(order_id),
-            update: updateForWs,
-            reason: 'pending_cancelled'
-          });
-        }
-        // Emit a dedicated event when an order is rejected to trigger immediate DB refresh on WS
-        if (String(type) === 'ORDER_REJECTED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'order_rejected',
-            order_id: String(order_id),
-          });
-        }
-        // Emit immediate event for order opened to refresh UI instantly
-        if (String(type) === 'ORDER_OPEN_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'order_opened',
-            order_id: String(order_id),
-            update: updateForWs,
-          });
-        }
-        // Emit immediate event for order closed to refresh UI instantly
-        if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'order_closed',
-            order_id: String(order_id),
-            update: updateForWs,
-          });
-        }
-        // Emit immediate event for stoploss triggered to refresh UI instantly
-        if (String(type) === 'ORDER_STOPLOSS_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'stoploss_triggered',
-            order_id: String(order_id),
-            update: updateForWs,
-          });
-        }
-        // Emit immediate event for takeprofit triggered to refresh UI instantly
-        if (String(type) === 'ORDER_TAKEPROFIT_CONFIRMED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'takeprofit_triggered',
-            order_id: String(order_id),
-            update: updateForWs,
-          });
-        }
-        // Emit immediate event for stoploss cancelled to refresh UI instantly
-        if (String(type) === 'ORDER_STOPLOSS_CANCEL') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'stoploss_cancelled',
-            order_id: String(order_id),
-            update: updateForWs,
-          });
-        }
-        // Emit immediate event for takeprofit cancelled to refresh UI instantly
-        if (String(type) === 'ORDER_TAKEPROFIT_CANCEL') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'takeprofit_cancelled',
-            order_id: String(order_id),
-            update: updateForWs,
-          });
-        }
-        // Emit immediate event for pending order triggers to refresh UI instantly
-        if (String(type) === 'ORDER_PENDING_TRIGGERED') {
-          portfolioEvents.emitUserUpdate(String(resolvedUserType), String(resolvedUserId || user_id), {
-            type: 'order_update',
-            order_id: String(order_id),
-            reason: 'pending_triggered',
-            update: updateForWs,
-          });
-        }
-      } catch (e) {
-        logger.warn('Failed to emit portfolio event after order update', { error: e.message });
       }
     }
-  }
 
-  // Handle post-close operations (margin updates, copy trading, etc.)
-  // Use resolved user info for post-close operations
-  const msgWithResolvedUser = {
-    ...msg,
-    user_id: resolvedUserId || user_id,
-    user_type: resolvedUserType
-  };
-  await handlePostCloseOperations(msgWithResolvedUser, row);
+    // Handle post-close operations (margin updates, copy trading, etc.)
+    // Use resolved user info for post-close operations
+    const msgWithResolvedUser = {
+      ...msg,
+      user_id: resolvedUserId || user_id,
+      user_type: resolvedUserType
+    };
+    await handlePostCloseOperations(msgWithResolvedUser, row);
 
-  // NOTE: Copy trading replication is handled in the controller when the order is placed
-  // Removing duplicate trigger that was causing double copy orders in provider flow
-  // The replication should only happen once when the order is initially placed, not again on confirmation
+    // NOTE: Copy trading replication is handled in the controller when the order is placed
+    // Removing duplicate trigger that was causing double copy orders in provider flow
+    // The replication should only happen once when the order is initially placed, not again on confirmation
 
     // Update user's used margin in SQL, if provided
     const mirrorUsedMargin = (used_margin_usd != null) ? used_margin_usd : (used_margin_executed != null ? used_margin_executed : null);
@@ -1262,17 +1262,53 @@ async function applyDbUpdate(msg) {
     }
 
     // Commit transaction if all operations succeeded
-    await transaction.commit();
-    
-    logger.info('Database transaction committed successfully', {
-      orderId: String(order_id),
-      messageType: type,
-      transactionId: transaction.id,
-      timestamp: new Date().toISOString()
-    });
-    
+    try {
+      await transaction.commit();
+
+      logger.info('Database transaction committed successfully', {
+        orderId: String(order_id),
+        messageType: type,
+        transactionId: transaction.id,
+        processingTimeMs: Date.now() - updateStartTime,
+        timestamp: new Date().toISOString()
+      });
+    } catch (commitError) {
+      logger.error('Transaction commit failed', {
+        orderId: String(order_id),
+        messageType: type,
+        transactionId: transaction.id,
+        error: commitError.message,
+        stack: commitError.stack,
+        timestamp: new Date().toISOString()
+      });
+
+      // Release processing lock before throwing to allow retry
+      await releaseProcessingLock();
+
+      throw commitError; // Re-throw to trigger message requeue
+    }
+
     // Release processing lock after successful completion
     await releaseProcessingLock();
+
+    // 🆕 Clean up close_pending lock after successful CLOSE confirmation
+    if (type === 'ORDER_CLOSE_CONFIRMED') {
+      try {
+        const closePendingKey = `order_close_pending:${String(order_id)}`;
+        await redisCluster.del(closePendingKey);
+        logger.info('Cleaned up close pending lock after successful close', {
+          orderId: String(order_id),
+          closePendingKey,
+          timestamp: new Date().toISOString()
+        });
+      } catch (cleanupErr) {
+        logger.warn('Failed to cleanup close pending lock', {
+          orderId: String(order_id),
+          error: cleanupErr.message
+        });
+        // Non-fatal - lock will expire after TTL
+      }
+    }
 
     // Calculate and apply performance fee AFTER transaction commit to avoid lock timeouts
     if (type === 'ORDER_CLOSE_CONFIRMED' && String(user_type) === 'copy_follower' && (Number(net_profit) || 0) > 0) {
@@ -1283,7 +1319,7 @@ async function applyDbUpdate(msg) {
           const copyFollowerOrder = await CopyFollowerOrder.findOne({
             where: { order_id: String(order_id) }
           });
-          
+
           if (copyFollowerOrder && copyFollowerOrder.strategy_provider_id) {
             logger.info('Calculating performance fee', {
               copyFollowerOrderId: String(order_id),
@@ -1300,7 +1336,7 @@ async function applyDbUpdate(msg) {
               symbol: copyFollowerOrder.symbol ? String(copyFollowerOrder.symbol).toUpperCase() : undefined,
               orderType: copyFollowerOrder.order_type ? String(copyFollowerOrder.order_type).toUpperCase() : undefined
             }, { adjustAccountNetProfit: true });
-            
+
             if (performanceFeeResult.performanceFeeCharged) {
               logger.info('Performance fee applied successfully', {
                 order_id: String(order_id),
@@ -1317,8 +1353,8 @@ async function applyDbUpdate(msg) {
                   order_id: String(order_id),
                 });
               } catch (wsError) {
-                logger.warn('Failed to emit strategy provider WS update for performance fee', { 
-                  error: wsError.message, 
+                logger.warn('Failed to emit strategy provider WS update for performance fee', {
+                  error: wsError.message,
                   order_id: String(order_id),
                   strategyProviderId: copyFollowerOrder.strategy_provider_id
                 });
@@ -1356,10 +1392,10 @@ async function applyDbUpdate(msg) {
         timestamp: new Date().toISOString()
       });
     }
-    
+
     // Release processing lock on error
     await releaseProcessingLock();
-    
+
     // Re-throw the original error to trigger message requeue
     throw transactionError;
   }
@@ -1386,7 +1422,7 @@ async function startOrdersDbConsumer() {
       const messageStartTime = Date.now();
       try {
         payload = JSON.parse(msg.content.toString('utf8'));
-        
+
         // Enhanced logging for message processing
         logger.info('RabbitMQ message received', {
           messageType: payload.type,
@@ -1403,7 +1439,7 @@ async function startOrdersDbConsumer() {
           messageSize: msg.content.length,
           timestamp: new Date().toISOString()
         });
-        
+
         // Route different message types
         if (payload.type === 'ORDER_REJECTION_RECORD') {
           await handleOrderRejectionRecord(payload);
@@ -1412,7 +1448,7 @@ async function startOrdersDbConsumer() {
         } else {
           await applyDbUpdate(payload);
         }
-        
+
         const processingTime = Date.now() - messageStartTime;
         logger.info('Orders DB consumer processed message successfully', {
           messageType: payload.type,
@@ -1420,14 +1456,14 @@ async function startOrdersDbConsumer() {
           processingTimeMs: processingTime,
           timestamp: new Date().toISOString()
         });
-        
+
         // Performance monitoring - track throughput
         messageCount++;
         const currentTime = Date.now();
         if (currentTime - lastLogTime >= PERFORMANCE_LOG_INTERVAL) {
           const timeElapsed = (currentTime - lastLogTime) / 1000; // seconds
           const messagesPerSecond = messageCount / timeElapsed;
-          
+
           logger.info('RabbitMQ Consumer Performance Metrics', {
             messagesProcessed: messageCount,
             timeElapsedSeconds: timeElapsed,
@@ -1437,16 +1473,16 @@ async function startOrdersDbConsumer() {
             prefetchCount: parseInt(process.env.RABBITMQ_PREFETCH_COUNT || 25),
             timestamp: new Date().toISOString()
           });
-          
+
           // Reset counters
           messageCount = 0;
           lastLogTime = currentTime;
         }
-        
+
         rabbitChannel.ack(msg);
       } catch (err) {
         const processingTime = Date.now() - messageStartTime;
-        logger.error('Orders DB consumer failed to handle message', { 
+        logger.error('Orders DB consumer failed to handle message', {
           error: err.message,
           stack: err.stack,
           messageType: payload?.type || 'unknown',
@@ -1479,7 +1515,7 @@ async function startOrdersDbConsumer() {
  */
 async function handlePostCloseOperations(payload, row) {
   const { type, user_type, user_id, order_id, used_margin_executed, net_profit } = payload;
-  
+
   // Process for close confirmations and cancellations
   if (type !== 'ORDER_CLOSE_CONFIRMED' && type !== 'ORDER_PENDING_CANCEL') {
     return;
@@ -1488,30 +1524,30 @@ async function handlePostCloseOperations(payload, row) {
   try {
     const isCloseConfirmed = type === 'ORDER_CLOSE_CONFIRMED';
     const isCancellation = type === 'ORDER_PENDING_CANCEL';
-    
+
     // 1. Update user margin for all user types (only for closures, not cancellations)
     if (isCloseConfirmed && typeof used_margin_executed === 'number') {
-      await updateUserUsedMargin({ 
-        userType: user_type, 
-        userId: parseInt(user_id, 10), 
-        usedMargin: used_margin_executed 
+      await updateUserUsedMargin({
+        userType: user_type,
+        userId: parseInt(user_id, 10),
+        usedMargin: used_margin_executed
       });
-      
+
       // Emit portfolio events
       try {
-        portfolioEvents.emitUserUpdate(user_type, user_id, { 
-          type: 'user_margin_update', 
-          used_margin_usd: used_margin_executed 
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'user_margin_update',
+          used_margin_usd: used_margin_executed
         });
-        portfolioEvents.emitUserUpdate(user_type, user_id, { 
-          type: 'order_update', 
-          order_id, 
-          update: { order_status: 'CLOSED' } 
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'order_update',
+          order_id,
+          update: { order_status: 'CLOSED' }
         });
       } catch (eventErr) {
-        logger.warn('Failed to emit portfolio events', { 
-          order_id, 
-          error: eventErr.message 
+        logger.warn('Failed to emit portfolio events', {
+          order_id,
+          error: eventErr.message
         });
       }
     }
@@ -1519,15 +1555,15 @@ async function handlePostCloseOperations(payload, row) {
     // Emit cancellation events
     if (isCancellation) {
       try {
-        portfolioEvents.emitUserUpdate(user_type, user_id, { 
-          type: 'order_update', 
-          order_id, 
-          update: { order_status: 'CANCELLED' } 
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'order_update',
+          order_id,
+          update: { order_status: 'CANCELLED' }
         });
       } catch (eventErr) {
-        logger.warn('Failed to emit cancellation events', { 
-          order_id, 
-          error: eventErr.message 
+        logger.warn('Failed to emit cancellation events', {
+          order_id,
+          error: eventErr.message
         });
       }
     }
@@ -1627,7 +1663,7 @@ async function updateStrategyProviderStatistics(userId, orderId) {
           strategyProvider.id,
           orderId
         );
-        
+
         logger.info('Strategy provider statistics updated from DB consumer', {
           userId,
           strategyProviderId: strategyProvider.id,
@@ -1704,17 +1740,17 @@ function getUserModel(userType) {
 async function shutdownOrdersDbConsumer() {
   try {
     logger.info('🔄 Shutting down Orders DB consumer...');
-    
+
     if (rabbitChannel) {
       await rabbitChannel.close();
       logger.info('✅ RabbitMQ channel closed');
     }
-    
+
     if (rabbitConnection) {
       await rabbitConnection.close();
       logger.info('✅ RabbitMQ connection closed');
     }
-    
+
     logger.info('✅ Orders DB consumer shutdown completed');
   } catch (err) {
     logger.error('❌ Error during Orders DB consumer shutdown:', err.message);

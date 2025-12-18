@@ -80,7 +80,7 @@ async function placeInstantOrder(req, res) {
     // Timing start
     const t0 = process.hrtime.bigint();
     const marks = {};
-    const mark = (name) => { try { marks[name] = process.hrtime.bigint(); } catch (_) {} };
+    const mark = (name) => { try { marks[name] = process.hrtime.bigint(); } catch (_) { } };
     const msBetween = (a, b) => Number((b - a) / 1000000n);
 
     // Structured request log (fire-and-forget)
@@ -93,7 +93,7 @@ async function placeInstantOrder(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     // JWT checks
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -168,18 +168,18 @@ async function placeInstantOrder(req, res) {
     const order_id = await idGenerator.generateOrderId();
     mark('after_id_generated');
     const hasIdempotency = !!req.body.idempotency_key;
-    
+
     // Store main order_id in lifecycle service
     try {
       await orderLifecycleService.addLifecycleId(
-        order_id, 
-        'order_id', 
-        order_id, 
+        order_id,
+        'order_id',
+        order_id,
         `Order placed - ${parsed.order_type} ${parsed.symbol} @ ${parsed.order_price}`
       );
     } catch (lifecycleErr) {
-      logger.warn('Failed to store order_id in lifecycle service', { 
-        order_id, error: lifecycleErr.message 
+      logger.warn('Failed to store order_id in lifecycle service', {
+        order_id, error: lifecycleErr.message
       });
     }
 
@@ -216,18 +216,20 @@ async function placeInstantOrder(req, res) {
         });
         mark('after_db_preinsert');
       } catch (dbErr) {
-        logger.error('Order DB create failed', { error: dbErr.message, fields: {
-          order_id,
-          order_user_id: parsed.user_id,
-          symbol: parsed.symbol,
-          order_type: parsed.order_type,
-          order_status: 'QUEUED',
-          order_price: parsed.order_price,
-          order_quantity: parsed.order_quantity,
-          margin: 0,
-          status: normalizeStr(req.body.status || 'OPEN'),
-          placed_by: 'user'
-        }});
+        logger.error('Order DB create failed', {
+          error: dbErr.message, fields: {
+            order_id,
+            order_user_id: parsed.user_id,
+            symbol: parsed.symbol,
+            order_type: parsed.order_type,
+            order_status: 'QUEUED',
+            order_price: parsed.order_price,
+            order_quantity: parsed.order_quantity,
+            margin: 0,
+            status: normalizeStr(req.body.status || 'OPEN'),
+            placed_by: 'user'
+          }
+        });
         return res.status(500).json({ success: false, message: 'DB error', db_error: dbErr.message, operationId });
       }
     }
@@ -320,7 +322,7 @@ async function placeInstantOrder(req, res) {
             py_reason: detail?.detail?.reason || detail?.reason,
             durations_ms: durations,
           });
-        } catch (_) {}
+        } catch (_) { }
         return res.status(409).json({
           success: false,
           order_id,
@@ -346,7 +348,7 @@ async function placeInstantOrder(req, res) {
           py_reason: detail?.detail?.reason || detail?.reason,
           durations_ms: durations,
         });
-      } catch (_) {}
+      } catch (_) { }
       return res.status(statusCode).json({
         success: false,
         order_id,
@@ -506,8 +508,8 @@ async function placeInstantOrder(req, res) {
         status: 'success',
         flow,
         durations_ms: durations,
-      }).catch(() => {}); // Ignore logging errors
-    } catch (_) {}
+      }).catch(() => { }); // Ignore logging errors
+    } catch (_) { }
     return res.status(201).json({
       success: true,
       order_id: finalOrderId,
@@ -548,7 +550,7 @@ async function placePendingOrder(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     // JWT checks
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -733,19 +735,19 @@ async function placePendingOrder(req, res) {
         await redisCluster.hset(
           odKey,
           {
-          order_id: String(order_id),
-          user_type: String(parsed.user_type),
-          user_id: String(parsed.user_id),
-          symbol: symbol,
-          order_type: orderType, // pending type
-          order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
-          status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
-          order_price: String(parsed.order_price),
-          order_quantity: String(parsed.order_quantity),
-          group: userGroup,
-          compare_price: String(compare_price),
-          half_spread: String(hs),
-        });
+            order_id: String(order_id),
+            user_type: String(parsed.user_type),
+            user_id: String(parsed.user_id),
+            symbol: symbol,
+            order_type: orderType, // pending type
+            order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+            status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING',
+            order_price: String(parsed.order_price),
+            order_quantity: String(parsed.order_quantity),
+            group: userGroup,
+            compare_price: String(compare_price),
+            half_spread: String(hs),
+          });
       } catch (e4) {
         logger.warn('Failed to write canonical order_data for pending', { error: e4.message, order_id });
       }
@@ -762,7 +764,7 @@ async function placePendingOrder(req, res) {
       return res.status(500).json({ success: false, message: 'Cache error', operationId });
     }
 
- 
+
     try {
       await redisCluster.publish('market_price_updates', symbol);
       logger.info('Published market_price_updates for pending placement', { symbol, zkey, order_id });
@@ -848,7 +850,7 @@ async function _getCanonicalOrder(order_id) {
 
 async function _getValidCanonicalOrFallback(order_id, user_type) {
   const canonical = await _getCanonicalOrder(order_id);
-  
+
   // Check if canonical data is incomplete (missing ids or essential fields)
   const isCanonicalIncomplete = canonical && (
     !canonical.user_id ||
@@ -857,7 +859,7 @@ async function _getValidCanonicalOrFallback(order_id, user_type) {
     !canonical.order_type ||
     !(toNumber(canonical.order_price) > 0)
   );
-  
+
   if (isCanonicalIncomplete) {
     logger.warn('🔧 CANONICAL_INCOMPLETE_FALLBACK_TO_SQL', {
       order_id,
@@ -866,7 +868,7 @@ async function _getValidCanonicalOrFallback(order_id, user_type) {
       reason: 'Incomplete canonical data, falling back to SQL'
     });
   }
-  
+
   return {
     canonical: (!canonical || isCanonicalIncomplete) ? null : canonical,
     shouldFallbackToSQL: !canonical || isCanonicalIncomplete
@@ -878,7 +880,7 @@ function _isMarketOpenByType(typeVal) {
   try {
     const t = parseInt(typeVal);
     if (t === 4) return true;
-  } catch (_) {}
+  } catch (_) { }
   const day = new Date().getUTCDay(); // 0 Sunday, 6 Saturday
   if (day === 0 || day === 6) return false;
   return true;
@@ -898,7 +900,7 @@ async function modifyPendingOrder(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
 
     // JWT checks
     const user = req.user || {};
@@ -1059,7 +1061,7 @@ async function modifyPendingOrder(req, res) {
       }
 
       // Publish symbol for any monitoring recalculation
-      try { await redisCluster.publish('market_price_updates', symbol); } catch (_) {}
+      try { await redisCluster.publish('market_price_updates', symbol); } catch (_) { }
 
       // Persist SQL order_price BEFORE emitting WS event so snapshot reflects new price immediately
       try {
@@ -1076,7 +1078,7 @@ async function modifyPendingOrder(req, res) {
           update: { order_status: 'PENDING', order_price: String(order_price), order_quantity: String(order_quantity) },
           reason: 'pending_modified',
         });
-      } catch (_) {}
+      } catch (_) { }
 
       return res.status(200).json({ success: true, order_id, order_status: 'PENDING', compare_price, execution_mode: 'local' });
     }
@@ -1168,7 +1170,7 @@ async function closeOrder(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -1181,7 +1183,7 @@ async function closeOrder(req, res) {
     // Allow internal copy trading calls (no JWT token) and trader role
     const isInternalAuth = req.headers['x-internal-auth'];
     const isCopyTradingCall = req_user_type === 'copy_follower' || req_user_type === 'strategy_provider';
-    
+
     if (role && role !== 'trader' && !isInternalAuth && !isCopyTradingCall) {
       return res.status(403).json({ success: false, message: 'User role not allowed for close order' });
     }
@@ -1264,7 +1266,7 @@ async function closeOrder(req, res) {
     try {
       if (ctx && ctx.symbol) symbol = ctx.symbol;
       if (ctx && ctx.order_type) order_type = ctx.order_type;
-    } catch (_) {}
+    } catch (_) { }
     const willCancelTP = canonical
       ? (canonical.take_profit != null && Number(canonical.take_profit) > 0)
       : (sqlRow ? (sqlRow.take_profit != null && Number(sqlRow.take_profit) > 0) : false);
@@ -1272,8 +1274,92 @@ async function closeOrder(req, res) {
       ? (canonical.stop_loss != null && Number(canonical.stop_loss) > 0)
       : (sqlRow ? (sqlRow.stop_loss != null && Number(sqlRow.stop_loss) > 0) : false);
 
+    // 🆕 DUPLICATE CLOSE PREVENTION: Check if close already in progress
+    // Check 1: SQL row already has close_id (from previous request or autocutoff)
+    if (sqlRow && sqlRow.close_id && String(sqlRow.close_id).trim()) {
+      logger.warn('Close already initiated - close_id exists in SQL', {
+        order_id,
+        user_id: req_user_id,
+        user_type: req_user_type,
+        existing_close_id: String(sqlRow.close_id)
+      });
+      return res.status(409).json({
+        success: false,
+        message: 'Close request already in progress for this order',
+        close_id: String(sqlRow.close_id),
+        error_code: 'CLOSE_ALREADY_IN_PROGRESS'
+      });
+    }
+
+    // Check 2: Redis canonical has close_id
+    if (canonical && canonical.close_id && String(canonical.close_id).trim()) {
+      logger.warn('Close already initiated - close_id exists in Redis canonical', {
+        order_id,
+        user_id: req_user_id,
+        user_type: req_user_type,
+        existing_close_id: String(canonical.close_id)
+      });
+      return res.status(409).json({
+        success: false,
+        message: 'Close request already in progress for this order',
+        close_id: String(canonical.close_id),
+        error_code: 'CLOSE_ALREADY_IN_PROGRESS'
+      });
+    }
+
+    // Check 3: Redis pending lock exists
+    try {
+      const closePendingKey = `order_close_pending:${order_id}`;
+      const closePending = await redisCluster.get(closePendingKey);
+      if (closePending) {
+        logger.warn('Close already pending - Redis lock exists', {
+          order_id,
+          user_id: req_user_id,
+          user_type: req_user_type,
+          pending_since: closePending,
+          close_pending_key: closePendingKey
+        });
+        return res.status(409).json({
+          success: false,
+          message: 'Close request already in progress for this order. Please wait.',
+          error_code: 'CLOSE_ALREADY_IN_PROGRESS'
+        });
+      }
+    } catch (redisErr) {
+      logger.warn('Failed to check close pending lock', {
+        error: redisErr.message,
+        order_id
+      });
+      // Continue despite Redis error - better to risk duplicate than block legitimate request
+    }
+
     // Generate lifecycle ids
     const close_id = await idGenerator.generateCloseOrderId();
+
+    // 🆕 Set Redis lock to prevent duplicate requests (60s TTL = typical provider response time)
+    try {
+      const closePendingKey = `order_close_pending:${order_id}`;
+      const lockValue = JSON.stringify({
+        close_id,
+        user_id: req_user_id,
+        user_type: req_user_type,
+        timestamp: Date.now()
+      });
+      await redisCluster.setex(closePendingKey, 60, lockValue);
+      logger.info('Close pending lock set', {
+        order_id,
+        close_id,
+        ttl_seconds: 60,
+        close_pending_key: closePendingKey
+      });
+    } catch (redisErr) {
+      logger.error('Failed to set close pending lock', {
+        error: redisErr.message,
+        order_id,
+        close_id
+      });
+      // Continue despite error - lock is best-effort
+    }
     const takeprofit_cancel_id = willCancelTP ? await idGenerator.generateTakeProfitCancelId() : undefined;
     const stoploss_cancel_id = willCancelSL ? await idGenerator.generateStopLossCancelId() : undefined;
 
@@ -1289,29 +1375,29 @@ async function closeOrder(req, res) {
         idUpdates.status = incomingStatus; // persist whatever frontend sent as status
         await rowToUpdate.update(idUpdates);
       }
-      
+
       // Store in lifecycle service for complete ID history
       await orderLifecycleService.addLifecycleId(
-        order_id, 
-        'close_id', 
-        close_id, 
+        order_id,
+        'close_id',
+        close_id,
         `Close order initiated - status: ${incomingStatus}`
       );
-      
+
       if (takeprofit_cancel_id) {
         await orderLifecycleService.addLifecycleId(
-          order_id, 
-          'takeprofit_cancel_id', 
-          takeprofit_cancel_id, 
+          order_id,
+          'takeprofit_cancel_id',
+          takeprofit_cancel_id,
           'Takeprofit cancel during close'
         );
       }
-      
+
       if (stoploss_cancel_id) {
         await orderLifecycleService.addLifecycleId(
-          order_id, 
-          'stoploss_cancel_id', 
-          stoploss_cancel_id, 
+          order_id,
+          'stoploss_cancel_id',
+          stoploss_cancel_id,
           'Stoploss cancel during close'
         );
       }
@@ -1327,18 +1413,18 @@ async function closeOrder(req, res) {
         initiator: `user:${req_user_type}:${req_user_id}`,
         timestamp: Math.floor(Date.now() / 1000).toString()
       };
-      
+
       await redisCluster.hset(contextKey, contextValue);
       await redisCluster.expire(contextKey, 300); // 5 minutes TTL
-      
-      logger.info('Close context set for user close', { 
-        order_id, 
+
+      logger.info('Close context set for user close', {
+        order_id,
         user_id: req_user_id,
         user_type: req_user_type
       });
     } catch (e) {
-      logger.warn('Failed to set user close context', { 
-        error: e.message, 
+      logger.warn('Failed to set user close context', {
+        error: e.message,
         order_id,
         user_id: req_user_id
       });
@@ -1369,6 +1455,22 @@ async function closeOrder(req, res) {
         { timeout: 20000 }
       );
     } catch (err) {
+      // Clean up close_pending lock on error to allow retry
+      try {
+        const closePendingKey = `order_close_pending:${order_id}`;
+        await redisCluster.del(closePendingKey);
+        logger.info('Cleaned up close pending lock after Python service error', {
+          order_id,
+          close_id,
+          error: err.message
+        });
+      } catch (cleanupErr) {
+        logger.warn('Failed to cleanup close pending lock after error', {
+          order_id,
+          error: cleanupErr.message
+        });
+      }
+
       const statusCode = err?.response?.status || 500;
       const detail = err?.response?.data || { ok: false, reason: 'python_unreachable', error: err.message };
       return res.status(statusCode).json({ success: false, order_id, reason: detail?.detail?.reason || detail?.reason || 'close_failed', error: detail?.detail || detail });
@@ -1405,7 +1507,7 @@ async function closeAllOrders(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body
-    }).catch(() => {});
+    }).catch(() => { });
 
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -1487,7 +1589,7 @@ async function addStopLoss(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     // Basic auth checks
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
@@ -1603,10 +1705,10 @@ async function addStopLoss(req, res) {
         logger.warn('Failed to check order_triggers for existing SL', { error: e.message, order_id });
       }
     }
-    
+
     if (hasExistingSL) {
-      return res.status(409).json({ 
-        success: false, 
+      return res.status(409).json({
+        success: false,
         message: 'Stoploss already exists for this order. Please cancel the existing stoploss before adding a new one.',
         error_code: 'STOPLOSS_ALREADY_EXISTS'
       });
@@ -1619,12 +1721,12 @@ async function addStopLoss(req, res) {
       if (toUpdate) {
         await toUpdate.update({ stoploss_id, status });
       }
-      
+
       // Store in lifecycle service for complete ID history
       await orderLifecycleService.addLifecycleId(
-        order_id, 
-        'stoploss_id', 
-        stoploss_id, 
+        order_id,
+        'stoploss_id',
+        stoploss_id,
         `Stoploss added - price: ${stop_loss}`
       );
     } catch (e) {
@@ -1684,7 +1786,7 @@ async function addStopLoss(req, res) {
           logger.warn('Failed to emit WS event after local stoploss set', { order_id, error: e.message });
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return res.status(200).json({ success: true, data: result, order_id, stoploss_id });
   } catch (error) {
@@ -1706,7 +1808,7 @@ async function addTakeProfit(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -1826,8 +1928,8 @@ async function addTakeProfit(req, res) {
           order_type: row.order_type
         } : null
       });
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: 'Unable to determine order symbol or type',
         debug_info: {
           order_id,
@@ -1881,10 +1983,10 @@ async function addTakeProfit(req, res) {
         logger.warn('Failed to check order_triggers for existing TP', { error: e.message, order_id });
       }
     }
-    
+
     if (hasExistingTP) {
-      return res.status(409).json({ 
-        success: false, 
+      return res.status(409).json({
+        success: false,
         message: 'Takeprofit already exists for this order. Please cancel the existing takeprofit before adding a new one.',
         error_code: 'TAKEPROFIT_ALREADY_EXISTS'
       });
@@ -1897,12 +1999,12 @@ async function addTakeProfit(req, res) {
       if (toUpdate) {
         await toUpdate.update({ takeprofit_id, status });
       }
-      
+
       // Store in lifecycle service for complete ID history
       await orderLifecycleService.addLifecycleId(
-        order_id, 
-        'takeprofit_id', 
-        takeprofit_id, 
+        order_id,
+        'takeprofit_id',
+        takeprofit_id,
         `Takeprofit added - price: ${take_profit}`
       );
     } catch (e) {
@@ -1962,7 +2064,7 @@ async function addTakeProfit(req, res) {
           logger.warn('Failed to emit WS event after local takeprofit set', { order_id, error: e.message });
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return res.status(200).json({ success: true, data: result, order_id, takeprofit_id });
   } catch (error) {
@@ -1984,7 +2086,7 @@ async function cancelStopLoss(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -2024,7 +2126,7 @@ async function cancelStopLoss(req, res) {
       if (proc || fin) {
         return res.status(409).json({ success: false, message: 'Order is closing/closed; cannot cancel stoploss' });
       }
-    } catch (_) {}
+    } catch (_) { }
     // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
     let ctx;
     try {
@@ -2070,7 +2172,7 @@ async function cancelStopLoss(req, res) {
       try {
         const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
         if (trig && (trig.stop_loss || trig.stop_loss_compare || trig.stop_loss_user)) hasSL = true;
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!hasSL) {
       return res.status(409).json({ success: false, message: 'No active stoploss to cancel' });
@@ -2093,7 +2195,7 @@ async function cancelStopLoss(req, res) {
       try {
         const fromRedis = await redisCluster.hget(`order_data:${order_id}`, 'stoploss_id');
         if (fromRedis) resolvedStoplossId = normalizeStr(fromRedis);
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!resolvedStoplossId) {
       if (sendingOrders === 'barclays') {
@@ -2111,20 +2213,20 @@ async function cancelStopLoss(req, res) {
       if (toUpdate) {
         await toUpdate.update({ stoploss_cancel_id, status: statusIn });
       }
-      
+
       // Store in lifecycle service for complete ID history
       await orderLifecycleService.addLifecycleId(
-        order_id, 
-        'stoploss_cancel_id', 
-        stoploss_cancel_id, 
+        order_id,
+        'stoploss_cancel_id',
+        stoploss_cancel_id,
         `Stoploss cancel requested - resolved_sl_id: ${resolvedStoplossId}`
       );
-      
+
       // Mark the original stoploss as cancelled
       if (resolvedStoplossId && resolvedStoplossId !== `SL-${order_id}`) {
         await orderLifecycleService.updateLifecycleStatus(
-          resolvedStoplossId, 
-          'cancelled', 
+          resolvedStoplossId,
+          'cancelled',
           'Cancelled by user request'
         );
       }
@@ -2179,7 +2281,7 @@ async function cancelStopLoss(req, res) {
           logger.warn('Failed to emit WS event after local stoploss cancel', { order_id, error: e.message });
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return res.status(200).json({ success: true, data: result, order_id, stoploss_cancel_id });
   } catch (error) {
@@ -2201,7 +2303,7 @@ async function cancelTakeProfit(req, res) {
       user: req.user,
       headers: req.headers,
       body: req.body,
-    }).catch(() => {});
+    }).catch(() => { });
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -2241,7 +2343,7 @@ async function cancelTakeProfit(req, res) {
       if (proc || fin) {
         return res.status(409).json({ success: false, message: 'Order is closing/closed; cannot cancel takeprofit' });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // Resolve via unified resolver (handles canonical fallback + SQL + repopulation)
     let ctx;
@@ -2288,7 +2390,7 @@ async function cancelTakeProfit(req, res) {
       try {
         const trig = await redisCluster.hgetall(`order_triggers:${order_id}`);
         if (trig && (trig.take_profit || trig.take_profit_compare || trig.take_profit_user)) hasTP = true;
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!hasTP) {
       return res.status(409).json({ success: false, message: 'No active takeprofit to cancel' });
@@ -2311,7 +2413,7 @@ async function cancelTakeProfit(req, res) {
       try {
         const fromRedis = await redisCluster.hget(`order_data:${order_id}`, 'takeprofit_id');
         if (fromRedis) resolvedTakeprofitId = normalizeStr(fromRedis);
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!resolvedTakeprofitId) {
       if (sendingOrders === 'barclays') {
@@ -2329,20 +2431,20 @@ async function cancelTakeProfit(req, res) {
       if (toUpdate) {
         await toUpdate.update({ takeprofit_cancel_id, status: statusIn });
       }
-      
+
       // Store in lifecycle service for complete ID history
       await orderLifecycleService.addLifecycleId(
-        order_id, 
-        'takeprofit_cancel_id', 
-        takeprofit_cancel_id, 
+        order_id,
+        'takeprofit_cancel_id',
+        takeprofit_cancel_id,
         `Takeprofit cancel requested - resolved_tp_id: ${resolvedTakeprofitId}`
       );
-      
+
       // Mark the original takeprofit as cancelled
       if (resolvedTakeprofitId && resolvedTakeprofitId !== `TP-${order_id}`) {
         await orderLifecycleService.updateLifecycleStatus(
-          resolvedTakeprofitId, 
-          'cancelled', 
+          resolvedTakeprofitId,
+          'cancelled',
           'Cancelled by user request'
         );
       }
@@ -2397,7 +2499,7 @@ async function cancelTakeProfit(req, res) {
           logger.warn('Failed to emit WS event after local takeprofit cancel', { order_id, error: e.message });
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return res.status(200).json({ success: true, data: result, order_id, takeprofit_cancel_id });
   } catch (error) {
@@ -2409,7 +2511,7 @@ async function cancelTakeProfit(req, res) {
 async function cancelPendingOrder(req, res) {
   const operationId = `pending_cancel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
-    orderReqLogger.logOrderRequest({ endpoint: 'cancelPendingOrder', operationId, method: req.method, path: req.originalUrl || req.url, ip: req.ip, user: req.user, headers: req.headers, body: req.body }).catch(() => {});
+    orderReqLogger.logOrderRequest({ endpoint: 'cancelPendingOrder', operationId, method: req.method, path: req.originalUrl || req.url, ip: req.ip, user: req.user, headers: req.headers, body: req.body }).catch(() => { });
     const user = req.user || {};
     const tokenUserId = getTokenUserId(user);
     const role = user.role || user.user_role;
@@ -2427,13 +2529,13 @@ async function cancelPendingOrder(req, res) {
     const symbolReq = normalizeStr(body.symbol).toUpperCase();
     const order_type_req = normalizeStr(body.order_type).toUpperCase();
     const cancel_message = normalizeStr(body.cancel_message || 'User cancelled pending order');
-    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY_LIMIT','SELL_LIMIT','BUY_STOP','SELL_STOP'].includes(order_type_req)) {
+    if (!order_id || !user_id || !user_type || !symbolReq || !['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'].includes(order_type_req)) {
       return res.status(400).json({ success: false, message: 'Missing/invalid fields' });
     }
     if (tokenUserId && normalizeStr(user_id) !== normalizeStr(tokenUserId)) {
       return res.status(403).json({ success: false, message: 'Cannot cancel orders for another user' });
     }
-    if (!['live','demo'].includes(user_type)) {
+    if (!['live', 'demo'].includes(user_type)) {
       return res.status(400).json({ success: false, message: 'user_type must be live or demo' });
     }
 
@@ -2445,13 +2547,13 @@ async function cancelPendingOrder(req, res) {
       if (!row) return res.status(404).json({ success: false, message: 'Order not found' });
       if (normalizeStr(row.order_user_id) !== normalizeStr(user_id)) return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       const st = (row.order_status || '').toString().toUpperCase();
-      if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
+      if (!['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL'].includes(st)) return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
     } else {
       if (normalizeStr(canonical.user_id) !== normalizeStr(user_id) || normalizeStr(canonical.user_type).toLowerCase() !== user_type) {
         return res.status(403).json({ success: false, message: 'Order does not belong to user' });
       }
       const st = (canonical.order_status || '').toString().toUpperCase();
-      if (!['PENDING','PENDING-QUEUED','PENDING-CANCEL'].includes(st)) return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
+      if (!['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL'].includes(st)) return res.status(409).json({ success: false, message: `Order is not pending (current: ${st})` });
     }
 
     const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
@@ -2492,25 +2594,25 @@ async function cancelPendingOrder(req, res) {
         const rowNow = await OrderModel.findOne({ where: { order_id } });
         if (rowNow) await rowNow.update({ order_status: 'CANCELLED', close_message: cancel_message });
       } catch (e3) { logger.warn('SQL update failed for pending cancel', { error: e3.message, order_id }); }
-      
+
       // Small delay to ensure database transaction is committed before WebSocket update
       await new Promise(resolve => setTimeout(resolve, 10));
-      
+
       // Emit immediate WebSocket update for local pending cancellation
-      try { 
-        portfolioEvents.emitUserUpdate(user_type, user_id, { 
-          type: 'order_update', 
-          order_id, 
-          update: { order_status: 'CANCELLED' }, 
-          reason: 'local_pending_cancel' 
-        }); 
+      try {
+        portfolioEvents.emitUserUpdate(user_type, user_id, {
+          type: 'order_update',
+          order_id,
+          update: { order_status: 'CANCELLED' },
+          reason: 'local_pending_cancel'
+        });
         // Also emit a dedicated pending_cancelled event for immediate UI refresh
         portfolioEvents.emitUserUpdate(user_type, user_id, {
           type: 'pending_cancelled',
           order_id,
           reason: 'local_pending_cancel'
         });
-      } catch (_) {}
+      } catch (_) { }
       return res.status(200).json({ success: true, order_id, order_status: 'CANCELLED' });
     }
 
@@ -2539,8 +2641,8 @@ async function cancelPendingOrder(req, res) {
         `${baseUrl}/api/orders/registry/lifecycle-id`,
         { order_id, new_id: cancel_id, id_type: 'cancel_id' },
         { timeout: 5000, headers: { 'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub' } }
-      ).catch(() => {});
-    } catch (_) {}
+      ).catch(() => { });
+    } catch (_) { }
     try {
       const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
       const pyPayload = { order_id, cancel_id, order_type, user_id, user_type, status: 'CANCELLED' };
@@ -2551,7 +2653,7 @@ async function cancelPendingOrder(req, res) {
       ).then(() => {
         logger.info('Dispatched provider pending cancel', { order_id, cancel_id, order_type });
       }).catch((ePy) => { logger.error('Python pending cancel failed', { error: ePy.message, order_id }); });
-    } catch (_) {}
+    } catch (_) { }
     return res.status(202).json({ success: true, order_id, order_status: 'PENDING-CANCEL', cancel_id });
   } catch (error) {
     logger.error('cancelPendingOrder internal error', { error: error.message, operationId });
@@ -2577,7 +2679,7 @@ async function getClosedOrders(req, res) {
     const userType = String(user.account_type || user.user_type || 'live').toLowerCase();
     let OrderModel;
     let queryUserId = parseInt(tokenUserId, 10);
-    
+
     if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
       // For strategy providers, use StrategyProviderOrder model and strategy_provider_id
       OrderModel = StrategyProviderOrder;
