@@ -2882,6 +2882,18 @@ class AdminOrderManagementService {
         throw new Error('Order not found');
       }
 
+      // Validate Ownership
+      const actualUserId = sqlRow ? sqlRow.user_id : (canonical ? canonical.user_id : null);
+      // Ensure strict string comparison to catch mismatches
+      if (actualUserId && String(actualUserId) !== String(userId)) {
+        logger.warn('Force close ownership mismatch', {
+          requestUserId: userId,
+          orderUserId: actualUserId,
+          orderId
+        });
+        throw new Error(`Order verification failed: Order does not belong to user ${userId}`);
+      }
+
       // B. Clear Redis Monitoring (SL/TP)
       await this._clearOrderMonitoring(orderId);
 
@@ -2955,8 +2967,8 @@ class AdminOrderManagementService {
         // Ideally should delete from holdings after some time or move to history, 
         // but standard local close keeps it briefly or marks it closed. 
         // Python service deletes it. Let's delete it to be clean as per "close the order locally".
-        await redisCluster.delete(h);
-        await redisCluster.delete(`order_data:${orderId}`);
+        await redisCluster.del(h);
+        await redisCluster.del(`order_data:${orderId}`);
       } catch (e) {
         logger.error('Redis cleanup failed', { error: e.message });
       }
@@ -3033,7 +3045,7 @@ class AdminOrderManagementService {
           await redisCluster.zrem(tpKey, orderId);
         }
       }
-      await redisCluster.delete(triggerKey);
+      await redisCluster.del(triggerKey);
     } catch (e) {
       logger.error('Failed to clear order monitoring', { orderId, error: e.message });
     }
