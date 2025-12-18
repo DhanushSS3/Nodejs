@@ -308,6 +308,28 @@ class Dispatcher:
                         "[DISPATCH:LOOKUP] lifecycle_id=%s canonical_from_redis=%s",
                         lifecycle_id, canonical_order_id
                     )
+                    
+                    # 🆕 Special handling for close_id returned by provider
+                    if not canonical_order_id and str(lifecycle_id).startswith("CLS"):
+                        # This looks like a close_id - search for order with this close_id
+                        logger.info(
+                            "[DISPATCH:CLOSE_ID_DETECTED] lifecycle_id=%s appears_to_be_close_id=True searching_orders",
+                            lifecycle_id
+                        )
+                        # Try to get from close_id reverse lookup (if we added it)
+                        canonical_from_close = await _redis_get(f"close_id_lookup:{lifecycle_id}")
+                        if canonical_from_close:
+                            canonical_order_id = canonical_from_close
+                            logger.info(
+                                "[DISPATCH:CLOSE_ID_RESOLVED] close_id=%s canonical_order_id=%s",
+                                lifecycle_id, canonical_order_id
+                            )
+                        else:
+                            logger.warning(
+                                "[DISPATCH:CLOSE_ID_NOT_MAPPED] close_id=%s - cannot find canonical order_id",
+                                lifecycle_id
+                            )
+                    
                     # Fallback: treat lifecycle_id as canonical order_id (self-mapping case)
                     if not canonical_order_id:
                         canonical_order_id = lifecycle_id

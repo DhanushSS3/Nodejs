@@ -1422,6 +1422,25 @@ async function closeOrder(req, res) {
         user_id: req_user_id,
         user_type: req_user_type
       });
+
+      // 🆕 Set reverse lookup for dispatcher (close_id → canonical order_id)
+      // Provider may return close_id as order_id in execution reports
+      try {
+        const closeLookupKey = `close_id_lookup:${close_id}`;
+        await redisCluster.setex(closeLookupKey, 300, order_id); // 5min TTL, same as close_context
+        logger.debug('Close ID reverse lookup set for dispatcher routing', {
+          close_id,
+          order_id,
+          lookup_key: closeLookupKey
+        });
+      } catch (lookupErr) {
+        logger.warn('Failed to set close_id lookup', {
+          error: lookupErr.message,
+          close_id,
+          order_id
+        });
+        // Non-fatal - dispatcher has fallback logic
+      }
     } catch (e) {
       logger.warn('Failed to set user close context', {
         error: e.message,
