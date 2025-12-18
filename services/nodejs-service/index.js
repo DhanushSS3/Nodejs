@@ -12,6 +12,7 @@ const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEqui
 
 const PORT = process.env.PORT || 3000;
 const { startPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
+const { startAdminOrdersWSServer } = require('./src/services/ws/admin.orders.ws');
 
 // Global references for graceful shutdown
 let server = null;
@@ -30,7 +31,7 @@ let wsServer = null;
       console.log("Attempting Redis 'set' command...");
       await redis.set("test:key", "hello");
       console.log("✅ Redis 'set' command succeeded.");
-      
+
       console.log("Attempting Redis 'get' command...");
       const value = await redis.get("test:key");
       console.log("✅ Redis 'get' command succeeded.");
@@ -62,7 +63,7 @@ let wsServer = null;
       console.error('GLOBAL ERROR HANDLER:', err);
       res.status(err.status || 500).json({ message: err.message });
     });
-    
+
     // 4. Start server
     server = app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
@@ -74,6 +75,14 @@ let wsServer = null;
       console.log('✅ WebSocket server (/ws/portfolio) started');
     } catch (wsErr) {
       console.error('❌ Failed to start WebSocket server', wsErr);
+    }
+
+    // 5b. Start Admin Orders WebSocket server
+    try {
+      startAdminOrdersWSServer(server);
+      console.log('✅ Admin WebSocket server (/ws/admin/orders) started');
+    } catch (adminWsErr) {
+      console.error('❌ Failed to start Admin WebSocket server', adminWsErr);
     }
 
     // 6. Start swap scheduler
@@ -109,12 +118,12 @@ let wsServer = null;
 // Graceful shutdown handler
 async function gracefulShutdown(signal) {
   console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
-  
+
   const shutdownTimeout = setTimeout(() => {
     console.error('❌ Graceful shutdown timeout. Force exiting...');
     process.exit(1);
   }, 10000); // 10 second timeout
-  
+
   try {
     // 1. Stop accepting new connections
     if (server) {
@@ -144,17 +153,17 @@ async function gracefulShutdown(signal) {
     // 4. Stop cron jobs and workers
     try {
       console.log('🔄 Stopping scheduled services...');
-      
+
       // Stop swap scheduler
       if (swapSchedulerService && swapSchedulerService.stop) {
         swapSchedulerService.stop();
       }
-      
+
       // Stop copy follower equity monitor
       if (copyFollowerEquityMonitorWorker && copyFollowerEquityMonitorWorker.stop) {
         copyFollowerEquityMonitorWorker.stop();
       }
-      
+
       console.log('✅ Scheduled services stopped');
     } catch (cronErr) {
       console.error('❌ Error stopping scheduled services:', cronErr.message);
@@ -183,7 +192,7 @@ async function gracefulShutdown(signal) {
     clearTimeout(shutdownTimeout);
     console.log('✅ Graceful shutdown completed successfully');
     process.exit(0);
-    
+
   } catch (err) {
     console.error('❌ Error during graceful shutdown:', err);
     clearTimeout(shutdownTimeout);
