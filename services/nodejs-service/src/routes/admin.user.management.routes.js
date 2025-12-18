@@ -1099,6 +1099,21 @@ router.post('/:userType/:userId/orders/instant', requirePermissions(['orders:pla
  *         schema:
  *           type: string
  *         description: The ID of the order to close
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               close_price:
+ *                 type: number
+ *                 description: Optional. Override the close price (Superadmin only).
+ *                 example: 1.0950
+ *               status:
+ *                 type: string
+ *                 default: CLOSED
+ *                 enum: [CLOSED]
  *     responses:
  *       200:
  *         description: Order closed successfully
