@@ -186,40 +186,18 @@ function createAdminOrdersWSServer() {
     const wss = new WebSocketServer({ noServer: true, path: '/ws/admin/orders' });
     const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
-    wss.on('connection', async (ws, req) => {
+    wss.on('connection', (ws, req) => {
         const params = url.parse(req.url, true);
         const token = params.query.token;
 
-        let admin;
-        try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            if (!decoded || !decoded.role || !decoded.is_active) {
-                ws.close(4401, 'Invalid admin token');
-                return;
-            }
-            const jtiKey = `jti:${decoded.sub}:${decoded.jti}`;
-            const isValid = await redisCluster.get(jtiKey);
-            if (!isValid) {
-                ws.close(4401, 'Token revoked');
-                return;
-            }
-            admin = decoded;
-        } catch (e) {
-            ws.close(4401, 'Authentication failed');
-            return;
-        }
-
-        const adminId = admin.sub || admin.id;
-        logger.info('WS Admin connected', { adminId, role: admin.role });
-
         ws.isAlive = true;
+        ws.isAuthenticated = false;
+        ws.adminId = null;
+
+        // Heartbeat
         ws.on('pong', () => { ws.isAlive = true; });
 
-        // Send welcome message to confirm connection
-        ws.send(JSON.stringify({ type: 'connected', message: 'Admin WebSocket Connected', adminId }));
-
-        const subscriptions = new Map();
-
+        // Ping Interval
         const pingInterval = setInterval(() => {
             if (ws.readyState === ws.CLOSED) { clearInterval(pingInterval); return; }
             if (ws.isAlive === false) { ws.terminate(); return; }
@@ -227,17 +205,30 @@ function createAdminOrdersWSServer() {
             ws.ping();
         }, 30000);
 
+        const subscriptions = new Map();
+
+        // Attach Message Listener IMMEDIATELY to avoid race conditions
         ws.on('message', async (message) => {
             try {
-                const msg = JSON.parse(message);
+                // Ensure message is string (handle Buffers from ws v8+)
+                const rawMsg = message.toString();
+                // Avoid logging raw token if possible, but helpful for debug
+                // logger.debug('WS Admin raw message', { length: rawMsg.length });
+
+                if (!ws.isAuthenticated) {
+                    logger.warn('WS Admin ignored message before auth', { ip: req.socket.remoteAddress });
+                    return;
+                }
+
+                const msg = JSON.parse(rawMsg);
 
                 if (msg.action === 'subscribe') {
                     const { userType, userId } = msg;
 
-                    logger.info(`WS Admin received subscribe request: ${JSON.stringify(msg)}`, { adminId });
+                    logger.info(`WS Admin received subscribe request: ${JSON.stringify(msg)}`, { adminId: ws.adminId });
 
                     if (!userType || !userId) {
-                        logger.warn('WS Admin subscribe missing userType or userId', { adminId, msg });
+                        logger.warn('WS Admin subscribe missing userType or userId', { adminId: ws.adminId, msg });
                         return;
                     }
 
@@ -246,13 +237,13 @@ function createAdminOrdersWSServer() {
                     const userKey = `${uType}:${uId}`;
 
                     if (subscriptions.has(userKey)) {
-                        logger.info('WS Admin removing existing subscription', { adminId, userKey });
+                        logger.info('WS Admin removing existing subscription', { adminId: ws.adminId, userKey });
                         const unsubscribe = subscriptions.get(userKey);
                         if (unsubscribe) unsubscribe();
                         subscriptions.delete(userKey);
                     }
 
-                    logger.info('WS Admin subscribing to user', { adminId, targetUser: userKey });
+                    logger.info('WS Admin subscribing to user', { adminId: ws.adminId, targetUser: userKey });
 
                     const sendSnapshot = async () => {
                         try {
@@ -263,7 +254,7 @@ function createAdminOrdersWSServer() {
                             ]);
 
                             logger.info('AdminWS: Snapshot data fetching complete', {
-                                adminId,
+                                adminId: ws.adminId,
                                 userKey,
                                 openOrdersCount: openOrders.length,
                                 pendingOrdersCount: dbOrders.pending.length,
@@ -323,14 +314,46 @@ function createAdminOrdersWSServer() {
             }
         });
 
+        // Attach Close Listener IMMEDIATELY
         ws.on('close', () => {
             clearInterval(pingInterval);
             for (const unsub of subscriptions.values()) {
                 try { unsub(); } catch (_) { }
             }
             subscriptions.clear();
-            logger.info('WS Admin disconnected', { adminId });
+            logger.info('WS Admin disconnected', { adminId: ws.adminId });
         });
+
+        // Perform Async Authentication
+        (async () => {
+            let admin;
+            try {
+                if (!token) throw new Error('No token');
+                const decoded = jwt.verify(token, JWT_SECRET);
+                if (!decoded || !decoded.role || !decoded.is_active) {
+                    throw new Error('Invalid token payload');
+                }
+                const jtiKey = `jti:${decoded.sub}:${decoded.jti}`;
+                const isValid = await redisCluster.get(jtiKey);
+                if (!isValid) {
+                    throw new Error('Token revoked');
+                }
+                admin = decoded;
+            } catch (e) {
+                ws.close(4401, 'Authentication failed');
+                return;
+            }
+
+            ws.adminId = admin.sub || admin.id;
+            ws.isAuthenticated = true; // Enable message processing
+
+            logger.info('WS Admin connected', { adminId: ws.adminId, role: admin.role });
+
+            // Send welcome message
+            if (ws.readyState === ws.OPEN) {
+                ws.send(JSON.stringify({ type: 'connected', message: 'Admin WebSocket Connected', adminId: ws.adminId }));
+            }
+        })();
     });
 
     return wss;
