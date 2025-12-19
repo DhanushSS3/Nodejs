@@ -1207,7 +1207,26 @@ async function closeOrder(req, res) {
     if (!req_user_id) {
       return res.status(400).json({ success: false, message: 'user_id is required' });
     }
-    if (tokenUserId && normalizeStr(req_user_id) !== normalizeStr(tokenUserId) && !isInternalAuth) {
+    if (tokenUserId && !isInternalAuth) {
+      const normalizedReqUserId = normalizeStr(req_user_id);
+      const normalizedTokenUserId = normalizeStr(tokenUserId);
+      const normalizedStrategyAccountId = user.strategy_provider_id ? normalizeStr(user.strategy_provider_id) : null;
+      const normalizedCopyFollowerAccountId = user.copy_follower_account_id ? normalizeStr(user.copy_follower_account_id) : null;
+
+      const matchesTokenUser = normalizedTokenUserId && normalizedTokenUserId === normalizedReqUserId;
+      const matchesStrategyProviderAccount = req_user_type === 'strategy_provider'
+        && normalizedStrategyAccountId
+        && normalizedStrategyAccountId === normalizedReqUserId;
+      const matchesCopyFollowerAccount = req_user_type === 'copy_follower'
+        && normalizedCopyFollowerAccountId
+        && normalizedCopyFollowerAccountId === normalizedReqUserId;
+
+      if (!matchesTokenUser && !matchesStrategyProviderAccount && !matchesCopyFollowerAccount) {
+        return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
+      }
+    }
+
+    if (!tokenUserId && !isInternalAuth) {
       return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
     }
     if (!Number.isNaN(provided_close_price) && !(provided_close_price > 0)) {
@@ -1558,7 +1577,25 @@ async function closeAllOrders(req, res) {
     if (!req_user_id) {
       return res.status(400).json({ success: false, message: 'user_id is required' });
     }
-    if (tokenUserId && normalizeStr(req_user_id) !== normalizeStr(tokenUserId) && !isInternalAuth) {
+    if (tokenUserId && !isInternalAuth) {
+      const normalizedReqUserId = normalizeStr(req_user_id);
+      const normalizedTokenUserId = normalizeStr(tokenUserId);
+      const normalizedStrategyAccountId = user.strategy_provider_id ? normalizeStr(user.strategy_provider_id) : null;
+      const normalizedCopyFollowerAccountId = user.copy_follower_account_id ? normalizeStr(user.copy_follower_account_id) : null;
+
+      const matchesTokenUser = normalizedTokenUserId && normalizedTokenUserId === normalizedReqUserId;
+      const matchesStrategyProviderAccount = req_user_type === 'strategy_provider'
+        && normalizedStrategyAccountId
+        && normalizedStrategyAccountId === normalizedReqUserId;
+      const matchesCopyFollowerAccount = req_user_type === 'copy_follower'
+        && normalizedCopyFollowerAccountId
+        && normalizedCopyFollowerAccountId === normalizedReqUserId;
+
+      if (!matchesTokenUser && !matchesStrategyProviderAccount && !matchesCopyFollowerAccount) {
+        return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
+      }
+    }
+    if (!tokenUserId && !isInternalAuth) {
       return res.status(403).json({ success: false, message: 'Cannot close orders for another user' });
     }
 
