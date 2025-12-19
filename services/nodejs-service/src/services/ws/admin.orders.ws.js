@@ -39,7 +39,11 @@ async function fetchAccountSummary(userType, userId) {
         row = await Model.findByPk(parseInt(userId, 10));
     }
 
-    if (!row) return { balance: '0', margin: '0' };
+    if (!row) {
+        logger.warn('AdminWS: Account summary not found', { userType, userId });
+        return { balance: '0', margin: '0' };
+    }
+    logger.info('AdminWS: Fetched account summary', { userType, userId, balance: row.wallet_balance });
     return {
         balance: (row.wallet_balance ?? 0).toString(),
         margin: (row.margin ?? 0).toString(),
@@ -114,6 +118,8 @@ async function fetchOpenOrdersFromRedis(userType, userId) {
         return [];
     }
 
+    logger.debug('AdminWS: Redis index keys', { indexKey, count: ids ? ids.length : 0 });
+
     if (!ids || ids.length === 0) return [];
 
     const pipe = redisCluster.pipeline();
@@ -127,6 +133,7 @@ async function fetchOpenOrdersFromRedis(userType, userId) {
     let results = [];
     try {
         const res = await pipe.exec();
+        logger.debug('AdminWS: Redis pipeline executed', { resultsCount: res ? res.length : 0 });
         results = (res || []).map(([err, data], i) => {
             if (err || !data) return null;
             const row = data;
@@ -207,6 +214,10 @@ function createAdminOrdersWSServer() {
 
         ws.isAlive = true;
         ws.on('pong', () => { ws.isAlive = true; });
+
+        // Send welcome message to confirm connection
+        ws.send(JSON.stringify({ type: 'connected', message: 'Admin WebSocket Connected', adminId }));
+
         const subscriptions = new Map();
 
         const pingInterval = setInterval(() => {
@@ -250,6 +261,14 @@ function createAdminOrdersWSServer() {
                                 fetchOpenOrdersFromRedis(uType, uId),
                                 fetchOrdersFromDB(uType, uId)
                             ]);
+
+                            logger.info('AdminWS: Snapshot data fetching complete', {
+                                adminId,
+                                userKey,
+                                openOrdersCount: openOrders.length,
+                                pendingOrdersCount: dbOrders.pending.length,
+                                rejectedOrdersCount: dbOrders.rejected.length
+                            });
 
                             const payload = buildPayload(uType, uId, {
                                 balance: summary.balance,
