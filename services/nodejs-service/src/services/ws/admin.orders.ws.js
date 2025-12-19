@@ -222,13 +222,20 @@ function createAdminOrdersWSServer() {
 
                 if (msg.action === 'subscribe') {
                     const { userType, userId } = msg;
-                    if (!userType || !userId) return;
+
+                    logger.info(`WS Admin received subscribe request: ${JSON.stringify(msg)}`, { adminId });
+
+                    if (!userType || !userId) {
+                        logger.warn('WS Admin subscribe missing userType or userId', { adminId, msg });
+                        return;
+                    }
 
                     const uType = String(userType).toLowerCase();
                     const uId = parseInt(userId, 10);
                     const userKey = `${uType}:${uId}`;
 
                     if (subscriptions.has(userKey)) {
+                        logger.info('WS Admin removing existing subscription', { adminId, userKey });
                         const unsubscribe = subscriptions.get(userKey);
                         if (unsubscribe) unsubscribe();
                         subscriptions.delete(userKey);
