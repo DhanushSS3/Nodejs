@@ -108,6 +108,9 @@ const ENTITY_CONFIG = {
     ],
     groupAlias: 'strategyAccount',
     countryAlias: 'strategyAccount.owner',
+    columnMap: {
+      symbol: 'order_company_name',
+    },
     serialize(order) {
       const account = order.strategyAccount || {};
       const owner = account.owner || {};
@@ -137,7 +140,7 @@ const ENTITY_CONFIG = {
     },
     searchColumns: [
       'order_id',
-      'symbol',
+      'order_company_name',
       'strategyAccount.strategy_name',
       'strategyAccount.account_number',
     ],
@@ -280,7 +283,8 @@ async function getAdminOpenOrders({
     whereClause[Op.and].push(searchFilter);
   }
 
-  const order = [[sort.field, sort.direction]];
+  const dbSortField = config.columnMap?.[sort.field] || sort.field;
+  const order = [[dbSortField, sort.direction]];
 
   const { rows, count } = await OrderModel.findAndCountAll({
     where: whereClause,
