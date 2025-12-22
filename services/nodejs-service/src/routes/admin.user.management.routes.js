@@ -4,11 +4,113 @@ const adminUserManagementController = require('../controllers/admin.user.managem
 const { authenticateAdmin, requirePermissions } = require('../middlewares/auth.middleware');
 const { applyScope } = require('../middlewares/scope.middleware');
 const { auditLog } = require('../middlewares/audit.middleware');
+const { handleValidationErrors } = require('../middlewares/error.middleware');
+const { query } = require('express-validator');
 
 // This entire router is for authenticated admins.
 router.use(authenticateAdmin);
 // Apply country scoping for all routes in this file.
 router.use(applyScope);
+
+/**
+ * @swagger
+ * /api/admin/users/orders/open:
+ *   get:
+ *     summary: List open orders across user types with pagination, filtering, and search
+ *     tags: [Admin User Management]
+ *     security:
+ *       - bearerAuth: []
+ *     description: >
+ *       Returns open orders for live users, strategy providers, or copy followers.
+ *       Requires 'orders:list_open_admin'. Country-level admins only see orders from their country.
+ *     parameters:
+ *       - in: query
+ *         name: user_type
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [live, strategy_provider, copy_follower]
+ *         description: Entity type whose open orders should be listed.
+ *       - in: query
+ *         name: group
+ *         required: false
+ *         schema:
+ *           type: string
+ *         description: Optional group filter.
+ *       - in: query
+ *         name: search
+ *         required: false
+ *         schema:
+ *           type: string
+ *         description: Case-insensitive search across order id, symbols, or user/account names.
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination.
+ *       - in: query
+ *         name: page_size
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Page size for pagination (max 100).
+ *       - in: query
+ *         name: sort_by
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [created_at, updated_at, symbol, order_price, order_quantity]
+ *         description: Field to sort by (defaults to created_at).
+ *       - in: query
+ *         name: sort_dir
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc, ASC, DESC]
+ *         description: Sort direction (defaults to DESC).
+ *     responses:
+ *       200:
+ *         description: Open orders fetched successfully.
+ *       400:
+ *         description: Validation error.
+ *       403:
+ *         description: Insufficient permissions.
+ *       500:
+ *         description: Internal server error.
+ */
+router.get(
+  '/orders/open',
+  requirePermissions(['orders:list_open_admin']),
+  [
+    query('user_type')
+      .exists()
+      .withMessage('user_type is required')
+      .bail()
+      .isIn(['live', 'strategy_provider', 'copy_follower'])
+      .withMessage('user_type must be one of live, strategy_provider, copy_follower'),
+    query('group').optional().isString().trim().isLength({ max: 64 }).withMessage('group must be a string up to 64 characters'),
+    query('search').optional().isString().trim().isLength({ max: 100 }).withMessage('search must be a string up to 100 characters'),
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be an integer >= 1'),
+    query('page_size').optional().isInt({ min: 1, max: 100 }).withMessage('page_size must be between 1 and 100'),
+    query('sort_by')
+      .optional()
+      .isIn(['created_at', 'updated_at', 'symbol', 'order_price', 'order_quantity'])
+      .withMessage('sort_by must be one of created_at, updated_at, symbol, order_price, order_quantity'),
+    query('sort_dir')
+      .optional()
+      .custom((value) => ['asc', 'desc', 'ASC', 'DESC'].includes(value))
+      .withMessage('sort_dir must be ASC or DESC'),
+  ],
+  handleValidationErrors,
+  auditLog('ADMIN_LIST_OPEN_ORDERS'),
+  adminUserManagementController.getAdminOpenOrdersList
+);
 
 /**
  * @swagger

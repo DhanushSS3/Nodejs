@@ -1,8 +1,57 @@
 const adminUserManagementService = require('../services/admin.user.management.service');
 const adminOrderManagementService = require('../services/admin.order.management.service');
+const adminOrdersListService = require('../services/admin.orders.list.service');
 const { validationResult } = require('express-validator');
 
 class AdminUserManagementController {
+  /**
+   * Lists open orders across user types with pagination/filter/search for admins
+   */
+  async getAdminOpenOrdersList(req, res) {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: errors.array(),
+        });
+      }
+
+      const {
+        user_type: userType,
+        group,
+        search,
+        page,
+        page_size: pageSize,
+        sort_by: sortBy,
+        sort_dir: sortDir,
+      } = req.query;
+
+      const result = await adminOrdersListService.getAdminOpenOrders({
+        entityType: userType,
+        group,
+        search,
+        page,
+        pageSize,
+        sortBy,
+        sortDir,
+        admin: req.admin,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch open orders',
+        error: error.message,
+      });
+    }
+  }
+
   async listLiveUsers(req, res, next) {
     try {
       // The applyScope middleware provides the correctly scoped model
