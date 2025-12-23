@@ -4,6 +4,8 @@ const { Group } = require('../models');
 const { createAuditLog } = require('../middlewares/audit.middleware');
 const logger = require('../utils/logger');
 const sequelize = require('../config/db');
+const { Op } = require('sequelize');
+const { enforceAdminSecret } = require('../utils/adminSecret.util');
 
 /**
  * Groups Controller
@@ -68,6 +70,63 @@ class GroupsController {
       res.status(500).json({
         success: false,
         message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Admin-secret protected group lookup by group name
+   * GET /api/admin-secret/groups/:groupName
+   */
+  async getGroupByNameAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const { groupName } = req.params;
+      const { search } = req.query;
+      const decodedGroupName = decodeURIComponent(groupName || '').trim();
+
+      if (!decodedGroupName) {
+        return res.status(400).json({
+          success: false,
+          message: 'Group name is required'
+        });
+      }
+
+      const baseQuery = {
+        where: { name: decodedGroupName },
+        order: [['symbol', 'ASC']]
+      };
+
+      if (search && search.trim().length > 0) {
+        baseQuery.where.symbol = { [Op.iLike]: `%${search.trim()}%` };
+      }
+
+      const groups = await Group.findAll(baseQuery);
+
+      if (!groups || groups.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `No group configuration found for ${decodedGroupName}`
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Group configuration retrieved for ${decodedGroupName}`,
+        data: {
+          group_name: decodedGroupName,
+          symbols: groups.length,
+          groups: groups.map((group) => group.toJSON())
+        }
+      });
+    } catch (error) {
+      logger.error('getGroupByNameAdminSecret failed', { error: error.message, stack: error.stack });
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch group configuration'
       });
     }
   }

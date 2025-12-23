@@ -1,5 +1,6 @@
 const express = require('express');
 const { signup, login, refreshToken, logout, getUserInfo } = require('../controllers/demoUser.controller');
+
 const { body, query } = require('express-validator');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');

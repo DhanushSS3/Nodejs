@@ -1,13 +1,12 @@
 const DemoUser = require('../models/demoUser.model');
 const { generateAccountNumber } = require('../services/accountNumber.service');
-const { hashPassword } = require('../services/password.service');
+const { hashPassword, comparePassword } = require('../services/password.service');
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
 const TransactionService = require('../services/transaction.service');
 const logger = require('../services/logger.service');
 const ErrorResponse = require('../utils/errorResponse.util');
 const { IdempotencyService } = require('../services/idempotency.service');
-const { comparePassword } = require('../services/password.service');
 const jwt = require('jsonwebtoken');
 const { logDemoUserLogin } = require('../services/loginLogger');
 const redisUserCache = require('../services/redis.user.cache.service');
@@ -491,5 +490,99 @@ async function getUserInfo(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken, logout, getUserInfo };
+/**
+ * Admin-secret protected listing of demo users with pagination and filtering
+ * Accessible via ADMIN_LIVE_USERS_SECRET without JWT
+ */
+async function listDemoUsersAdminSecret(req, res) {
+  try {
+    const pageRaw = parseInt(req.query.page ?? '1', 10);
+    const pageSizeRaw = parseInt(req.query.page_size ?? req.query.limit ?? '25', 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const pageSize = Number.isFinite(pageSizeRaw)
+      ? Math.min(Math.max(pageSizeRaw, 1), 200)
+      : 25;
+    const offset = (page - 1) * pageSize;
+
+    const { search, group, status, is_active: isActive } = req.query;
+    const whereClause = {};
+
+    if (group) {
+      whereClause.group = group;
+    }
+
+    if (typeof status !== 'undefined') {
+      const statusInt = parseInt(status, 10);
+      if (!Number.isNaN(statusInt)) {
+        whereClause.status = statusInt;
+      }
+    }
+
+    if (typeof isActive !== 'undefined') {
+      const isActiveInt = parseInt(isActive, 10);
+      if (!Number.isNaN(isActiveInt)) {
+        whereClause.is_active = isActiveInt;
+      }
+    }
+
+    if (search && search.trim().length > 0) {
+      const likeValue = `%${search.trim()}%`;
+      whereClause[Op.or] = [
+        { name: { [Op.iLike]: likeValue } },
+        { email: { [Op.iLike]: likeValue } },
+        { phone_number: { [Op.iLike]: likeValue } },
+        { account_number: { [Op.iLike]: likeValue } }
+      ];
+    }
+
+    const allowedSortFields = new Set(['created_at', 'updated_at', 'name', 'email', 'wallet_balance']);
+    const sortBy = allowedSortFields.has(req.query.sort_by)
+      ? req.query.sort_by
+      : 'created_at';
+    const sortDir = req.query.sort_dir && String(req.query.sort_dir).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    const { count, rows } = await DemoUser.findAndCountAll({
+      where: whereClause,
+      order: [[sortBy, sortDir]],
+      limit: pageSize,
+      offset
+    });
+
+    const users = rows.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone_number: user.phone_number,
+      account_number: user.account_number,
+      group: user.group,
+      status: user.status,
+      is_active: user.is_active,
+      wallet_balance: user.wallet_balance?.toString?.() ?? '0',
+      margin: user.margin?.toString?.() ?? '0',
+      net_profit: user.net_profit?.toString?.() ?? '0',
+      created_at: user.created_at,
+      updated_at: user.updated_at
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: 'Demo users retrieved successfully',
+      pagination: {
+        current_page: page,
+        page_size: pageSize,
+        total_items: count,
+        total_pages: Math.ceil(count / pageSize) || 1,
+      },
+      data: users
+    });
+  } catch (error) {
+    logger.error('listDemoUsersAdminSecret failed', { error: error.message, stack: error.stack });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve demo users'
+    });
+  }
+}
+
+module.exports = { signup, login, refreshToken, logout, getUserInfo, listDemoUsersAdminSecret };
 
