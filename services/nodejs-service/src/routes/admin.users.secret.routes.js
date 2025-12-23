@@ -1,5 +1,6 @@
 const express = require('express');
 const { listDemoUsersAdminSecret } = require('../controllers/demoUser.controller');
+const groupsController = require('../controllers/groups.controller');
 const { requireAdminSecret } = require('../utils/adminSecret.util');
 
 const router = express.Router();
@@ -9,5 +10,10 @@ const router = express.Router();
  * Mirrors /api/admin/users/demo-users but uses shared secret instead of JWT
  */
 router.get('/demo-users', requireAdminSecret, listDemoUsersAdminSecret);
+router.get(
+  '/groups/:groupName',
+  requireAdminSecret,
+  groupsController.getGroupByNameAdminSecret.bind(groupsController)
+);
 
 module.exports = router;
