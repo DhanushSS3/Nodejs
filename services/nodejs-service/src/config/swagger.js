@@ -60,8 +60,9 @@ const options = {
           type: 'object',
           required: [
             'name', 'phone_number', 'email', 'password', 'city', 'state',
-            'country', 'pincode', 'security_question', 'security_answer'
+            'country', 'pincode'
           ],
+
           properties: {
             name: { type: 'string', example: 'Jane Doe' },
             phone_number: { type: 'string', example: '+1234567890' },
@@ -71,8 +72,6 @@ const options = {
             state: { type: 'string', example: 'CA' },
             country: { type: 'string', example: 'USA' },
             pincode: { type: 'string', example: '90210' },
-            security_question: { type: 'string', example: 'What is your favorite color?' },
-            security_answer: { type: 'string', example: 'Blue' },
             is_active: { type: 'integer', example: 1 }
           }
         },
