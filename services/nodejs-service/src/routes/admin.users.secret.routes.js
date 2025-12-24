@@ -15,5 +15,10 @@ router.get(
   requireAdminSecret,
   groupsController.getGroupByNameAdminSecret.bind(groupsController)
 );
+router.get(
+  '/groups/dropdown',
+  requireAdminSecret,
+  groupsController.getGroupsDropdownAdminSecret.bind(groupsController)
+);
 
 module.exports = router;

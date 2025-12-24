@@ -35,6 +35,20 @@ class GroupsController {
       half_spread: this._calculateHalfSpread(group)
     }));
   }
+
+  /**
+   * Fetch unique group names sorted alphabetically
+   * @returns {Promise<string[]>}
+   */
+  async _fetchUniqueGroupNames() {
+    const uniqueGroups = await Group.findAll({
+      attributes: ['name'],
+      group: ['name'],
+      order: [['name', 'ASC']]
+    });
+
+    return uniqueGroups.map(group => group.name);
+  }
   /**
    * Get group by name and symbol
    * GET /api/groups/:groupName/:symbol
@@ -70,6 +84,39 @@ class GroupsController {
       res.status(500).json({
         success: false,
         message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Get groups dropdown via admin secret (no JWT)
+   * GET /api/admin-secret/groups/dropdown
+   */
+  async getGroupsDropdownAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const groupNames = await this._fetchUniqueGroupNames();
+
+      logger.info(
+        `Admin-secret dropdown accessed - ${groupNames.length} groups returned`
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Groups dropdown retrieved successfully',
+        data: {
+          total_groups: groupNames.length,
+          groups: groupNames
+        }
+      });
+    } catch (error) {
+      logger.error('Failed to get groups dropdown via admin secret:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch groups dropdown'
       });
     }
   }
@@ -1256,14 +1303,7 @@ class GroupsController {
     try {
       const { admin } = req;
 
-      // Get all unique group names from database
-      const uniqueGroups = await Group.findAll({
-        attributes: ['name'],
-        group: ['name'],
-        order: [['name', 'ASC']]
-      });
-
-      const groupNames = uniqueGroups.map(group => group.name);
+      const groupNames = await this._fetchUniqueGroupNames();
 
       // Create audit log
       await createAuditLog(
