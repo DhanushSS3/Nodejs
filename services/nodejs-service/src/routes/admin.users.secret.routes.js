@@ -11,14 +11,14 @@ const router = express.Router();
  */
 router.get('/demo-users', requireAdminSecret, listDemoUsersAdminSecret);
 router.get(
-  '/groups/:groupName',
-  requireAdminSecret,
-  groupsController.getGroupByNameAdminSecret.bind(groupsController)
-);
-router.get(
   '/groups/dropdown',
   requireAdminSecret,
   groupsController.getGroupsDropdownAdminSecret.bind(groupsController)
+);
+router.get(
+  '/groups/:groupName',
+  requireAdminSecret,
+  groupsController.getGroupByNameAdminSecret.bind(groupsController)
 );
 
 module.exports = router;
