@@ -16,9 +16,24 @@ router.get(
   groupsController.getGroupsDropdownAdminSecret.bind(groupsController)
 );
 router.get(
+  '/groups',
+  requireAdminSecret,
+  groupsController.searchGroupsAdminSecret.bind(groupsController)
+);
+router.get(
+  '/groups/:groupName/:symbol',
+  requireAdminSecret,
+  groupsController.getGroupBySymbolAdminSecret.bind(groupsController)
+);
+router.get(
   '/groups/:groupName',
   requireAdminSecret,
   groupsController.getGroupByNameAdminSecret.bind(groupsController)
+);
+router.post(
+  '/groups/copy',
+  requireAdminSecret,
+  groupsController.copyGroupInstrumentsAdminSecret.bind(groupsController)
 );
 
 module.exports = router;

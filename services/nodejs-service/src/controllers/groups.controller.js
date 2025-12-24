@@ -7,6 +7,14 @@ const sequelize = require('../config/db');
 const { Op } = require('sequelize');
 const { enforceAdminSecret } = require('../utils/adminSecret.util');
 
+class HttpError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
+    this.name = 'HttpError';
+  }
+}
+
 /**
  * Groups Controller
  * Handles HTTP requests for group management with Redis caching
@@ -48,6 +56,117 @@ class GroupsController {
     });
 
     return uniqueGroups.map(group => group.name);
+  }
+
+  _buildCopyGroupResponse(result) {
+    const { sourceGroupName, targetGroupName, newGroups } = result;
+    return {
+      success: true,
+      message: `Successfully copied ${newGroups.length} instruments from ${sourceGroupName} to ${targetGroupName}`,
+      data: {
+        source_group_name: sourceGroupName,
+        target_group_name: targetGroupName,
+        instruments_copied: newGroups.length,
+        instruments: newGroups.map(group => ({
+          id: group.id,
+          symbol: group.symbol,
+          name: group.name,
+          created_at: group.created_at
+        }))
+      }
+    };
+  }
+
+  async _copyGroupInstrumentsCore(sourceGroupName, targetGroupName) {
+    const trimmedSource = sourceGroupName?.trim();
+    const trimmedTarget = targetGroupName?.trim();
+
+    if (!trimmedSource || !trimmedTarget) {
+      throw new HttpError(400, 'Source group name and target group name are required');
+    }
+
+    if (trimmedSource === trimmedTarget) {
+      throw new HttpError(400, 'Source and target group names must be different');
+    }
+
+    let transaction;
+    try {
+      transaction = await sequelize.transaction();
+
+      const sourceGroups = await Group.findAll({
+        where: { name: trimmedSource },
+        transaction
+      });
+
+      if (sourceGroups.length === 0) {
+        throw new HttpError(404, `Source group not found: ${trimmedSource}`);
+      }
+
+      const existingTargetGroups = await Group.findAll({
+        where: { name: trimmedTarget },
+        transaction
+      });
+
+      if (existingTargetGroups.length > 0) {
+        throw new HttpError(
+          409,
+          `Target group already exists: ${trimmedTarget}. Found ${existingTargetGroups.length} instruments.`
+        );
+      }
+
+      const newGroups = [];
+      for (const sourceGroup of sourceGroups) {
+        const groupData = {
+          symbol: sourceGroup.symbol,
+          name: trimmedTarget,
+          commision_type: sourceGroup.commision_type,
+          commision_value_type: sourceGroup.commision_value_type,
+          type: sourceGroup.type,
+          pip_currency: sourceGroup.pip_currency,
+          show_points: sourceGroup.show_points,
+          swap_buy: sourceGroup.swap_buy,
+          swap_sell: sourceGroup.swap_sell,
+          commision: sourceGroup.commision,
+          margin: sourceGroup.margin,
+          spread: sourceGroup.spread,
+          deviation: sourceGroup.deviation,
+          min_lot: sourceGroup.min_lot,
+          max_lot: sourceGroup.max_lot,
+          pips: sourceGroup.pips,
+          spread_pip: sourceGroup.spread_pip,
+          contract_size: sourceGroup.contract_size,
+          profit: sourceGroup.profit
+        };
+
+        const newGroup = await Group.create(groupData, { transaction });
+        newGroups.push(newGroup);
+      }
+
+      await transaction.commit();
+
+      for (const newGroup of newGroups) {
+        await groupsCacheService.syncGroupFromDB(newGroup.id);
+      }
+
+      return {
+        sourceGroupName: trimmedSource,
+        targetGroupName: trimmedTarget,
+        newGroups
+      };
+    } catch (error) {
+      if (transaction) {
+        await transaction.rollback().catch(rollbackError => {
+          logger.error('Rollback failed in _copyGroupInstrumentsCore', rollbackError);
+        });
+      }
+
+      if (error instanceof HttpError) {
+        throw error;
+      }
+
+      logger.error('_copyGroupInstrumentsCore failed', error);
+      throw new HttpError(500, 'Failed to copy group instruments');
+    }
   }
   /**
    * Get group by name and symbol
@@ -1551,6 +1670,146 @@ class GroupsController {
         success: false,
         message: 'Failed to refresh groups cache',
         error: error.message
+      });
+    }
+  }
+
+  /**
+   * Copy group instruments via admin secret (no JWT)
+   * POST /api/admin-secret/groups/copy
+   */
+  async copyGroupInstrumentsAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const { sourceGroupName, targetGroupName } = req.body;
+      const result = await this._copyGroupInstrumentsCore(sourceGroupName, targetGroupName);
+
+      logger.info(
+        `[ADMIN_SECRET] Copied ${result.newGroups.length} instruments from ${result.sourceGroupName} to ${result.targetGroupName}`
+      );
+
+      return res.status(201).json(this._buildCopyGroupResponse(result));
+    } catch (error) {
+      logger.error('Admin-secret copyGroupInstruments failed:', error);
+
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to copy group instruments'
+      });
+    }
+  }
+
+  /**
+   * Get single group instrument via admin secret
+   * GET /api/admin-secret/groups/:groupName/:symbol
+   */
+  async getGroupBySymbolAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const { groupName, symbol } = req.params;
+
+      if (!groupName || !symbol) {
+        return res.status(400).json({
+          success: false,
+          message: 'Group name and symbol are required'
+        });
+      }
+
+      const group = await groupsCacheService.getGroup(groupName, symbol);
+
+      if (!group) {
+        return res.status(404).json({
+          success: false,
+          message: `No group configuration found for ${groupName}:${symbol}`
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Group instrument retrieved successfully',
+        data: group
+      });
+    } catch (error) {
+      logger.error('Admin-secret getGroupBySymbol failed:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch group instrument'
+      });
+    }
+  }
+
+  /**
+   * Search groups via admin secret with optional filters
+   * GET /api/admin-secret/groups (query params: q, groupName, symbol, limit)
+   */
+  async searchGroupsAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const { q, groupName, symbol, limit = 20 } = req.query;
+
+      const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+      const searchFilters = [];
+
+      if (groupName) {
+        searchFilters.push({
+          name: { [Op.iLike]: `%${groupName.trim()}%` }
+        });
+      }
+
+      if (symbol) {
+        searchFilters.push({
+          symbol: { [Op.iLike]: `%${symbol.trim()}%` }
+        });
+      }
+
+      if (q) {
+        const term = q.trim();
+        searchFilters.push({
+          [Op.or]: [
+            { name: { [Op.iLike]: `%${term}%` } },
+            { symbol: { [Op.iLike]: `%${term}%` } }
+          ]
+        });
+      }
+
+      const whereClause = searchFilters.length > 0 ? { [Op.and]: searchFilters } : {};
+
+      const groups = await Group.findAll({
+        where: whereClause,
+        order: [['name', 'ASC'], ['symbol', 'ASC']],
+        limit: parsedLimit
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Groups search completed successfully',
+        data: {
+          results: groups,
+          count: groups.length,
+          limit: parsedLimit
+        }
+      });
+    } catch (error) {
+      logger.error('Admin-secret searchGroups failed:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to search groups'
       });
     }
   }
