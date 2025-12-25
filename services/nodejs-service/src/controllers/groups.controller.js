@@ -168,6 +168,159 @@ class GroupsController {
       throw new HttpError(500, 'Failed to copy group instruments');
     }
   }
+
+  async _updateGroupFieldsCore(groupName, symbol, updates) {
+    if (!groupName || !symbol) {
+      throw new HttpError(400, 'Group name and symbol are required');
+    }
+
+    if (!updates || Object.keys(updates).length === 0) {
+      throw new HttpError(400, 'No update fields provided');
+    }
+
+    const restrictedFields = ['id', 'name', 'symbol', 'created_at', 'updated_at'];
+    const allowedFields = [
+      'commision_type', 'commision_value_type', 'type', 'pip_currency',
+      'show_points', 'swap_buy', 'swap_sell', 'commision', 'margin',
+      'spread', 'deviation', 'min_lot', 'max_lot', 'pips', 'spread_pip',
+      'contract_size', 'profit'
+    ];
+
+    let transaction;
+    try {
+      transaction = await sequelize.transaction();
+
+      const group = await Group.findOne({
+        where: { name: groupName, symbol },
+        transaction
+      });
+
+      if (!group) {
+        throw new HttpError(404, `Group not found: ${groupName}:${symbol}`);
+      }
+
+      const filteredUpdates = {};
+      const originalValues = {};
+
+      for (const [key, value] of Object.entries(updates)) {
+        if (restrictedFields.includes(key)) {
+          continue;
+        }
+        if (allowedFields.includes(key)) {
+          filteredUpdates[key] = value;
+          originalValues[key] = group[key];
+        }
+      }
+
+      if (Object.keys(filteredUpdates).length === 0) {
+        throw new HttpError(400, 'No valid fields to update');
+      }
+
+      await group.update(filteredUpdates, { transaction });
+      await transaction.commit();
+
+      await groupsCacheService.updateGroup(groupName, symbol, filteredUpdates);
+
+      return {
+        group,
+        filteredUpdates,
+        originalValues
+      };
+    } catch (error) {
+      if (transaction) {
+        await transaction.rollback().catch((rollbackError) => {
+          logger.error('Rollback failed in _updateGroupFieldsCore', rollbackError);
+        });
+      }
+
+      if (error instanceof HttpError) {
+        throw error;
+      }
+
+      logger.error('_updateGroupFieldsCore failed', error);
+      throw new HttpError(500, 'Failed to update group');
+    }
+  }
+
+  async _createGroupSymbolCore(payload) {
+    const transaction = await sequelize.transaction();
+
+    try {
+      const {
+        symbol,
+        name,
+        commision_type = 1,
+        commision_value_type = 1,
+        type = 1,
+        pip_currency = 'USD',
+        show_points = 5,
+        swap_buy = 0,
+        swap_sell = 0,
+        commision = 0,
+        margin = 100,
+        spread = 0,
+        deviation = 10,
+        min_lot = 0.01,
+        max_lot = 100,
+        pips = 0.0001,
+        spread_pip = 0,
+        contract_size = 100000,
+        profit = 'currency'
+      } = payload || {};
+
+      if (!symbol || !name) {
+        throw new HttpError(400, 'Symbol and group name are required');
+      }
+
+      const existingGroup = await Group.findOne({
+        where: { name, symbol },
+        transaction
+      });
+
+      if (existingGroup) {
+        throw new HttpError(409, `Group symbol already exists: ${name}:${symbol}`);
+      }
+
+      const newGroup = await Group.create({
+        symbol,
+        name,
+        commision_type,
+        commision_value_type,
+        type,
+        pip_currency,
+        show_points,
+        swap_buy,
+        swap_sell,
+        commision,
+        margin,
+        spread,
+        deviation,
+        min_lot,
+        max_lot,
+        pips,
+        spread_pip,
+        contract_size,
+        profit
+      }, { transaction });
+
+      await transaction.commit();
+
+      await groupsCacheService.syncGroupFromDB(newGroup.id);
+
+      return newGroup;
+    } catch (error) {
+      await transaction.rollback().catch((rollbackError) => {
+        logger.error('Rollback failed in _createGroupSymbolCore', rollbackError);
+      });
+
+      if (error instanceof HttpError) {
+        throw error;
+      }
+
+      logger.error('_createGroupSymbolCore failed', error);
+      throw new HttpError(500, 'Failed to create group symbol');
+    }
+  }
   /**
    * Get group by name and symbol
    * GET /api/groups/:groupName/:symbol
@@ -1810,6 +1963,108 @@ class GroupsController {
       return res.status(500).json({
         success: false,
         message: 'Failed to search groups'
+      });
+    }
+  }
+
+  /**
+   * Update group fields via admin secret (no JWT)
+   * PUT /api/admin-secret/groups/:groupName/:symbol
+   */
+  async updateGroupAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const { groupName, symbol } = req.params;
+      const updates = req.body;
+
+      const result = await this._updateGroupFieldsCore(groupName, symbol, updates);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Group updated successfully',
+        data: {
+          group_name: groupName,
+          symbol,
+          updated_fields: Object.keys(result.filteredUpdates),
+          original_values: result.originalValues,
+          new_values: result.filteredUpdates
+        }
+      });
+    } catch (error) {
+      logger.error('Admin-secret updateGroup failed:', error);
+
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update group'
+      });
+    }
+  }
+
+  /**
+   * Create group symbol via admin secret (no JWT)
+   * POST /api/admin-secret/groups
+   */
+  async createGroupSymbolAdminSecret(req, res) {
+    if (!enforceAdminSecret(req, res)) {
+      return;
+    }
+
+    try {
+      const newGroup = await this._createGroupSymbolCore(req.body);
+
+      return res.status(201).json({
+        success: true,
+        message: `Group symbol created successfully: ${newGroup.name}:${newGroup.symbol}`,
+        data: {
+          group: {
+            id: newGroup.id,
+            symbol: newGroup.symbol,
+            name: newGroup.name,
+            commision_type: newGroup.commision_type,
+            commision_value_type: newGroup.commision_value_type,
+            type: newGroup.type,
+            pip_currency: newGroup.pip_currency,
+            show_points: newGroup.show_points,
+            swap_buy: newGroup.swap_buy,
+            swap_sell: newGroup.swap_sell,
+            commision: newGroup.commision,
+            margin: newGroup.margin,
+            spread: newGroup.spread,
+            deviation: newGroup.deviation,
+            min_lot: newGroup.min_lot,
+            max_lot: newGroup.max_lot,
+            pips: newGroup.pips,
+            spread_pip: newGroup.spread_pip,
+            contract_size: newGroup.contract_size,
+            profit: newGroup.profit,
+            created_at: newGroup.created_at,
+            updated_at: newGroup.updated_at
+          }
+        }
+      });
+    } catch (error) {
+      logger.error('Admin-secret createGroupSymbol failed:', error);
+
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create group symbol'
       });
     }
   }

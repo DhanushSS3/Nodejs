@@ -10,6 +10,7 @@ const { IdempotencyService } = require('../services/idempotency.service');
 const jwt = require('jsonwebtoken');
 const { logDemoUserLogin } = require('../services/loginLogger');
 const redisUserCache = require('../services/redis.user.cache.service');
+const adminUserManagementService = require('../services/admin.user.management.service');
 
 /**
  * Demo User Signup with transaction handling and deadlock prevention
@@ -584,5 +585,66 @@ async function listDemoUsersAdminSecret(req, res) {
   }
 }
 
-module.exports = { signup, login, refreshToken, logout, getUserInfo, listDemoUsersAdminSecret };
+async function updateDemoUserAdminSecret(req, res) {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid userId path parameter is required'
+      });
+    }
+
+    const updateData = req.body || {};
+    const validation = adminUserManagementService.validateUpdateData(updateData, 'demo');
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid update data',
+        errors: validation.errors
+      });
+    }
+
+    const adminContext = {
+      id: 'admin-secret',
+      role: 'admin_secret'
+    };
+
+    const updatedUser = await adminUserManagementService.updateDemoUser(
+      userId,
+      updateData,
+      DemoUser,
+      adminContext
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Demo user updated successfully',
+      data: updatedUser
+    });
+  } catch (error) {
+    if (error.message === 'User not found') {
+      return res.status(404).json({
+        success: false,
+        message: 'Demo user not found'
+      });
+    }
+
+    logger.error('updateDemoUserAdminSecret failed', { error: error.message, stack: error.stack });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update demo user'
+    });
+  }
+}
+
+module.exports = {
+  signup,
+  login,
+  refreshToken,
+  logout,
+  getUserInfo,
+  listDemoUsersAdminSecret,
+  updateDemoUserAdminSecret
+};
 
