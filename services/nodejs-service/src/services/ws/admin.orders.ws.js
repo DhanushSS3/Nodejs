@@ -11,6 +11,10 @@ const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
 const StrategyProviderAccount = require('../../models/strategyProviderAccount.model');
 const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
+const {
+  extractAdminSecret,
+  isValidAdminSecret
+} = require('../../utils/adminSecret.util');
 
 // --- Helper Functions (Adapted from portfolio.ws.js) ---
 
@@ -365,4 +369,158 @@ function createAdminOrdersWSServer() {
   return wss;
 }
 
-module.exports = { createAdminOrdersWSServer };
+function createAdminSecretDemoOrdersWSServer() {
+  const wss = new WebSocketServer({ noServer: true, path: '/ws/admin-secret/demo-orders' });
+
+  wss.on('connection', async (ws, req) => {
+    const params = url.parse(req.url, true);
+    req.query = params.query || {};
+
+    const secret = extractAdminSecret(req);
+    if (!secret || !isValidAdminSecret(secret)) {
+      ws.close(4401, 'Unauthorized: invalid admin secret');
+      return;
+    }
+
+    const initialDemoUserId = params.query.demoUserId || params.query.userId;
+
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === ws.CLOSED) {
+        clearInterval(pingInterval);
+        return;
+      }
+      if (ws.isAlive === false) {
+        try {
+          ws.close(4000, 'ping timeout');
+        } catch (err) {
+          ws.terminate();
+        }
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }, 30000);
+
+    const subscriptions = new Map();
+
+    const subscribeToDemoUser = async (demoUserId) => {
+      const parsedId = parseInt(demoUserId, 10);
+      if (!Number.isFinite(parsedId) || parsedId <= 0) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'error', message: 'demoUserId must be a positive integer' }));
+        }
+        return;
+      }
+
+      const userKey = `demo:${parsedId}`;
+
+      if (subscriptions.has(userKey)) {
+        const unsubscribe = subscriptions.get(userKey);
+        if (unsubscribe) {
+          unsubscribe();
+        }
+        subscriptions.delete(userKey);
+      }
+
+      const sendSnapshot = async () => {
+        try {
+          const [summary, openOrders, dbOrders] = await Promise.all([
+            fetchAccountSummary('demo', parsedId),
+            fetchOpenOrdersFromRedis('demo', parsedId),
+            fetchOrdersFromDB('demo', parsedId)
+          ]);
+
+          const payload = buildPayload('demo', parsedId, {
+            balance: summary.balance,
+            margin: summary.margin,
+            openOrders,
+            pendingOrders: dbOrders.pending,
+            rejectedOrders: dbOrders.rejected
+          });
+
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify(payload));
+          }
+        } catch (err) {
+          logger.error('Admin-secret demo WS snapshot failed', { error: err.message, userKey });
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Failed to fetch demo user data' }));
+          }
+        }
+      };
+
+      await sendSnapshot();
+
+      const unsubscribe = portfolioEvents.onUserUpdate('demo', parsedId, async () => {
+        if (ws.readyState !== ws.OPEN) {
+          return;
+        }
+        await sendSnapshot();
+      });
+
+      subscriptions.set(userKey, unsubscribe);
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'subscribed', userKey }));
+      }
+    };
+
+    if (initialDemoUserId) {
+      await subscribeToDemoUser(initialDemoUserId);
+    } else if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'info', message: 'Provide demoUserId query param or send subscribe action' }));
+    }
+
+    ws.on('message', async (message) => {
+      try {
+        const msg = JSON.parse(message);
+        if (msg.action === 'subscribe') {
+          await subscribeToDemoUser(msg.demoUserId || msg.userId);
+        } else if (msg.action === 'unsubscribe') {
+          const targetId = msg.demoUserId || msg.userId;
+          if (targetId) {
+            const userKey = `demo:${parseInt(targetId, 10)}`;
+            const unsubscribe = subscriptions.get(userKey);
+            if (unsubscribe) {
+              unsubscribe();
+              subscriptions.delete(userKey);
+              if (ws.readyState === ws.OPEN) {
+                ws.send(JSON.stringify({ type: 'unsubscribed', userKey }));
+              }
+            }
+          } else {
+            for (const unsub of subscriptions.values()) {
+              unsub();
+            }
+            subscriptions.clear();
+            if (ws.readyState === ws.OPEN) {
+              ws.send(JSON.stringify({ type: 'unsubscribed_all' }));
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn('Admin-secret demo WS message error', { error: err.message });
+      }
+    });
+
+    ws.on('close', () => {
+      clearInterval(pingInterval);
+      for (const unsub of subscriptions.values()) {
+        try {
+          unsub();
+        } catch (_) {
+          // ignore
+        }
+      }
+      subscriptions.clear();
+    });
+  });
+
+  return wss;
+}
+
+module.exports = { createAdminOrdersWSServer, createAdminSecretDemoOrdersWSServer };

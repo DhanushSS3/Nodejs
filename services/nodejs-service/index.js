@@ -12,13 +12,17 @@ const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEqui
 
 const PORT = process.env.PORT || 3000;
 const { createPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
-const { createAdminOrdersWSServer } = require('./src/services/ws/admin.orders.ws');
+const {
+  createAdminOrdersWSServer,
+  createAdminSecretDemoOrdersWSServer
+} = require('./src/services/ws/admin.orders.ws');
 
 // Global references for graceful shutdown
 let server = null;
 let rabbitConnection = null;
 let wssPortfolio = null;
 let wssAdmin = null;
+let wssAdminSecretDemo = null;
 
 (async () => {
   try {
@@ -77,6 +81,7 @@ let wssAdmin = null;
       // Create WS servers (headless - noServer: true)
       wssPortfolio = createPortfolioWSServer();
       wssAdmin = createAdminOrdersWSServer();
+      wssAdminSecretDemo = createAdminSecretDemoOrdersWSServer();
 
       console.log('✅ WebSocket servers created (Headless Mode)');
 
@@ -91,6 +96,10 @@ let wssAdmin = null;
         } else if (pathname === '/ws/admin/orders') {
           wssAdmin.handleUpgrade(request, socket, head, (ws) => {
             wssAdmin.emit('connection', ws, request);
+          });
+        } else if (pathname === '/ws/admin-secret/demo-orders') {
+          wssAdminSecretDemo.handleUpgrade(request, socket, head, (ws) => {
+            wssAdminSecretDemo.emit('connection', ws, request);
           });
         } else {
           socket.destroy();
@@ -158,6 +167,9 @@ async function gracefulShutdown(signal) {
     }
     if (wssAdmin) {
       try { wssAdmin.close(); } catch (_) { }
+    }
+    if (wssAdminSecretDemo) {
+      try { wssAdminSecretDemo.close(); } catch (_) { }
     }
     console.log('✅ WebSocket servers closed');
 

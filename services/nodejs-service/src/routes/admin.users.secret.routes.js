@@ -10,6 +10,11 @@ const router = express.Router();
  * Mirrors /api/admin/users/demo-users but uses shared secret instead of JWT
  */
 router.get('/demo-users', requireAdminSecret, listDemoUsersAdminSecret);
+router.put(
+  '/demo-users/:userId',
+  requireAdminSecret,
+  demoUserController.updateDemoUserAdminSecret
+);
 router.get(
   '/groups/dropdown',
   requireAdminSecret,
@@ -20,6 +25,11 @@ router.get(
   requireAdminSecret,
   groupsController.searchGroupsAdminSecret.bind(groupsController)
 );
+router.post(
+  '/groups',
+  requireAdminSecret,
+  groupsController.createGroupSymbolAdminSecret.bind(groupsController)
+);
 router.get(
   '/groups/:groupName/:symbol',
   requireAdminSecret,
@@ -29,6 +39,11 @@ router.get(
   '/groups/:groupName',
   requireAdminSecret,
   groupsController.getGroupByNameAdminSecret.bind(groupsController)
+);
+router.put(
+  '/groups/:groupName/:symbol',
+  requireAdminSecret,
+  groupsController.updateGroupAdminSecret.bind(groupsController)
 );
 router.post(
   '/groups/copy',
