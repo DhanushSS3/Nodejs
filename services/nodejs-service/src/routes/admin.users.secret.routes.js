@@ -16,6 +16,11 @@ router.put(
   demoUserController.updateDemoUserAdminSecret
 );
 router.get(
+  '/demo-users/:userId/closed-orders',
+  requireAdminSecret,
+  demoUserController.getDemoUserClosedOrdersAdminSecret
+);
+router.get(
   '/groups/dropdown',
   requireAdminSecret,
   groupsController.getGroupsDropdownAdminSecret.bind(groupsController)

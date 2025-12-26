@@ -638,6 +638,69 @@ async function updateDemoUserAdminSecret(req, res) {
   }
 }
 
+async function getDemoUserClosedOrdersAdminSecret(req, res) {
+  try {
+    const userIdParam = req.params.userId;
+    const userId = parseInt(userIdParam, 10);
+
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid userId path parameter is required'
+      });
+    }
+
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+    const orders = await adminUserManagementService.getUserClosedOrders(
+      'demo',
+      userId,
+      DemoUser,
+      { id: 'admin-secret', role: 'admin_secret' },
+      { page, limit }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Demo user closed orders retrieved successfully',
+      data: {
+        user_id: userId,
+        count: orders.length,
+        orders
+      },
+      pagination: {
+        page,
+        limit
+      }
+    });
+  } catch (error) {
+    if (error.message === 'User not found or access denied') {
+      return res.status(404).json({
+        success: false,
+        message: 'Demo user not found or access denied'
+      });
+    }
+
+    if (error.message.includes('Invalid user ID')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    logger.error('getDemoUserClosedOrdersAdminSecret failed', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.params.userId
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve demo user closed orders'
+    });
+  }
+}
+
 module.exports = {
   signup,
   login,
@@ -645,6 +708,7 @@ module.exports = {
   logout,
   getUserInfo,
   listDemoUsersAdminSecret,
-  updateDemoUserAdminSecret
+  updateDemoUserAdminSecret,
+  getDemoUserClosedOrdersAdminSecret
 };
 
