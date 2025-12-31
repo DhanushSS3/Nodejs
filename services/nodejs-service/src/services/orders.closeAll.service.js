@@ -29,8 +29,10 @@ class CloseAllOrdersService {
   _isMarketOpenByType(typeVal) {
     try {
       const t = parseInt(typeVal, 10);
-      if (Number.isNaN(t)) return false;
-      if (t === 4) return true; // Crypto always open
+      if (!Number.isNaN(t) && t === 4) {
+        return true; // Crypto always open
+      }
+
       const now = new Date();
       const day = now.getUTCDay(); // 0=Sunday
       if (day === 0 || day === 6) return false;
@@ -45,7 +47,7 @@ class CloseAllOrdersService {
   async ensureMarketOpen(ctx) {
     try {
       const symbolForHours = ctx.symbol;
-      const groupName = this.normalizeStr(ctx?.canonical?.group || 'Standard');
+      const groupName = this.normalizeStr(ctx?.canonical?.group || 'Classic');
       const gf = await groupsCache.getGroupFields(groupName, symbolForHours, ['type']);
       const gType = gf && gf.type != null ? gf.type : null;
       if (!this._isMarketOpenByType(gType)) {

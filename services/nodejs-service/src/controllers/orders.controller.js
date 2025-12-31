@@ -100,7 +100,7 @@ async function placeInstantOrder(req, res) {
     const role = user.role || user.user_role;
     const isSelfTrading = user.is_self_trading;
     const userStatus = user.status;
-    const userGroup = user && user.group ? String(user.group) : 'Standard';
+    const userGroup = user && user.group ? String(user.group) : 'Classic';
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for order placement' });
@@ -557,7 +557,7 @@ async function placePendingOrder(req, res) {
     const role = user.role || user.user_role;
     const isSelfTrading = user.is_self_trading;
     const userStatus = user.status;
-    const userGroup = user && user.group ? String(user.group) : 'Standard';
+    const userGroup = user && user.group ? String(user.group) : 'Classic';
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for pending order placement' });
@@ -908,7 +908,7 @@ async function modifyPendingOrder(req, res) {
     const role = user.role || user.user_role;
     const isSelfTrading = user.is_self_trading;
     const userStatus = user.status;
-    const userGroupFromToken = user && user.group ? String(user.group) : 'Standard';
+    const userGroupFromToken = user && user.group ? String(user.group) : 'Classic';
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for pending modify' });
@@ -998,7 +998,7 @@ async function modifyPendingOrder(req, res) {
     } catch (_) { isProviderFlow = false; }
 
     // Fetch half_spread for compare price calculation
-    const groupName = String(canonical.group || userGroupFromToken || 'Standard');
+    const groupName = String(canonical.group || userGroupFromToken || 'Classic');
     let half_spread = null;
     try {
       const gf = await groupsCache.getGroupFields(groupName, symbol, ['spread', 'spread_pip']);
@@ -1264,7 +1264,7 @@ async function closeOrder(req, res) {
     // Trading hours check (using resolved symbol and canonical group when available)
     try {
       const symbolForHours = ctx.symbol;
-      const groupName = normalizeStr(canonical?.group || 'Standard');
+      const groupName = normalizeStr(canonical?.group || 'Classic');
       const gf = await groupsCache.getGroupFields(groupName, symbolForHours, ['type']);
       const gType = gf && gf.type != null ? gf.type : null;
       if (!_isMarketOpenByType(gType)) {
