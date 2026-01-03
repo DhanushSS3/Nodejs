@@ -21,19 +21,17 @@ class AdminUserManagementController {
       const {
         user_type: userType,
         group,
+        instrument,
         search,
-        page,
-        page_size: pageSize,
         sort_by: sortBy,
         sort_dir: sortDir,
       } = req.query;
 
       const result = await adminOrdersListService.getAdminOpenOrders({
-        entityType: userType,
+        entityTypes: userType ? [userType] : undefined,
         group,
+        instrument,
         search,
-        page,
-        pageSize,
         sortBy,
         sortDir,
         admin: req.admin,

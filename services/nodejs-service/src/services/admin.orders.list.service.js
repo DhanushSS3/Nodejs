@@ -8,22 +8,8 @@ const {
   CopyFollowerAccount,
 } = require('../models');
 
-const DEFAULT_PAGE_SIZE = 20;
-const MAX_PAGE_SIZE = 100;
 const DEFAULT_SORT = { field: 'created_at', direction: 'DESC' };
 const STATUS_FILTER = ['OPEN'];
-
-/**
- * Normalize pagination inputs
- */
-function normalizePagination(pageRaw, pageSizeRaw) {
-  const page = Math.max(1, parseInt(pageRaw, 10) || 1);
-  const pageSize = Math.min(
-    MAX_PAGE_SIZE,
-    Math.max(1, parseInt(pageSizeRaw, 10) || DEFAULT_PAGE_SIZE),
-  );
-  return { page, pageSize, offset: (page - 1) * pageSize };
-}
 
 /**
  * Normalize sort
@@ -31,9 +17,6 @@ function normalizePagination(pageRaw, pageSizeRaw) {
 function normalizeSort(sortByRaw, sortDirRaw) {
   const allowedFields = new Set([
     'created_at',
-    'updated_at',
-    'symbol',
-    'order_price',
     'order_quantity',
   ]);
   const field = allowedFields.has(String(sortByRaw)) ? String(sortByRaw) : DEFAULT_SORT.field;
@@ -60,6 +43,7 @@ const ENTITY_CONFIG = {
     ],
     groupAlias: 'user',
     countryAlias: 'user',
+    instrumentColumn: 'symbol',
     serialize(order) {
       const user = order.user || {};
       return {
@@ -108,6 +92,7 @@ const ENTITY_CONFIG = {
     ],
     groupAlias: 'strategyAccount',
     countryAlias: 'strategyAccount.owner',
+    instrumentColumn: 'order_company_name',
     columnMap: {
       symbol: 'order_company_name',
     },
@@ -178,6 +163,7 @@ const ENTITY_CONFIG = {
     ],
     groupAlias: 'copyAccount',
     countryAlias: 'copyAccount.owner',
+    instrumentColumn: 'symbol',
     serialize(order) {
       const copyAccount = order.copyAccount || {};
       const owner = copyAccount.owner || {};
@@ -243,27 +229,45 @@ function applyCountryScope(whereClause, countryId, alias) {
   whereClause[Op.and].push({ [`$${alias}.country_id$`]: countryId });
 }
 
-/**
- * Fetch open (and queued) orders for admin views with pagination + filters
- */
-async function getAdminOpenOrders({
-  entityType,
-  group,
-  search,
-  page,
-  pageSize,
-  sortBy,
-  sortDir,
-  admin,
-}) {
+function applyInstrumentFilter(whereClause, instrumentValue, columnName) {
+  if (!instrumentValue) return;
+  const column = columnName || 'symbol';
+  whereClause[Op.and] = whereClause[Op.and] || [];
+  whereClause[Op.and].push({ [column]: instrumentValue });
+}
+
+function sortOrders(orders, sort) {
+  const directionFactor = sort.direction === 'ASC' ? 1 : -1;
+  const extractValue = (order) => {
+    if (sort.field === 'order_quantity') {
+      return Number(order.order_quantity) || 0;
+    }
+    const ts = Date.parse(order.created_at || order.updated_at || order.createdAt || order.updatedAt || '');
+    return Number.isNaN(ts) ? 0 : ts;
+  };
+  return orders.sort((a, b) => {
+    const aVal = extractValue(a);
+    const bVal = extractValue(b);
+    if (aVal === bVal) return 0;
+    return aVal > bVal ? directionFactor : -directionFactor;
+  });
+}
+
+async function fetchOrdersForEntityType(entityType, options) {
   const config = ENTITY_CONFIG[entityType];
   if (!config) {
-    throw new Error('Invalid entity type requested');
+    return [];
   }
 
-  const { OrderModel, include, groupAlias, countryAlias, serialize, searchColumns } = config;
-  const pagination = normalizePagination(page, pageSize);
-  const sort = normalizeSort(sortBy, sortDir);
+  const {
+    group,
+    instrument,
+    search,
+    sort,
+    admin,
+  } = options;
+
+  const { OrderModel, include, groupAlias, countryAlias, instrumentColumn, serialize, columnMap } = config;
 
   const whereClause = {
     order_status: { [Op.in]: STATUS_FILTER },
@@ -273,47 +277,79 @@ async function getAdminOpenOrders({
     applyGroupFilter(whereClause, group, groupAlias);
   }
 
+  if (instrument) {
+    applyInstrumentFilter(whereClause, instrument, columnMap?.symbol || instrumentColumn || 'symbol');
+  }
+
+  if (search) {
+    whereClause[Op.and] = whereClause[Op.and] || [];
+    whereClause[Op.and].push({
+      order_id: { [Op.like]: `%${search}%` },
+    });
+  }
+
   if (admin?.role !== 'superadmin' && admin?.country_id) {
     applyCountryScope(whereClause, admin.country_id, countryAlias);
   }
 
-  const searchFilter = buildSearchFilters(search, searchColumns);
-  if (searchFilter) {
-    whereClause[Op.and] = whereClause[Op.and] || [];
-    whereClause[Op.and].push(searchFilter);
-  }
-
-  const dbSortField = config.columnMap?.[sort.field] || sort.field;
+  const dbSortField = columnMap?.[sort.field] || sort.field;
   const order = [[dbSortField, sort.direction]];
 
-  const { rows, count } = await OrderModel.findAndCountAll({
+  const rows = await OrderModel.findAll({
     where: whereClause,
     include,
-    limit: pagination.pageSize,
-    offset: pagination.offset,
     order,
     distinct: true,
     subQuery: false,
   });
 
-  const totalPages = Math.ceil(count / pagination.pageSize) || 1;
+  return rows.map((row) => ({
+    user_type: entityType,
+    ...serialize(row),
+  }));
+}
+
+/**
+ * Fetch open orders for admin views with filters
+ */
+async function getAdminOpenOrders({
+  entityTypes,
+  group,
+  search,
+  sortBy,
+  sortDir,
+  instrument,
+  admin,
+}) {
+  const typesToQuery = Array.isArray(entityTypes) && entityTypes.length
+    ? entityTypes.filter((type) => type !== 'demo')
+    : ['live', 'strategy_provider', 'copy_follower'];
+  const sort = normalizeSort(sortBy, sortDir);
+
+  const allOrders = [];
+  for (const type of typesToQuery) {
+    const orders = await fetchOrdersForEntityType(type, {
+      group,
+      instrument,
+      search,
+      sort,
+      admin,
+    });
+    allOrders.push(...orders);
+  }
+
+  const sortedOrders = sortOrders(allOrders, sort);
 
   return {
-    pagination: {
-      page: pagination.page,
-      page_size: pagination.pageSize,
-      total: count,
-      total_pages: totalPages,
-      has_next_page: pagination.page < totalPages,
-      has_previous_page: pagination.page > 1,
-    },
     filters: {
+      user_types: typesToQuery,
       group: group || null,
-      search: search || null,
+      instrument: instrument || null,
       sort_by: sort.field,
       sort_dir: sort.direction,
     },
-    orders: rows.map(serialize),
+    orders: sortedOrders,
+    total: sortedOrders.length,
   };
 }
 

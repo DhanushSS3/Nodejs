@@ -89,19 +89,16 @@ router.get(
   requirePermissions(['orders:list_open_admin']),
   [
     query('user_type')
-      .exists()
-      .withMessage('user_type is required')
-      .bail()
+      .optional()
       .isIn(['live', 'strategy_provider', 'copy_follower'])
       .withMessage('user_type must be one of live, strategy_provider, copy_follower'),
     query('group').optional().isString().trim().isLength({ max: 64 }).withMessage('group must be a string up to 64 characters'),
-    query('search').optional().isString().trim().isLength({ max: 100 }).withMessage('search must be a string up to 100 characters'),
-    query('page').optional().isInt({ min: 1 }).withMessage('page must be an integer >= 1'),
-    query('page_size').optional().isInt({ min: 1, max: 100 }).withMessage('page_size must be between 1 and 100'),
+    query('instrument').optional().isString().trim().isLength({ max: 64 }).withMessage('instrument must be a string up to 64 characters'),
+    query('search').optional().isString().trim().isLength({ max: 64 }).withMessage('search must be a string up to 64 characters'),
     query('sort_by')
       .optional()
-      .isIn(['created_at', 'updated_at', 'symbol', 'order_price', 'order_quantity'])
-      .withMessage('sort_by must be one of created_at, updated_at, symbol, order_price, order_quantity'),
+      .isIn(['created_at', 'order_quantity'])
+      .withMessage('sort_by must be one of created_at, order_quantity'),
     query('sort_dir')
       .optional()
       .custom((value) => ['asc', 'desc', 'ASC', 'DESC'].includes(value))
