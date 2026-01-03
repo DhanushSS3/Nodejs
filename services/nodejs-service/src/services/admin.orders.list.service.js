@@ -8,8 +8,20 @@ const {
   CopyFollowerAccount,
 } = require('../models');
 
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 100;
 const DEFAULT_SORT = { field: 'created_at', direction: 'DESC' };
 const STATUS_FILTER = ['OPEN'];
+
+function normalizePagination(pageRaw, pageSizeRaw) {
+  const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+  const pageSize = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, parseInt(pageSizeRaw, 10) || DEFAULT_PAGE_SIZE),
+  );
+  const offset = (page - 1) * pageSize;
+  return { page, pageSize, offset };
+}
 
 /**
  * Normalize sort
@@ -316,6 +328,8 @@ async function getAdminOpenOrders({
   entityTypes,
   group,
   search,
+  page,
+  pageSize,
   sortBy,
   sortDir,
   instrument,
@@ -339,17 +353,33 @@ async function getAdminOpenOrders({
   }
 
   const sortedOrders = sortOrders(allOrders, sort);
+  const pagination = normalizePagination(page, pageSize);
+  const paginatedOrders = sortedOrders.slice(
+    pagination.offset,
+    pagination.offset + pagination.pageSize,
+  );
+  const total = sortedOrders.length;
+  const totalPages = Math.ceil(total / pagination.pageSize) || 1;
 
   return {
+    pagination: {
+      page: pagination.page,
+      page_size: pagination.pageSize,
+      total,
+      total_pages: totalPages,
+      has_next_page: pagination.page < totalPages,
+      has_previous_page: pagination.page > 1,
+    },
     filters: {
       user_types: typesToQuery,
       group: group || null,
       instrument: instrument || null,
       sort_by: sort.field,
       sort_dir: sort.direction,
+      search: search || null,
     },
-    orders: sortedOrders,
-    total: sortedOrders.length,
+    orders: paginatedOrders,
+    total,
   };
 }
 

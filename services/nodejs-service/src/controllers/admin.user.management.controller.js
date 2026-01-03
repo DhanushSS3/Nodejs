@@ -23,6 +23,8 @@ class AdminUserManagementController {
         group,
         instrument,
         search,
+        page,
+        page_size: pageSize,
         sort_by: sortBy,
         sort_dir: sortDir,
       } = req.query;
@@ -32,6 +34,8 @@ class AdminUserManagementController {
         group,
         instrument,
         search,
+        page,
+        pageSize,
         sortBy,
         sortDir,
         admin: req.admin,

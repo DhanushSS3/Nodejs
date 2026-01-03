@@ -95,6 +95,8 @@ router.get(
     query('group').optional().isString().trim().isLength({ max: 64 }).withMessage('group must be a string up to 64 characters'),
     query('instrument').optional().isString().trim().isLength({ max: 64 }).withMessage('instrument must be a string up to 64 characters'),
     query('search').optional().isString().trim().isLength({ max: 64 }).withMessage('search must be a string up to 64 characters'),
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be an integer >= 1'),
+    query('page_size').optional().isInt({ min: 1, max: 100 }).withMessage('page_size must be between 1 and 100'),
     query('sort_by')
       .optional()
       .isIn(['created_at', 'order_quantity'])
