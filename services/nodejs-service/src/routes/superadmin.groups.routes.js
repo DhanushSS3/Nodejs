@@ -228,7 +228,7 @@ router.post('/sync/:groupId', groupsController.syncGroup);
  *       500:
  *         description: Internal server error
  */
-router.get('/dropdown', groupsController.getGroupsDropdown);
+router.get('/dropdown', (req, res, next) => groupsController.getGroupsDropdown(req, res, next));
 
 /**
  * @swagger

@@ -1573,23 +1573,8 @@ class GroupsController {
    */
   async getGroupsDropdown(req, res) {
     try {
-      const { admin } = req;
-
       const groupNames = await this._fetchUniqueGroupNames();
-
-      // Create audit log
-      await createAuditLog(
-        admin.id,
-        'GROUPS_DROPDOWN_ACCESS',
-        req.ip,
-        {
-          total_groups: groupNames.length,
-          accessed_for: 'frontend_dropdown'
-        },
-        'SUCCESS'
-      );
-
-      logger.info(`Superadmin ${admin.id} accessed groups dropdown - ${groupNames.length} groups`);
+      logger.info(`Groups dropdown fetched - ${groupNames.length} groups`);
 
       res.status(200).json({
         success: true,
@@ -1602,16 +1587,6 @@ class GroupsController {
 
     } catch (error) {
       logger.error('Failed to get groups dropdown:', error);
-
-      // Create audit log for failure
-      await createAuditLog(
-        req.admin?.id,
-        'GROUPS_DROPDOWN_ACCESS',
-        req.ip,
-        { accessed_for: 'frontend_dropdown' },
-        'FAILED',
-        error.message
-      );
 
       res.status(500).json({
         success: false,
