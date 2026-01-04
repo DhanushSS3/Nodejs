@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const groupsController = require('../controllers/groups.controller');
-const { authenticateJWT, requireRole } = require('../middlewares/auth.middleware');
+const { authenticateAdmin, requireRole } = require('../middlewares/auth.middleware');
 
 /**
  * @swagger
@@ -64,7 +64,7 @@ const { authenticateJWT, requireRole } = require('../middlewares/auth.middleware
  */
 
 // All routes require superadmin access
-router.use(authenticateJWT);
+router.use(authenticateAdmin);
 router.use(requireRole('superadmin'));
 
 /**
