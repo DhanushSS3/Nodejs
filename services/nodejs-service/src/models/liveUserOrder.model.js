@@ -20,6 +20,14 @@ const LiveUserOrder = sequelize.define('LiveUserOrder', {
       key: 'id'
     }
   },
+  parent_mam_order_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'mam_orders',
+      key: 'id'
+    }
+  },
   symbol: {
     type: DataTypes.STRING(255),
     allowNull: false,
@@ -132,6 +140,7 @@ const LiveUserOrder = sequelize.define('LiveUserOrder', {
   indexes: [
     { fields: ['order_id'] },
     { fields: ['order_user_id'] },
+    { fields: ['parent_mam_order_id'] },
     { fields: ['order_status'] },
     { fields: ['order_type'] },
     { fields: ['symbol'] },

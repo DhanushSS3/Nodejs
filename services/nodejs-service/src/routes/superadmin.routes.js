@@ -141,6 +141,8 @@ const {
 const transactionRoutes = require('./superadmin.transaction.routes');
 // Import money requests routes
 const moneyRequestsRoutes = require('./superadmin.money.requests.routes');
+// Import MAM routes
+const mamRoutes = require('./superadmin.mam.routes');
 
 // All endpoints in this router require the user to be authenticated as a superadmin
 router.use(authenticateAdmin);
@@ -159,5 +161,8 @@ router.use('/', transactionRoutes);
 
 // Money requests review routes (superadmin only)
 router.use('/', moneyRequestsRoutes);
+
+// MAM management routes (superadmin only)
+router.use('/', mamRoutes);
 
 module.exports = router;

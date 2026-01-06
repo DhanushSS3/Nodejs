@@ -106,7 +106,7 @@ async function placeInstantOrder(req, res) {
       return res.status(403).json({ success: false, message: 'User role not allowed for order placement' });
     }
     if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') {
-      return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+      return res.status(403).json({ success: false, message: 'Manual trading is disabled while this account is managed by MAM' });
     }
     if (userStatus !== undefined && String(userStatus) === '0') {
       return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
@@ -2575,7 +2575,7 @@ async function cancelPendingOrder(req, res) {
     const userStatus = user.status;
 
     if (role && role !== 'trader') return res.status(403).json({ success: false, message: 'User role not allowed for pending cancel' });
-    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') return res.status(403).json({ success: false, message: 'Self trading is disabled for this user' });
+    if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') return res.status(403).json({ success: false, message: 'Manual trading is disabled while this account is managed by MAM' });
     if (userStatus !== undefined && String(userStatus) === '0') return res.status(403).json({ success: false, message: 'User status is not allowed to trade' });
 
     const body = req.body || {};
