@@ -5,6 +5,9 @@ const DemoUserOrder = require('./demoUserOrder.model');
 const MoneyRequest = require('./moneyRequest.model');
 const Admin = require('./admin.model');
 const UserTransaction = require('./userTransaction.model');
+const MAMAccount = require('./mamAccount.model');
+const MAMOrder = require('./mamOrder.model');
+const MAMAssignment = require('./mamAssignment.model');
 
 /**
  * Define associations between models
@@ -54,6 +57,65 @@ function defineAssociations() {
     foreignKey: 'transaction_id',
     targetKey: 'transaction_id',
     as: 'transaction',
+    constraints: false
+  });
+
+  // MAM associations
+  MAMAccount.belongsTo(Admin, {
+    foreignKey: 'created_by_admin_id',
+    as: 'creator',
+    constraints: false
+  });
+
+  MAMAccount.hasMany(MAMOrder, {
+    foreignKey: 'mam_account_id',
+    as: 'orders',
+    onDelete: 'CASCADE',
+    onUpdate: 'CASCADE'
+  });
+
+  MAMOrder.belongsTo(MAMAccount, {
+    foreignKey: 'mam_account_id',
+    as: 'mamAccount'
+  });
+
+  MAMAccount.hasMany(MAMAssignment, {
+    foreignKey: 'mam_account_id',
+    as: 'assignments',
+    onDelete: 'CASCADE',
+    onUpdate: 'CASCADE'
+  });
+
+  MAMAssignment.belongsTo(MAMAccount, {
+    foreignKey: 'mam_account_id',
+    as: 'mamAccount'
+  });
+
+  MAMAssignment.belongsTo(LiveUser, {
+    foreignKey: 'client_live_user_id',
+    as: 'client'
+  });
+
+  LiveUser.hasMany(MAMAssignment, {
+    foreignKey: 'client_live_user_id',
+    as: 'mamAssignments'
+  });
+
+  LiveUser.hasMany(MAMOrder, {
+    foreignKey: 'master_live_user_id',
+    as: 'mamMasterOrders',
+    constraints: false
+  });
+
+  MAMOrder.belongsTo(LiveUser, {
+    foreignKey: 'master_live_user_id',
+    as: 'masterTrader',
+    constraints: false
+  });
+
+  LiveUserOrder.belongsTo(MAMOrder, {
+    foreignKey: 'parent_mam_order_id',
+    as: 'parentMAMOrder',
     constraints: false
   });
 }

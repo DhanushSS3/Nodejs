@@ -25,6 +25,22 @@ const MAMAccount = sequelize.define('MAMAccount', {
     allowNull: false,
     unique: true
   },
+  login_email: {
+    type: DataTypes.STRING(150),
+    allowNull: true,
+    unique: true,
+    validate: {
+      isEmail: true
+    }
+  },
+  login_password_hash: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  last_login_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
   leverage: {
     type: DataTypes.INTEGER,
     allowNull: true
@@ -124,8 +140,14 @@ const MAMAccount = sequelize.define('MAMAccount', {
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
+  defaultScope: {
+    attributes: {
+      exclude: ['login_password_hash']
+    }
+  },
   indexes: [
     { fields: ['account_number'] },
+    { fields: ['login_email'], unique: true },
     { fields: ['status'] },
     { fields: ['allocation_method'] }
   ],
@@ -139,6 +161,9 @@ const MAMAccount = sequelize.define('MAMAccount', {
     }
   },
   scopes: {
+    withSecrets: {
+      attributes: { include: ['login_password_hash'] }
+    },
     active: {
       where: {
         status: 'active'

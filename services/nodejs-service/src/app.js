@@ -32,6 +32,7 @@ const copyTradingRoutes = require('./routes/copyTrading.routes');
 const copyTradingOrderRoutes = require('./routes/copyTrading.orders.routes');
 const adminCronRoutes = require('./routes/admin.cron.routes');
 const superadminFreePassRoutes = require('./routes/superadmin.freepass.routes');
+const mamAuthRoutes = require('./routes/mam.auth.routes');
 const pythonHealthRoutes = require('./routes/python.health.routes');
 const internalTransferRoutes = require('./routes/internalTransfer.routes');
 
@@ -136,6 +137,7 @@ app.use('/api/copy-trading/orders', copyTradingOrderRoutes);
 app.use('/api/admin/cron', adminCronRoutes);
 app.use('/api/superadmin/strategy-providers', superadminFreePassRoutes);
 app.use('/api/python-health', pythonHealthRoutes);
+app.use('/api/mam/auth', mamAuthRoutes);
 app.use('/api/internal-transfers', internalTransferRoutes);
 
 // Debug endpoint to test Python health routes

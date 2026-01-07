@@ -28,6 +28,13 @@ const decimalField = (field, options = {}) =>
     .toFloat();
 
 const createMAMAccountValidation = [
+  body('login_email')
+    .isEmail().withMessage('login_email must be a valid email')
+    .trim()
+    .toLowerCase(),
+  body('login_password')
+    .isString().withMessage('login_password must be provided')
+    .isLength({ min: 8 }).withMessage('login_password must be at least 8 characters'),
   body('mam_name')
     .isString().withMessage('mam_name must be a string')
     .trim()
@@ -80,6 +87,15 @@ const createMAMAccountValidation = [
 ];
 
 const updateMAMAccountValidation = [
+  body('login_email')
+    .optional()
+    .isEmail().withMessage('login_email must be a valid email')
+    .trim()
+    .toLowerCase(),
+  body('login_password')
+    .optional()
+    .isString().withMessage('login_password must be a string')
+    .isLength({ min: 8 }).withMessage('login_password must be at least 8 characters when provided'),
   body('mam_name')
     .optional()
     .isString().withMessage('mam_name must be a string')

@@ -17,6 +17,9 @@ const CopyFollowerAccount = require('./copyFollowerAccount.model');
 const StrategyProviderOrder = require('./strategyProviderOrder.model');
 const CopyFollowerOrder = require('./copyFollowerOrder.model');
 const UserStrategyProviderFavorite = require('./userStrategyProviderFavorite.model');
+const MAMAccount = require('./mamAccount.model');
+const MAMOrder = require('./mamOrder.model');
+const MAMAssignment = require('./mamAssignment.model');
 const { defineAssociations } = require('./associations');
 require('./copyTrading.associations');
 
@@ -47,4 +50,7 @@ module.exports = {
   StrategyProviderOrder,
   CopyFollowerOrder,
   UserStrategyProviderFavorite,
+  MAMAccount,
+  MAMOrder,
+  MAMAssignment,
 };

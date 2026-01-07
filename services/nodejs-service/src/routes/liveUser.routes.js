@@ -1,6 +1,7 @@
 const express = require('express');
-const { signup, regenerateViewPassword, getUserInfo, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret, getMonthlyOrderQuantityAdminSecret } = require('../controllers/liveUser.controller');
 const { body, param, query } = require('express-validator');
+const { signup, regenerateViewPassword, getUserInfo, getClosedOrdersByEmailAdminSecret, getClosedOrderInstrumentSummaryAdminSecret, getMonthlyOrderQuantityAdminSecret } = require('../controllers/liveUser.controller');
+const mammController = require('../controllers/mam.client.controller');
 const upload = require('../middlewares/upload.middleware');
 const { handleValidationErrors } = require('../middlewares/error.middleware');
 const { handleFileUploadErrors } = require('../middlewares/fileUploadError.middleware');
@@ -341,6 +342,31 @@ router.post('/:id/regenerate-view-password',
  *         description: Internal server error
  */
 router.get('/me', authenticateJWT, getUserInfo);
+
+// MAM client routes
+router.get('/mam/accounts', authenticateJWT, mammController.listAvailableAccounts);
+router.post(
+  '/mam/assignments',
+  authenticateJWT,
+  require('../middlewares/mamAssignment.validation').createClientAssignmentValidation,
+  handleValidationErrors,
+  mammController.requestAssignment
+);
+router.get('/mam/assignments', authenticateJWT, mammController.listAssignments);
+router.get(
+  '/mam/assignments/:id',
+  authenticateJWT,
+  require('../middlewares/mamAssignment.validation').assignmentIdParamValidation,
+  handleValidationErrors,
+  mammController.getAssignment
+);
+router.post(
+  '/mam/assignments/:id/accept',
+  authenticateJWT,
+  require('../middlewares/mamAssignment.validation').assignmentIdParamValidation,
+  handleValidationErrors,
+  mammController.acceptAssignment
+);
 
 /**
  * Lightweight admin endpoint secured by static secret for closed order lookup

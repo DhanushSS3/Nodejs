@@ -1,4 +1,5 @@
 const mamAccountService = require('../services/mamAccount.service');
+const mamAssignmentService = require('../services/mamAssignment.service');
 
 class SuperadminMAMController {
   async createMAMAccount(req, res) {
