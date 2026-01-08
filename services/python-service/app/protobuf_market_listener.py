@@ -42,8 +42,7 @@ class ProtobufMarketListener:
     def __init__(self):
         self.ws_url = "wss://quotes.livefxhub.com/?token=Lkj@asd@1234"
         self.market_service = MarketDataService()
-        self.reconnect_delay = 5
-        self.max_reconnect_attempts = 10
+        self.reconnect_delay = int(os.getenv("MARKET_WS_RECONNECT_DELAY", "30"))
         self.is_running = False
         
         # ZERO TICK LOSS: Process every message immediately
@@ -86,7 +85,7 @@ class ProtobufMarketListener:
         self.writer_task = asyncio.create_task(self._redis_writer())
         
         try:
-            while self.is_running and reconnect_count < self.max_reconnect_attempts:
+            while self.is_running:
                 try:
                     await self._connect_and_listen()
                     reconnect_count = 0
@@ -100,9 +99,6 @@ class ProtobufMarketListener:
                     reconnect_count += 1
                     logger.error(f"WebSocket error: {e}")
                     await asyncio.sleep(self.reconnect_delay)
-            
-            if reconnect_count >= self.max_reconnect_attempts:
-                logger.error("Max reconnection attempts reached. Stopping listener.")
         
         finally:
             # Clean shutdown
