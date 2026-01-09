@@ -89,6 +89,8 @@ class TakeProfitService:
         cfg = await fetch_user_config(user_type, user_id)
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        account_number = cfg.get("account_number")
+        account_number = str(account_number) if account_number is not None else None
         if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
             flow = "local"
         elif user_type == "live" and sending_orders == "barclays":
@@ -130,13 +132,16 @@ class TakeProfitService:
 
             # Persist for DB update backfill
             try:
-                await redis_cluster.hset(f"order_data:{order_id}", mapping={
+                local_mapping = {
                     "symbol": symbol,
                     "order_type": side,
                     "user_type": user_type,
                     "user_id": user_id,
                     "take_profit": str(tp_raw),
-                })
+                }
+                if account_number is not None:
+                    local_mapping["account_number"] = account_number
+                await redis_cluster.hset(f"order_data:{order_id}", mapping=local_mapping)
             except Exception:
                 pass
 
@@ -144,9 +149,12 @@ class TakeProfitService:
             try:
                 hash_tag = f"{user_type}:{user_id}"
                 order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
-                await redis_cluster.hset(order_key, mapping={
+                holdings_mapping = {
                     "take_profit": str(tp_raw),
-                })
+                }
+                if account_number is not None:
+                    holdings_mapping["account_number"] = account_number
+                await redis_cluster.hset(order_key, mapping=holdings_mapping)
             except Exception:
                 pass
 
@@ -197,10 +205,16 @@ class TakeProfitService:
             connection_tracker.start_operation(operation_id, "cluster", f"takeprofit_status_{order_id}")
             log_connection_acquire("cluster", f"takeprofit_status_{order_id}", operation_id)
             
+            status_mapping = {"status": "TAKEPROFIT", "symbol": symbol, "order_type": side}
+            holdings_status_mapping = {"status": "TAKEPROFIT"}
+            if account_number is not None:
+                status_mapping["account_number"] = account_number
+                holdings_status_mapping["account_number"] = account_number
+            
             try:
                 async with redis_cluster.pipeline() as pipe:
-                    pipe.hset(order_data_key, mapping={"status": "TAKEPROFIT", "symbol": symbol, "order_type": side})
-                    pipe.hset(order_key, mapping={"status": "TAKEPROFIT"})
+                    pipe.hset(order_data_key, mapping=status_mapping)
+                    pipe.hset(order_key, mapping=holdings_status_mapping)
                     await pipe.execute()
                 
                 log_pipeline_operation("cluster", f"takeprofit_status_{order_id}", 2, operation_id)
@@ -270,6 +284,8 @@ class TakeProfitService:
         # Optional passthroughs
         if payload.get("takeprofit_id"):
             provider_payload["takeprofit_id"] = str(payload.get("takeprofit_id"))
+        if account_number is not None:
+            provider_payload["account_number"] = account_number
 
         ok, via = await send_provider_order(provider_payload)
         if not ok:
@@ -400,6 +416,8 @@ class TakeProfitService:
             "status": "TAKEPROFIT-CANCEL",
             "type": "order",
         }
+        if account_number is not None:
+            provider_payload["account_number"] = account_number
         if takeprofit_cancel_id:
             provider_payload["take_profit_cancel_id"] = takeprofit_cancel_id
 
@@ -421,9 +439,14 @@ class TakeProfitService:
             # Log before setting status
             logger.info("TAKEPROFIT-CANCEL setting Redis status for order_id=%s order_data_key=%s", order_id, order_data_key)
             
+            status_mapping = {"status": "TAKEPROFIT-CANCEL", "symbol": symbol, "order_type": side, "takeprofit_cancel_id": takeprofit_cancel_id}
+            holdings_status_mapping = {"status": "TAKEPROFIT-CANCEL"}
+            if account_number is not None:
+                status_mapping["account_number"] = account_number
+                holdings_status_mapping["account_number"] = account_number
             pipe = redis_cluster.pipeline()
-            pipe.hset(order_data_key, mapping={"status": "TAKEPROFIT-CANCEL", "symbol": symbol, "order_type": side, "takeprofit_cancel_id": takeprofit_cancel_id})
-            pipe.hset(order_key, mapping={"status": "TAKEPROFIT-CANCEL"})
+            pipe.hset(order_data_key, mapping=status_mapping)
+            pipe.hset(order_key, mapping=holdings_status_mapping)
             result = await pipe.execute()
             
             logger.info("TAKEPROFIT-CANCEL status set in Redis for order_id=%s pipeline_result=%s", order_id, result)

@@ -175,6 +175,8 @@ class OrderExecutor:
             return {"ok": False, "reason": "invalid_leverage"}
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        account_number = cfg.get("account_number")
+        account_number = str(account_number) if account_number is not None else None
         
         # Debug logging for provider flow determination
         logger.info("Provider flow determination", {
@@ -509,6 +511,8 @@ class OrderExecutor:
             **({"commission_entry": commission_entry} if commission_entry is not None else {}),
             **({"commission": commission_entry} if (commission_entry is not None and flow == "local") else {}),
         }
+        if account_number is not None:
+            order_fields["account_number"] = account_number
         if pricing_meta.get("pricing"):
             price_info = pricing_meta["pricing"]
             order_fields.update({
@@ -580,6 +584,7 @@ class OrderExecutor:
                 "order_id": order_id,
                 "user_id": user_id,
                 "user_type": user_type,
+                **({"account_number": account_number} if account_number is not None else {}),
                 "symbol": symbol,
                 "status": "OPEN",
                 "order_type": order_type,
@@ -644,6 +649,7 @@ class OrderExecutor:
                     # User info
                     "user_id": user_id,
                     "user_type": user_type,
+                    **({"account_number": account_number} if account_number is not None else {}),
                     "group": group,
                     "leverage": leverage,
                     # Instrument / group data (best-effort from fetched group hash)

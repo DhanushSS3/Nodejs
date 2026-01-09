@@ -220,6 +220,8 @@ class OrderCloser:
         cfg = await fetch_user_config(user_type, user_id)
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        account_number = cfg.get("account_number")
+        account_number = str(account_number) if account_number is not None else None
 
         close_reason = (str(payload.get("close_reason")) if payload.get("close_reason") else "").strip()
         trigger_lifecycle_id = payload.get("trigger_lifecycle_id")
@@ -488,6 +490,8 @@ class OrderCloser:
             }
             if tp_id:
                 cp_tp["takeprofit_id"] = str(tp_id)
+            if account_number is not None:
+                cp_tp["account_number"] = account_number
             cancel_steps.append(("TAKEPROFIT-CANCEL", cp_tp))
         if payload.get("stoploss_cancel_id"):
             cp_sl = {
@@ -501,6 +505,8 @@ class OrderCloser:
             }
             if sl_id:
                 cp_sl["stoploss_id"] = str(sl_id)
+            if account_number is not None:
+                cp_sl["account_number"] = account_number
             cancel_steps.append(("STOPLOSS-CANCEL", cp_sl))
 
         # Send cancel payloads sequentially and wait for ack per id
@@ -546,6 +552,8 @@ class OrderCloser:
             "contract_value": contract_value,
             "type": "order",
         }
+        if account_number is not None:
+            provider_close["account_number"] = account_number
         
         # Debug logging for provider close message
         logger.info("[PROVIDER_CLOSE_DEBUG] order_id=%s close_id=%s payload_close_id=%s", 

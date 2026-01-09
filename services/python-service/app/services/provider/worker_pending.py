@@ -148,6 +148,7 @@ async def _update_redis_for_pending(payload: Dict[str, Any]) -> Dict[str, Any]:
     order_key = f"user_holdings:{{{hash_tag}}}:{order_id}"
     index_key = f"user_orders_index:{{{hash_tag}}}"
 
+    account_number = payload.get("account_number")
     mapping_common = {
         "order_status": "PENDING",
         "execution_status": "PENDING",
@@ -156,6 +157,8 @@ async def _update_redis_for_pending(payload: Dict[str, Any]) -> Dict[str, Any]:
         "provider_avspx": avspx if avspx is not None else "",
         "provider_ts": str(ts) if ts is not None else "",
     }
+    if account_number is not None:
+        mapping_common["account_number"] = str(account_number)
 
     pipe = redis_cluster.pipeline()
     pipe.hset(order_data_key, mapping=mapping_common)
@@ -374,6 +377,8 @@ class PendingWorker:
                             "user_type": user_type,
                             "group": str(payload.get("group") or "Standard"),
                         }
+                        if account_number is not None:
+                            info["account_number"] = str(account_number)
                         await register_provider_pending(info)
                         logger.debug(
                             "[PENDING:REGISTERED] order_id=%s for monitoring", 

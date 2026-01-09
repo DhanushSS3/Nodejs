@@ -26,7 +26,7 @@ def _hkey(order_id: str) -> str:
 async def register_provider_pending(info: Dict[str, Any]) -> None:
     """
     Register a provider pending order for continuous margin monitoring.
-    Expected fields in info: order_id, symbol, order_type, order_quantity, user_id, user_type, group
+    Expected fields in info: order_id, symbol, order_type, order_quantity, user_id, user_type, group, account_number
     """
     operation_id = generate_operation_id()
     try:
@@ -37,6 +37,7 @@ async def register_provider_pending(info: Dict[str, Any]) -> None:
         user_id = str(info.get("user_id"))
         user_type = str(info.get("user_type") or "").lower()
         group = str(info.get("group") or "Standard")
+        account_number = info.get("account_number")
         if not order_id:
             return
         
@@ -46,7 +47,7 @@ async def register_provider_pending(info: Dict[str, Any]) -> None:
         
         async with redis_cluster.pipeline() as pipe:
             pipe.sadd(SET_ACTIVE, order_id)
-            pipe.hset(_hkey(order_id), mapping={
+            mapping = {
                 "symbol": symbol,
                 "order_type": order_type,
                 "order_quantity": order_qty,
@@ -54,7 +55,10 @@ async def register_provider_pending(info: Dict[str, Any]) -> None:
                 "user_type": user_type,
                 "group": group,
                 "created_at": str(int(asyncio.get_event_loop().time() * 1000)),
-            })
+            }
+            if account_number is not None:
+                mapping["account_number"] = str(account_number)
+            pipe.hset(_hkey(order_id), mapping=mapping)
             await pipe.execute()
             
         log_pipeline_operation("cluster", f"register_pending_{order_id}", 2, operation_id)

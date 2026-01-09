@@ -9,7 +9,12 @@ from ..services.orders.order_close_service import OrderCloser
 from ..services.orders.stoploss_service import StopLossService
 from ..services.orders.takeprofit_service import TakeProfitService
 from ..services.orders.service_provider_client import send_provider_order
-from ..services.orders.order_repository import fetch_user_orders, save_idempotency_result, fetch_group_data
+from ..services.orders.order_repository import (
+    fetch_user_orders,
+    save_idempotency_result,
+    fetch_group_data,
+    fetch_user_config,
+)
 from ..services.portfolio.user_margin_service import compute_user_total_margin
 from ..config.redis_config import redis_cluster
 from ..services.orders.order_registry import add_lifecycle_id
@@ -318,13 +323,24 @@ async def pending_cancel_endpoint(payload: Dict[str, Any]):
         if not order_id or not cancel_id or order_type not in ("BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP") or user_type not in ("live","demo","strategy_provider","copy_follower"):
             raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_fields"})
 
-        # Optional: include symbol if present in canonical for provider context
+        # Optional: include symbol/account for provider context
         symbol = None
+        account_number = None
+        od = None
         try:
             od = await redis_cluster.hgetall(f"order_data:{order_id}")
-            symbol = (od.get("symbol") if od else None) or None
+            if od:
+                symbol = od.get("symbol") or None
+                account_number = od.get("account_number")
         except Exception:
+            od = None
             symbol = None
+        if account_number is None:
+            try:
+                cfg = await fetch_user_config(user_type, user_id)
+                account_number = cfg.get("account_number")
+            except Exception:
+                account_number = None
 
         # Best-effort: ensure Redis status reflects engine intent PENDING-CANCEL for dispatcher routing
         try:
@@ -352,6 +368,8 @@ async def pending_cancel_endpoint(payload: Dict[str, Any]):
         # print("Provider payload: ",provider_payload)
         if symbol:
             provider_payload["symbol"] = str(symbol).upper()
+        if account_number is not None:
+            provider_payload["account_number"] = str(account_number)
 
         try:
             ok, via = await send_provider_order(provider_payload)
@@ -399,19 +417,34 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
 
         # Resolve group & group config (prefer canonical, fallback to DB/Redis group hash)
         group = None
+        account_number = None
+        od = None
         try:
             od = await redis_cluster.hgetall(f"order_data:{order_id}")
             if od:
                 group = od.get("group") or None
+                account_number = od.get("account_number") or None
         except Exception:
+            od = None
             group = None
-        if not group:
-            # Try user cache
+        cfg = None
+        if not group or account_number is None:
             try:
-                ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
-                group = (ucfg.get("group") if ucfg else None) or "Standard"
+                cfg = await fetch_user_config(user_type, user_id)
             except Exception:
-                group = "Standard"
+                cfg = None
+        if not group:
+            if cfg and cfg.get("group"):
+                group = cfg.get("group")
+            else:
+                try:
+                    ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
+                    group = (ucfg.get("group") if ucfg else None) or "Standard"
+                except Exception:
+                    group = "Standard"
+        if account_number is None:
+            if cfg and cfg.get("account_number") is not None:
+                account_number = cfg.get("account_number")
 
         g = await fetch_group_data(symbol, group)
         # Compute half_spread
@@ -447,6 +480,8 @@ async def pending_place_endpoint(payload: Dict[str, Any]):
                 "contract_value": contract_value,
                 "status": "PENDING",
             }
+            if account_number is not None:
+                provider_payload["account_number"] = str(account_number)
             ok, via = await send_provider_order(provider_payload)
             if not ok:
                 raise HTTPException(status_code=503, detail={"ok": False, "reason": "provider_unreachable", "via": via})
@@ -497,21 +532,36 @@ async def pending_modify_endpoint(payload: Dict[str, Any]):
         if order_price_user is None or not (order_price_user > 0):
             raise HTTPException(status_code=400, detail={"ok": False, "reason": "invalid_order_price"})
 
-        # Resolve group & group config (prefer canonical, fallback to user config)
+        # Resolve group & account (prefer canonical, fallback to user config)
         group = None
+        account_number = None
         od = None
         try:
             od = await redis_cluster.hgetall(f"order_data:{order_id}")
             if od:
                 group = od.get("group") or None
+                account_number = od.get("account_number") or None
         except Exception:
+            od = None
             group = None
-        if not group:
+        cfg = None
+        if not group or account_number is None:
             try:
-                ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
-                group = (ucfg.get("group") if ucfg else None) or "Standard"
+                cfg = await fetch_user_config(user_type, user_id)
             except Exception:
-                group = "Standard"
+                cfg = None
+        if not group:
+            if cfg and cfg.get("group"):
+                group = cfg.get("group")
+            else:
+                try:
+                    ucfg = await redis_cluster.hgetall(f"user:{{{user_type}:{user_id}}}:config")
+                    group = (ucfg.get("group") if ucfg else None) or "Standard"
+                except Exception:
+                    group = "Standard"
+        if account_number is None:
+            if cfg and cfg.get("account_number") is not None:
+                account_number = cfg.get("account_number")
 
         g = await fetch_group_data(symbol, group)
         # Compute half_spread
@@ -567,6 +617,8 @@ async def pending_modify_endpoint(payload: Dict[str, Any]):
         }
         if contract_value is not None:
             provider_payload["contract_value"] = contract_value
+        if account_number is not None:
+            provider_payload["account_number"] = str(account_number)
 
         try:
             ok, via = await send_provider_order(provider_payload)

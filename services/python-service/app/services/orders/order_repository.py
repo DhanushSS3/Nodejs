@@ -218,6 +218,8 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
                 mapping["wallet_balance"] = str(db_cfg["wallet_balance"])
             if db_cfg.get("sending_orders") is not None:
                 mapping["sending_orders"] = str(db_cfg["sending_orders"])
+            if db_cfg.get("account_number") is not None:
+                mapping["account_number"] = str(db_cfg["account_number"])
             if mapping:
                 await redis_cluster.hset(tagged_key, mapping=mapping)
         except Exception as be2:
@@ -260,6 +262,7 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
         "group": data.get("group") or "Standard",
         "status": status_val,
         "sending_orders": data.get("sending_orders"),
+        "account_number": data.get("account_number"),
     }
     
     # Only log timing for config creation, not detailed data
@@ -646,9 +649,12 @@ async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, 
         return {}  # Unsupported user type
     
     # Handle column differences between tables
-    select_cols = "`group`, leverage, status, is_active, wallet_balance"
-    if table in ["live_users", "strategy_provider_accounts", "copy_follower_accounts"]:
-        select_cols += ", sending_orders"
+    select_columns = ["`group`", "leverage", "status", "is_active", "wallet_balance"]
+    has_sending_orders = table in ["live_users", "strategy_provider_accounts", "copy_follower_accounts"]
+    if has_sending_orders:
+        select_columns.append("sending_orders")
+    select_columns.append("account_number")
+    select_cols = ", ".join(select_columns)
     try:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -659,12 +665,17 @@ async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, 
                 row = await cur.fetchone()
                 if not row:
                     return {}
-                # Unpack with optional sending_orders
-                if table in ["live_users", "strategy_provider_accounts", "copy_follower_accounts"]:
-                    grp, lev, status, is_active, wallet_balance, sending_orders = row
-                else:
-                    grp, lev, status, is_active, wallet_balance = row
-                    sending_orders = None
+                # Unpack with optional columns
+                idx = 0
+                grp = row[idx]; idx += 1
+                lev = row[idx]; idx += 1
+                status = row[idx]; idx += 1
+                is_active = row[idx]; idx += 1
+                wallet_balance = row[idx]; idx += 1
+                sending_orders = None
+                if has_sending_orders:
+                    sending_orders = row[idx]; idx += 1
+                account_number = row[idx] if idx < len(row) else None
                 cfg: Dict[str, Any] = {
                     "group": (grp or "Standard"),
                     "leverage": float(lev or 0),
@@ -672,6 +683,7 @@ async def _fetch_user_config_from_db(user_type: str, user_id: str) -> Dict[str, 
                     "is_active": int(is_active) if is_active is not None else None,
                     "wallet_balance": float(wallet_balance or 0),
                     "sending_orders": (sending_orders or None),
+                    "account_number": account_number,
                 }
                 return cfg
     except Exception as e:

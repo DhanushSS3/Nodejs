@@ -132,6 +132,7 @@ async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], c
         "provider_order_id": provider_order_id,  # Add original provider order_id from execution report
         "user_id": order_data.get("user_id"),
         "user_type": order_data.get("user_type"),
+        "account_number": order_data.get("account_number"),
         "group": order_data.get("group"),
         "leverage": order_data.get("leverage"),
         "spread": order_data.get("spread"),
