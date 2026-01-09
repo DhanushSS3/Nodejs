@@ -44,6 +44,7 @@ const createMAMAccountValidation = [
     .trim()
     .notEmpty().withMessage('group is required'),
   body('allocation_method')
+    .optional()
     .isIn(allocationMethods).withMessage('allocation_method is invalid'),
   decimalField('allocation_precision', { min: 0 }),
   body('rounding_strategy')

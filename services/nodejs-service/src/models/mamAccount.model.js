@@ -52,25 +52,27 @@ const MAMAccount = sequelize.define('MAMAccount', {
   allocation_method: {
     type: DataTypes.ENUM('balance', 'free_margin'),
     allowNull: false,
-    defaultValue: 'balance'
+    defaultValue: 'free_margin'
   },
   allocation_precision: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
-    defaultValue: 0.0001
+    defaultValue: 0.01
   },
   rounding_strategy: {
     type: DataTypes.ENUM('symbol_step', 'floor', 'ceil'),
     allowNull: false,
-    defaultValue: 'symbol_step'
+    defaultValue: 'floor'
   },
   min_client_balance: {
     type: DataTypes.DECIMAL(18, 6),
-    allowNull: true
+    allowNull: false,
+    defaultValue: 100
   },
   max_client_balance: {
     type: DataTypes.DECIMAL(18, 6),
-    allowNull: true
+    allowNull: false,
+    defaultValue: 1000
   },
   max_investors: {
     type: DataTypes.INTEGER,
@@ -112,7 +114,7 @@ const MAMAccount = sequelize.define('MAMAccount', {
   fee_settlement_cycle: {
     type: DataTypes.ENUM('daily', 'weekly', 'monthly', 'quarterly', 'on_close'),
     allowNull: false,
-    defaultValue: 'monthly'
+    defaultValue: 'on_close'
   },
   last_fee_settlement_at: {
     type: DataTypes.DATE,
@@ -125,7 +127,7 @@ const MAMAccount = sequelize.define('MAMAccount', {
   allow_partial_closures: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
-    defaultValue: true
+    defaultValue: false
   },
   terms_and_conditions: {
     type: DataTypes.TEXT,
