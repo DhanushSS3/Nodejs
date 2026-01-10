@@ -1,6 +1,7 @@
 import time
 import logging
 import asyncio
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
@@ -44,6 +45,22 @@ symbol_logger = get_symbol_holders_logger()
 # User-level locks to prevent race conditions during order operations
 _user_locks = {}
 _locks_lock = asyncio.Lock()
+
+
+def _is_market_open_by_type(instrument_type: Optional[int]) -> bool:
+    """
+    Instruments with type 4 (crypto) are tradable 24/7.
+    All other instruments should be blocked on Saturday/Sunday (UTC).
+    """
+    try:
+        t = int(instrument_type)
+        if t == 4:
+            return True
+    except (TypeError, ValueError):
+        pass
+    # Monday=0 ... Sunday=6
+    current_day = datetime.utcnow().weekday()
+    return current_day < 5
 
 async def _get_user_lock(user_type: str, user_id: str) -> asyncio.Lock:
     """Get or create a lock for a specific user to prevent race conditions."""
@@ -292,6 +309,13 @@ class OrderExecutor:
             crypto_margin_factor = float(g.get("crypto_margin_factor")) if g.get("crypto_margin_factor") is not None else None
         except (TypeError, ValueError):
             crypto_margin_factor = None
+
+        # Block trading outside allowed market hours for non-crypto instruments
+        if not _is_market_open_by_type(instrument_type):
+            result = {"ok": False, "reason": "market_closed"}
+            if idem_key:
+                await save_idempotency_result(idem_key, result)
+            return result
 
         # Commission config (normalized by group_config_helper)
         def _empty_to_none(x):

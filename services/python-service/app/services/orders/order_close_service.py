@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import aio_pika
@@ -43,6 +44,22 @@ symbol_logger = get_symbol_holders_logger()
 # User-level locks to prevent race conditions during order operations
 _user_locks: Dict[str, asyncio.Lock] = {}
 _locks_lock = asyncio.Lock()
+
+
+def _is_market_open_by_type(instrument_type: Optional[int]) -> bool:
+    """
+    Instruments with type 4 (crypto) are tradable 24/7.
+    All other instruments should be blocked on Saturday/Sunday (UTC).
+    """
+    try:
+        t = int(instrument_type)
+        if t == 4:
+            return True
+    except (TypeError, ValueError):
+        pass
+    # Monday=0 ... Sunday=6
+    current_day = datetime.utcnow().weekday()
+    return current_day < 5
 
 
 def _normalize_close_message(raw: Optional[str]) -> Optional[str]:
@@ -283,7 +300,10 @@ class OrderCloser:
                         g[k] = gfb.get(k)
         contract_size = _safe_float(g.get("contract_size"))
         profit_currency = g.get("profit") or None
-        instrument_type = int(g.get("type") or 1)
+        try:
+            instrument_type = int(g.get("type") or 1)
+        except (TypeError, ValueError):
+            instrument_type = 1
         commission_rate = None
         commission_type = None
         commission_value_type = None
@@ -296,6 +316,10 @@ class OrderCloser:
             commission_value_type = int(vtype_raw) if vtype_raw is not None else None
         except Exception:
             pass
+
+        # Block manual closes outside market hours for non-crypto instruments
+        if not _is_market_open_by_type(instrument_type):
+            return {"ok": False, "reason": "market_closed"}
 
         # Local flow may have local SL/TP trigger tracking; remove immediately. Provider flow skips this.
         removed_triggers = None

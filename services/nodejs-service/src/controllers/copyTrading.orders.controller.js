@@ -71,6 +71,17 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function _isMarketOpenByType(typeVal) {
+  try {
+    const t = parseInt(typeVal, 10);
+    if (!Number.isNaN(t) && t === 4) {
+      return true;
+    }
+  } catch (_) { /* ignore */ }
+  const day = new Date().getUTCDay(); // 0 Sunday, 6 Saturday
+  return day !== 0 && day !== 6;
+}
+
 async function determineStrategyProviderFlow(strategyProviderId) {
   try {
     const userCfgKey = `user:{strategy_provider:${strategyProviderId}}:config`;
@@ -539,6 +550,22 @@ async function placeStrategyProviderOrder(req, res) {
       });
     }
 
+    // Trading hours check (non-crypto blocked on weekends)
+    try {
+      const symbolForHours = String(parsed.symbol).toUpperCase();
+      const gf = await groupsCache.getGroupFields(strategyProviderGroup, symbolForHours, ['type']);
+      const gType = gf && gf.type != null ? gf.type : null;
+      if (!_isMarketOpenByType(gType)) {
+        return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+      }
+    } catch (e) {
+      logger.warn('Strategy provider placement market-hours check failed', {
+        symbol: parsed.symbol,
+        group: strategyProviderGroup,
+        error: e.message
+      });
+    }
+
     // Generate order ID
     const order_id = await idGenerator.generateOrderId();
     mark('after_id_generated');
@@ -1000,6 +1027,36 @@ async function closeStrategyProviderOrder(req, res) {
       return res.status(404).json({ 
         success: false, 
         message: 'Order not found or access denied' 
+      });
+    }
+
+    const strategyProviderAccount = await StrategyProviderAccount.findOne({
+      where: {
+        id: parseInt(tokenStrategyProviderId),
+        user_id: tokenUserId
+      }
+    });
+
+    if (!strategyProviderAccount) {
+      return res.status(404).json({
+        success: false,
+        message: 'Strategy provider account not found or access denied'
+      });
+    }
+
+    try {
+      const symbolForHours = normalizeStr(order.symbol).toUpperCase();
+      const groupName = normalizeStr(strategyProviderAccount.group || 'Standard');
+      const gf = await groupsCache.getGroupFields(groupName, symbolForHours, ['type']);
+      const gType = gf && gf.type != null ? gf.type : null;
+      if (!_isMarketOpenByType(gType)) {
+        return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+      }
+    } catch (e) {
+      logger.warn('Strategy provider market-hours check failed', {
+        order_id,
+        strategyProviderId: tokenStrategyProviderId,
+        error: e.message
       });
     }
 
@@ -1485,6 +1542,22 @@ async function placeStrategyProviderPendingOrder(req, res) {
       return res.status(404).json({ 
         success: false, 
         message: 'Strategy provider account not found or access denied' 
+      });
+    }
+
+    // Trading hours check for pending placements
+    try {
+      const symbolForHours = String(parsed.symbol).toUpperCase();
+      const gf = await groupsCache.getGroupFields(strategyProviderGroup, symbolForHours, ['type']);
+      const gType = gf && gf.type != null ? gf.type : null;
+      if (!_isMarketOpenByType(gType)) {
+        return res.status(403).json({ success: false, message: 'Market is closed for this instrument' });
+      }
+    } catch (e) {
+      logger.warn('Strategy provider pending placement market-hours check failed', {
+        symbol: parsed.symbol,
+        group: strategyProviderGroup,
+        error: e.message
       });
     }
 
