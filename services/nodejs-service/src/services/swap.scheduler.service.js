@@ -378,13 +378,27 @@ class SwapSchedulerService {
     const enrichedOrders = [];
     for (const order of orders) {
       try {
-        const account = await AccountModel.findByPk(order.order_user_id, {
-          attributes: ['group']
-        });
-        
-        if (account && account.group) {
-          // Add group information to order for swap calculation
-          order.group_name = account.group;
+        let account = null;
+        if (typeof AccountModel.findByPk === 'function') {
+          account = await AccountModel.findByPk(order.order_user_id, { attributes: ['group'] });
+        }
+
+        // Fallback: read group from Redis user config if DB lookup fails
+        let groupName = account?.group;
+        if (!groupName) {
+          try {
+            const cfgKey = `user:{${orderType}:${order.order_user_id}}:config`;
+            const cfg = await redisCluster.hgetall(cfgKey);
+            if (cfg && cfg.group) {
+              groupName = cfg.group;
+            }
+          } catch (redisErr) {
+            swapDebugLogger.warn(`[DEBUG] Failed to fetch Redis config for ${orderType} ${order.order_user_id}: ${redisErr.message}`);
+          }
+        }
+
+        if (groupName) {
+          order.group_name = groupName;
           order.user_type = orderType;
           enrichedOrders.push(order);
         } else {
@@ -421,8 +435,8 @@ class SwapSchedulerService {
     try {
       for (const order of orders) {
         try {
-          // Get group from user association
-          const userGroup = order.user?.group;
+          // Get group from association or pre-enriched group_name
+          const userGroup = order.group_name || order.user?.group;
           if (!userGroup) {
             swapDebugLogger.warn(`[DEBUG] Skipping order ${order.order_id} - missing user group`);
             results.skipped++;
