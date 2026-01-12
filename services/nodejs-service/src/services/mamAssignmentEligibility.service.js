@@ -14,7 +14,7 @@ const OPEN_STATUSES = ['OPEN', 'QUEUED'];
 const PENDING_STATUSES = ['PENDING', 'PENDING-QUEUED', 'MODIFY'];
 
 class MAMAssignmentEligibilityService {
-  async checkEligibility({ mamAccountId, clientId }) {
+  async checkEligibility({ mamAccountId, clientId, ignoreAssignmentId = null }) {
     const mamAccount = await MAMAccount.findByPk(mamAccountId);
     if (!mamAccount) {
       return this._fail(ELIGIBILITY_FAILURES.MAM_NOT_FOUND, 'Selected MAM account was not found.');
@@ -31,11 +31,16 @@ class MAMAssignmentEligibilityService {
       return this._fail(ELIGIBILITY_FAILURES.CLIENT_INACTIVE, 'Client account is inactive.');
     }
 
+    const assignmentWhere = {
+      client_live_user_id: clientId,
+      status: { [Op.in]: BLOCKING_ASSIGNMENT_STATUSES }
+    };
+    if (ignoreAssignmentId) {
+      assignmentWhere.id = { [Op.ne]: ignoreAssignmentId };
+    }
+
     const blockingAssignment = await MAMAssignment.findOne({
-      where: {
-        client_live_user_id: clientId,
-        status: { [Op.in]: BLOCKING_ASSIGNMENT_STATUSES }
-      }
+      where: assignmentWhere
     });
     if (blockingAssignment) {
       return this._fail(ELIGIBILITY_FAILURES.CLIENT_ALREADY_ASSIGNED, 'Client already has a pending or active MAM assignment.');

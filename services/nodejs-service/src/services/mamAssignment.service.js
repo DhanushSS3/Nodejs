@@ -166,7 +166,8 @@ class MAMAssignmentService {
 
       const eligibility = await eligibilityService.checkEligibility({
         mamAccountId: assignment.mam_account_id,
-        clientId
+        clientId,
+        ignoreAssignmentId: assignment.id
       });
       if (!eligibility.valid) {
         throw this._buildEligibilityError(eligibility);
