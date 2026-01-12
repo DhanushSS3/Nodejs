@@ -1,11 +1,9 @@
-const { LiveUser, DemoUser, UserTransaction } = require('../models');
-const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
-const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const { UserTransaction, LiveUser, DemoUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 const sequelize = require('../config/db');
-const { redisCluster } = require('../../config/redis');
+const { Op } = require('sequelize');
 const logger = require('../utils/logger');
-const idGenerator = require('./idGenerator.service');
 const redisSyncService = require('./redis.sync.service');
+const { acquireUserLock, releaseUserLock } = require('./userLock.service');
 
 class SuperadminTransactionService {
   /**
@@ -219,6 +217,18 @@ class SuperadminTransactionService {
       throw new Error('Withdrawal amount must be positive');
     }
 
+    const lockTtlSeconds = parseInt(process.env.ADMIN_FINANCIAL_LOCK_TTL || '10', 10);
+    const userLock = await acquireUserLock(
+      userType,
+      userId,
+      Number.isFinite(lockTtlSeconds) ? lockTtlSeconds : 10,
+      { operation: 'admin_withdrawal', admin_id: adminId }
+    );
+
+    if (!userLock) {
+      throw createHttpError(409, 'Another financial operation is running for this user. Please retry in a few seconds.');
+    }
+
     const transaction = await sequelize.transaction();
 
     try {
@@ -315,6 +325,10 @@ class SuperadminTransactionService {
       await transaction.rollback();
       logger.error(`Withdrawal failed for ${userType} user ${userId}:`, error);
       throw error;
+    } finally {
+      if (userLock) {
+        await releaseUserLock(userLock);
+      }
     }
   }
 
