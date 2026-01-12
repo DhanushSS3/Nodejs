@@ -2,10 +2,11 @@ const mamAccountService = require('../services/mamAccount.service');
 const mamAssignmentService = require('../services/mamAssignment.service');
 const { ASSIGNMENT_INITIATORS } = require('../constants/mamAssignment.constants');
 
+function getClientId(req) {
+  return req.user?.sub || req.user?.user_id || req.user?.id;
+}
+
 class MAMClientController {
-  _getClientId(req) {
-    return req.user?.sub || req.user?.user_id || req.user?.id;
-  }
 
   async listAvailableAccounts(req, res) {
     try {
@@ -25,7 +26,7 @@ class MAMClientController {
 
   async requestAssignment(req, res) {
     try {
-      const clientId = this._getClientId(req);
+      const clientId = getClientId(req);
       const assignment = await mamAssignmentService.createClientAssignment({
         mamAccountId: req.body.mam_account_id,
         clientId,
@@ -48,7 +49,7 @@ class MAMClientController {
 
   async listAssignments(req, res) {
     try {
-      const clientId = this._getClientId(req);
+      const clientId = getClientId(req);
       const result = await mamAssignmentService.listAssignmentsForClient(clientId, req.query);
       return res.status(200).json({
         success: true,
@@ -65,7 +66,7 @@ class MAMClientController {
 
   async getAssignment(req, res) {
     try {
-      const clientId = this._getClientId(req);
+      const clientId = getClientId(req);
       const assignment = await mamAssignmentService.getAssignmentForClient(clientId, req.params.id);
       return res.status(200).json({
         success: true,
@@ -82,7 +83,7 @@ class MAMClientController {
 
   async acceptAssignment(req, res) {
     try {
-      const clientId = this._getClientId(req);
+      const clientId = getClientId(req);
       const assignment = await mamAssignmentService.acceptAssignment({
         assignmentId: req.params.id,
         clientId,
@@ -105,7 +106,7 @@ class MAMClientController {
 
   async declineAssignment(req, res) {
     try {
-      const clientId = this._getClientId(req);
+      const clientId = getClientId(req);
       const assignment = await mamAssignmentService.declineAssignment({
         assignmentId: req.params.id,
         clientId,

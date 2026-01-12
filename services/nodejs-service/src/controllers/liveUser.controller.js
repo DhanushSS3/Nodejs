@@ -778,13 +778,6 @@ async function getUserInfo(req, res) {
       total_strategy_provider_balance: totalStrategyProviderBalance
     };
 
-    const accounts = [{
-      account_id: user.account_number,
-      mode: user.mam_status === 1 ? 'MAM_CLIENT' : 'MANUAL',
-      balance: walletBalance,
-      equity: Number((walletBalance - marginValue + netProfit).toFixed(2))
-    }];
-
     const pendingAssignments = await MAMAssignment.findAll({
       where: {
         client_live_user_id: userId,
@@ -803,15 +796,25 @@ async function getUserInfo(req, res) {
       order: [['activated_at', 'DESC']]
     });
 
-    const formatFees = (mamAccount) => ({
-      management_fee_pct: mamAccount?.management_fee_percent
-        ? Number(mamAccount.management_fee_percent)
-        : null,
-      success_fee_pct: mamAccount?.performance_fee_percent
-        ? Number(mamAccount.performance_fee_percent)
-        : null,
-      success_fee_type: mamAccount?.fee_model || null
-    });
+    const formatFees = (mamAccount) => {
+      const fees = {};
+      if (mamAccount?.management_fee_percent != null) {
+        fees.management_fee_pct = Number(mamAccount.management_fee_percent);
+      }
+      if (mamAccount?.performance_fee_percent != null) {
+        fees.success_fee_pct = Number(mamAccount.performance_fee_percent);
+      }
+      if (mamAccount?.fee_model) {
+        fees.success_fee_type = mamAccount.fee_model;
+      }
+      return fees;
+    };
+
+    const appUpdate = {
+      latest_version: process.env.CLIENT_APP_VERSION || null,
+      force_update: String(process.env.CLIENT_APP_FORCE_UPDATE || '').toLowerCase() === 'true',
+      has_new_version: Boolean(process.env.CLIENT_APP_VERSION)
+    };
 
     const mam = {
       pending_requests: pendingAssignments.map((assignment) => {
@@ -845,9 +848,8 @@ async function getUserInfo(req, res) {
       success: true,
       message: 'User profile retrieved successfully',
       user: userInfo,
-      accounts,
       mam,
-      permissions: {}
+      app_update: appUpdate
     });
 
   } catch (error) {
