@@ -367,6 +367,13 @@ router.post(
   handleValidationErrors,
   mammController.acceptAssignment
 );
+router.post(
+  '/mam/assignments/:id/decline',
+  authenticateJWT,
+  require('../middlewares/mamAssignment.validation').declineAssignmentValidation,
+  handleValidationErrors,
+  mammController.declineAssignment
+);
 
 /**
  * Lightweight admin endpoint secured by static secret for closed order lookup

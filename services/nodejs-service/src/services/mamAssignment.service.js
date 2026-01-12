@@ -9,6 +9,7 @@ const {
   ELIGIBILITY_FAILURES
 } = require('../constants/mamAssignment.constants');
 const eligibilityService = require('./mamAssignmentEligibility.service');
+const portfolioEvents = require('./events/portfolio.events');
 
 class MAMAssignmentService {
   async createAssignment({ mamAccountId, clientId, initiatedBy, initiatedByAdminId, initiatedReason }) {
@@ -26,7 +27,13 @@ class MAMAssignmentService {
       status: ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT
     };
 
-    return MAMAssignment.create(payload);
+    const assignment = await MAMAssignment.create(payload);
+    this._emitClientAssignmentUpdate(clientId, {
+      assignment_id: assignment.id,
+      status: assignment.status,
+      action: 'created'
+    });
+    return assignment;
   }
 
   async listAssignments({ status, mamAccountId, clientId, page = 1, limit = 20 }) {
@@ -127,6 +134,11 @@ class MAMAssignmentService {
     assignment.unsubscribed_by = actor || null;
 
     await assignment.save();
+    this._emitClientAssignmentUpdate(assignment.client_live_user_id, {
+      assignment_id: assignment.id,
+      status: assignment.status,
+      action: 'cancelled'
+    });
     return assignment;
   }
 
@@ -198,6 +210,63 @@ class MAMAssignmentService {
         transaction
       });
 
+      this._emitClientAssignmentUpdate(clientId, {
+        assignment_id: assignment.id,
+        status: assignment.status,
+        action: 'accepted'
+      });
+
+      return assignment;
+    });
+  }
+
+  async declineAssignment({ assignmentId, clientId, declinedIp, reason }) {
+    return sequelize.transaction(async (transaction) => {
+      const assignment = await MAMAssignment.findByPk(assignmentId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction
+      });
+      if (!assignment) {
+        const error = new Error('MAM assignment not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (assignment.client_live_user_id !== clientId) {
+        const error = new Error('Assignment does not belong to this client');
+        error.statusCode = 403;
+        throw error;
+      }
+      if (assignment.status !== ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT) {
+        const error = new Error('Assignment is not pending acceptance');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      assignment.status = ASSIGNMENT_STATUS.REJECTED;
+      assignment.rejected_at = new Date();
+      assignment.rejected_ip = declinedIp || null;
+      assignment.rejected_reason = reason || null;
+
+      await assignment.save({ transaction });
+
+      await assignment.reload({
+        include: [
+          { model: MAMAccount, as: 'mamAccount' },
+          {
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'is_self_trading']
+          }
+        ],
+        transaction
+      });
+
+      this._emitClientAssignmentUpdate(clientId, {
+        assignment_id: assignment.id,
+        status: assignment.status,
+        action: 'declined'
+      });
+
       return assignment;
     });
   }
@@ -207,6 +276,14 @@ class MAMAssignmentService {
     error.statusCode = 400;
     error.code = eligibility.code || ELIGIBILITY_FAILURES.MAM_NOT_FOUND;
     return error;
+  }
+
+  _emitClientAssignmentUpdate(clientId, payload = {}) {
+    if (!clientId) return;
+    portfolioEvents.emitUserUpdate('live', clientId, {
+      type: 'mam_assignment_update',
+      ...payload
+    });
   }
 }
 

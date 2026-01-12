@@ -45,10 +45,20 @@ const assignmentIdParamValidation = [
     .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer')
 ];
 
+const declineAssignmentValidation = [
+  param('id')
+    .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer'),
+  body('reason')
+    .optional()
+    .isString().withMessage('reason must be text')
+    .isLength({ max: 500 }).withMessage('reason cannot exceed 500 characters')
+];
+
 module.exports = {
   createAdminAssignmentValidation,
   listAssignmentsValidation,
   createClientAssignmentValidation,
   acceptAssignmentValidation,
-  assignmentIdParamValidation
+  assignmentIdParamValidation,
+  declineAssignmentValidation
 };

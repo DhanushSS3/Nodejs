@@ -15,6 +15,9 @@ const jwt = require('jsonwebtoken');
 const { comparePassword } = require('../services/password.service');
 const redisUserCache = require('../services/redis.user.cache.service');
 const LiveUserOrder = require('../models/liveUserOrder.model');
+const MAMAssignment = require('../models/mamAssignment.model');
+const MAMAccount = require('../models/mamAccount.model');
+const { ASSIGNMENT_STATUS } = require('../constants/mamAssignment.constants');
 
 /**
  * Live User Signup with transaction handling and deadlock prevention
@@ -741,6 +744,10 @@ async function getUserInfo(req, res) {
     }, 0);
 
     // Construct live user response
+    const walletBalance = parseFloat(user.wallet_balance) || 0;
+    const marginValue = parseFloat(user.margin) || 0;
+    const netProfit = parseFloat(user.net_profit) || 0;
+
     const userInfo = {
       id: user.id,
       name: user.name,
@@ -749,10 +756,10 @@ async function getUserInfo(req, res) {
       user_type: user.user_type,
       account_type: 'live',
       is_strategy_provider: 0,
-      wallet_balance: parseFloat(user.wallet_balance) || 0,
+      wallet_balance: walletBalance,
       leverage: user.leverage,
-      margin: parseFloat(user.margin) || 0,
-      net_profit: parseFloat(user.net_profit) || 0,
+      margin: marginValue,
+      net_profit: netProfit,
       account_number: user.account_number,
       group: user.group,
       city: user.city,
@@ -765,15 +772,83 @@ async function getUserInfo(req, res) {
       referral_code: user.referral_code,
       is_self_trading: user.is_self_trading,
       created_at: user.created_at,
-      // Copy trading information
       total_copy_follower_accounts: totalCopyFollowerAccounts,
       total_copy_follower_balance: totalCopyFollowerBalance,
-      // Strategy provider information
       total_strategy_provider_accounts: totalStrategyProviderAccounts,
       total_strategy_provider_balance: totalStrategyProviderBalance
     };
 
-    return res.status(200).json(userInfo);
+    const accounts = [{
+      account_id: user.account_number,
+      mode: user.mam_status === 1 ? 'MAM_CLIENT' : 'MANUAL',
+      balance: walletBalance,
+      equity: Number((walletBalance - marginValue + netProfit).toFixed(2))
+    }];
+
+    const pendingAssignments = await MAMAssignment.findAll({
+      where: {
+        client_live_user_id: userId,
+        status: ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT
+      },
+      include: [{ model: MAMAccount, as: 'mamAccount' }],
+      order: [['created_at', 'DESC']]
+    });
+
+    const activeAssignments = await MAMAssignment.findAll({
+      where: {
+        client_live_user_id: userId,
+        status: ASSIGNMENT_STATUS.ACTIVE
+      },
+      include: [{ model: MAMAccount, as: 'mamAccount' }],
+      order: [['activated_at', 'DESC']]
+    });
+
+    const formatFees = (mamAccount) => ({
+      management_fee_pct: mamAccount?.management_fee_percent
+        ? Number(mamAccount.management_fee_percent)
+        : null,
+      success_fee_pct: mamAccount?.performance_fee_percent
+        ? Number(mamAccount.performance_fee_percent)
+        : null,
+      success_fee_type: mamAccount?.fee_model || null
+    });
+
+    const mam = {
+      pending_requests: pendingAssignments.map((assignment) => {
+        const mamAccount = assignment.mamAccount || {};
+        return {
+          assignment_id: assignment.id,
+          mam_id: mamAccount.id,
+          mam_name: mamAccount.mam_name,
+          manager_name: mamAccount.metadata?.manager_name || mamAccount.mam_name,
+          allocation_method: mamAccount.allocation_method,
+          fees: formatFees(mamAccount),
+          expires_at: assignment.metadata?.expires_at || assignment.created_at,
+          requested_at: assignment.created_at,
+          initiated_by: assignment.initiated_by
+        };
+      }),
+      active: activeAssignments.map((assignment) => {
+        const mamAccount = assignment.mamAccount || {};
+        return {
+          assignment_id: assignment.id,
+          mam_id: mamAccount.id,
+          mam_name: mamAccount.mam_name,
+          account_id: user.account_number,
+          activated_at: assignment.activated_at,
+          allocation_method: mamAccount.allocation_method
+        };
+      })
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: 'User profile retrieved successfully',
+      user: userInfo,
+      accounts,
+      mam,
+      permissions: {}
+    });
 
   } catch (error) {
     return ErrorResponse.serverError(req, res, error, 'get user info');

@@ -55,8 +55,8 @@ class SwapSchedulerService {
   constructor() {
     // Cron expression to determine when daily swap processing runs.
     // Configure via environment variable SWAP_SCHEDULER_CRON.
-    // Example default (runs at 22:00 UTC every day): '0 22 * * *'
-    this.cronExpression = process.env.SWAP_SCHEDULER_CRON || '0 22 * * *';
+    // Default now runs at 00:00 UTC every day to align with trading-day boundaries.
+    this.cronExpression = process.env.SWAP_SCHEDULER_CRON || '0 0 * * *';
 
     this.isRunning = false;
     this.cronJob = null;

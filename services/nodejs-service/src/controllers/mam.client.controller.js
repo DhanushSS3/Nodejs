@@ -102,6 +102,30 @@ class MAMClientController {
       });
     }
   }
+
+  async declineAssignment(req, res) {
+    try {
+      const clientId = this._getClientId(req);
+      const assignment = await mamAssignmentService.declineAssignment({
+        assignmentId: req.params.id,
+        clientId,
+        declinedIp: req.ip,
+        reason: req.body?.reason
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Assignment request declined.',
+        data: assignment
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Failed to decline assignment',
+        code: error.code
+      });
+    }
+  }
 }
 
 module.exports = new MAMClientController();
