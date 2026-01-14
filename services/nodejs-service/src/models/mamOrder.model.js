@@ -17,34 +17,22 @@ const MAMOrder = sequelize.define('MAMOrder', {
       key: 'id'
     }
   },
-  master_order_id: {
-    type: DataTypes.STRING(64),
-    allowNull: false,
-    references: {
-      model: 'live_user_orders',
-      key: 'order_id'
-    }
-  },
-  master_user_id: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'live_users',
-      key: 'id'
-    }
-  },
   symbol: {
     type: DataTypes.STRING(50),
     allowNull: false
   },
   order_type: {
-    type: DataTypes.ENUM('buy', 'sell'),
+    type: DataTypes.ENUM('BUY', 'SELL', 'BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'),
     allowNull: false
   },
   order_status: {
-    type: DataTypes.ENUM('pending', 'open', 'closed', 'rejected', 'cancelled'),
+    type: DataTypes.ENUM('PENDING', 'PENDING-QUEUED', 'QUEUED', 'OPEN', 'MODIFY', 'CLOSED', 'REJECTED', 'CANCELLED'),
     allowNull: false,
-    defaultValue: 'pending'
+    defaultValue: 'PENDING'
+  },
+  requested_volume: {
+    type: DataTypes.DECIMAL(18, 8),
+    allowNull: false
   },
   allocation_method: {
     type: DataTypes.ENUM('balance', 'free_margin'),
@@ -59,17 +47,11 @@ const MAMOrder = sequelize.define('MAMOrder', {
     type: DataTypes.DECIMAL(18, 6),
     allowNull: true
   },
-  total_allocated_volume: {
+  total_aggregated_margin: {
     type: DataTypes.DECIMAL(18, 8),
-    allowNull: false,
-    defaultValue: 0
+    allowNull: true
   },
   executed_volume: {
-    type: DataTypes.DECIMAL(18, 8),
-    allowNull: false,
-    defaultValue: 0
-  },
-  remaining_volume: {
     type: DataTypes.DECIMAL(18, 8),
     allowNull: false,
     defaultValue: 0
@@ -124,7 +106,7 @@ const MAMOrder = sequelize.define('MAMOrder', {
   updatedAt: 'updated_at',
   indexes: [
     { fields: ['mam_account_id'] },
-    { fields: ['master_order_id'] },
+    { fields: ['order_status'] },
     { fields: ['symbol'] },
     { fields: ['created_at'] }
   ]

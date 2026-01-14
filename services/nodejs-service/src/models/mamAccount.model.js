@@ -41,10 +41,6 @@ const MAMAccount = sequelize.define('MAMAccount', {
     type: DataTypes.DATE,
     allowNull: true
   },
-  leverage: {
-    type: DataTypes.INTEGER,
-    allowNull: true
-  },
   group: {
     type: DataTypes.STRING,
     allowNull: false
@@ -84,7 +80,17 @@ const MAMAccount = sequelize.define('MAMAccount', {
     allowNull: false,
     defaultValue: 0
   },
-  total_allocated_balance: {
+  total_balance: {
+    type: DataTypes.DECIMAL(18, 6),
+    allowNull: false,
+    defaultValue: 0
+  },
+  mam_balance: {
+    type: DataTypes.DECIMAL(18, 6),
+    allowNull: false,
+    defaultValue: 0
+  },
+  total_used_margin: {
     type: DataTypes.DECIMAL(18, 6),
     allowNull: false,
     defaultValue: 0

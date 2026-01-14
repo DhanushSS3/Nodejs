@@ -12,6 +12,7 @@ const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEqui
 
 const PORT = process.env.PORT || 3000;
 const { createPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
+const { createMamPortfolioWSServer } = require('./src/services/ws/mam.portfolio.ws');
 const {
   createAdminOrdersWSServer,
   createAdminSecretDemoOrdersWSServer
@@ -21,6 +22,7 @@ const {
 let server = null;
 let rabbitConnection = null;
 let wssPortfolio = null;
+let wssMamPortfolio = null;
 let wssAdmin = null;
 let wssAdminSecretDemo = null;
 
@@ -80,6 +82,7 @@ let wssAdminSecretDemo = null;
 
       // Create WS servers (headless - noServer: true)
       wssPortfolio = createPortfolioWSServer();
+      wssMamPortfolio = createMamPortfolioWSServer();
       wssAdmin = createAdminOrdersWSServer();
       wssAdminSecretDemo = createAdminSecretDemoOrdersWSServer();
 
@@ -92,6 +95,10 @@ let wssAdminSecretDemo = null;
         if (pathname === '/ws/portfolio') {
           wssPortfolio.handleUpgrade(request, socket, head, (ws) => {
             wssPortfolio.emit('connection', ws, request);
+          });
+        } else if (pathname === '/ws/mam/portfolio') {
+          wssMamPortfolio.handleUpgrade(request, socket, head, (ws) => {
+            wssMamPortfolio.emit('connection', ws, request);
           });
         } else if (pathname === '/ws/admin/orders') {
           wssAdmin.handleUpgrade(request, socket, head, (ws) => {
@@ -164,6 +171,9 @@ async function gracefulShutdown(signal) {
     console.log('🔄 Closing WebSocket servers...');
     if (wssPortfolio) {
       try { wssPortfolio.close(); } catch (_) { }
+    }
+    if (wssMamPortfolio) {
+      try { wssMamPortfolio.close(); } catch (_) { }
     }
     if (wssAdmin) {
       try { wssAdmin.close(); } catch (_) { }

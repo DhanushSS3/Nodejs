@@ -28,6 +28,11 @@ const LiveUserOrder = sequelize.define('LiveUserOrder', {
       key: 'id'
     }
   },
+  order_source: {
+    type: DataTypes.ENUM('personal', 'mam'),
+    allowNull: false,
+    defaultValue: 'personal'
+  },
   symbol: {
     type: DataTypes.STRING(255),
     allowNull: false,
@@ -141,6 +146,7 @@ const LiveUserOrder = sequelize.define('LiveUserOrder', {
     { fields: ['order_id'] },
     { fields: ['order_user_id'] },
     { fields: ['parent_mam_order_id'] },
+    { fields: ['order_source'] },
     { fields: ['order_status'] },
     { fields: ['order_type'] },
     { fields: ['symbol'] },

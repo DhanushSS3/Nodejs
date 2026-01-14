@@ -778,12 +778,26 @@ async function getUserInfo(req, res) {
       total_strategy_provider_balance: totalStrategyProviderBalance
     };
 
+    const mamAccountSummaryAttributes = [
+      'id',
+      'mam_name',
+      'allocation_method',
+      'metadata',
+      'performance_fee_percent',
+      'management_fee_percent',
+      'fee_model'
+    ];
+
     const pendingAssignments = await MAMAssignment.findAll({
       where: {
         client_live_user_id: userId,
         status: ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT
       },
-      include: [{ model: MAMAccount, as: 'mamAccount' }],
+      include: [{
+        model: MAMAccount,
+        as: 'mamAccount',
+        attributes: mamAccountSummaryAttributes
+      }],
       order: [['created_at', 'DESC']]
     });
 
@@ -792,7 +806,11 @@ async function getUserInfo(req, res) {
         client_live_user_id: userId,
         status: ASSIGNMENT_STATUS.ACTIVE
       },
-      include: [{ model: MAMAccount, as: 'mamAccount' }],
+      include: [{
+        model: MAMAccount,
+        as: 'mamAccount',
+        attributes: mamAccountSummaryAttributes
+      }],
       order: [['activated_at', 'DESC']]
     });
 

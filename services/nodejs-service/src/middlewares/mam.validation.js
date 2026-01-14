@@ -47,9 +47,6 @@ const createMAMAccountValidation = [
     .optional()
     .isIn(allocationMethods).withMessage('allocation_method is invalid'),
   decimalField('allocation_precision', { min: 0 }),
-  body('rounding_strategy')
-    .optional()
-    .isIn(roundingStrategies).withMessage('rounding_strategy is invalid'),
   decimalField('min_client_balance', { min: 0 }),
   decimalField('max_client_balance', { min: 0 }),
   body('max_investors')
@@ -75,6 +72,17 @@ const createMAMAccountValidation = [
     .isObject().withMessage('metadata must be an object'),
   body()
     .custom((value) => {
+      const disallowedFields = [
+        'rounding_strategy',
+        'fee_model',
+        'fee_settlement_cycle',
+        'allow_partial_closures'
+      ];
+      const attempted = disallowedFields.filter((field) => value[field] !== undefined);
+      if (attempted.length) {
+        throw new Error(`Cannot update fields: ${attempted.join(', ')}`);
+      }
+
       const { min_client_balance, max_client_balance } = value;
       if (
         min_client_balance != null &&
@@ -122,18 +130,9 @@ const updateMAMAccountValidation = [
   body('status')
     .optional()
     .isIn(statuses).withMessage('status is invalid'),
-  body('fee_model')
-    .optional()
-    .isIn(feeModels).withMessage('fee_model is invalid'),
   decimalField('performance_fee_percent', { min: 0, max: 100 }),
   decimalField('management_fee_percent', { min: 0, max: 100 }),
   decimalField('rebate_fee_percent', { min: 0, max: 100 }),
-  body('fee_settlement_cycle')
-    .optional()
-    .isIn(feeCycles).withMessage('fee_settlement_cycle is invalid'),
-  body('allow_partial_closures')
-    .optional()
-    .isBoolean().withMessage('allow_partial_closures must be boolean'),
   body('terms_and_conditions')
     .optional()
     .isString().withMessage('terms_and_conditions must be text'),
