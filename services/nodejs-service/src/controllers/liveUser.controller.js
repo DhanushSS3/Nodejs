@@ -709,7 +709,7 @@ async function getUserInfo(req, res) {
         'account_number', 'group', 'city', 'state', 'pincode',
         'country', 'bank_ifsc_code', 'bank_holder_name',
         'bank_account_number', 'referral_code', 'is_self_trading',
-        'created_at'
+        'status', 'is_active', 'created_at'
       ]
     });
 
@@ -771,6 +771,8 @@ async function getUserInfo(req, res) {
       bank_account_number: user.bank_account_number,
       referral_code: user.referral_code,
       is_self_trading: user.is_self_trading,
+      status: user.status,
+      is_active: user.is_active,
       created_at: user.created_at,
       total_copy_follower_accounts: totalCopyFollowerAccounts,
       total_copy_follower_balance: totalCopyFollowerBalance,
