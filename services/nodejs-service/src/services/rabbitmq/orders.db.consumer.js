@@ -1,7 +1,4 @@
 const amqp = require('amqplib');
-const fs = require('fs');
-const path = require('path');
-const winston = require('winston');
 const logger = require('../logger.service');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
@@ -31,7 +28,6 @@ const sequelize = require('../../config/db');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
-const calcLogger = createOrdersCalcLogger();
 
 // Performance monitoring for throughput tracking
 let messageCount = 0;
@@ -1769,29 +1765,6 @@ async function shutdownOrdersDbConsumer() {
   }
 }
 
-function createOrdersCalcLogger() {
-  try {
-    const logsDir = path.join(__dirname, '../../logs');
-    if (!fs.existsSync(logsDir)) {
-      fs.mkdirSync(logsDir, { recursive: true });
-    }
-    return winston.createLogger({
-      level: 'info',
-      format: winston.format.printf((info) => info.message),
-      transports: [
-        new winston.transports.File({
-          filename: path.join(logsDir, 'orders_calculated.log'),
-          maxsize: 200 * 1024 * 1024,
-          maxFiles: 10
-        })
-      ]
-    });
-  } catch (err) {
-    logger.warn('orders_calculated logger disabled', { error: err.message });
-    return { info: () => {} };
-  }
-}
-
 function toNumber(value) {
   if (value === null || value === undefined) {
     return null;
@@ -1845,7 +1818,7 @@ function logLocalCloseCalculation(message, context = {}) {
       timestamp: new Date().toISOString()
     };
 
-    calcLogger.info(JSON.stringify(logPayload));
+    logger.ordersCalculated(logPayload);
   } catch (error) {
     logger.warn('Failed to log calculation for ORDER_CLOSE_CONFIRMED', {
       error: error.message,

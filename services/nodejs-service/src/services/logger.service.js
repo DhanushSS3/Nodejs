@@ -34,6 +34,19 @@ const errorLogger = winston.createLogger({
   ]
 });
 
+// Dedicated orders_calculated logger (mirrors Python orders_calculated.log)
+const ordersCalculatedLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.printf((info) => info.message),
+  transports: [
+    new winston.transports.File({
+      filename: path.join(logsDir, 'orders_calculated.log'),
+      maxsize: 200 * 1024 * 1024, // 200 MB per file
+      maxFiles: 10
+    })
+  ]
+});
+
 // Winston logger for general application logs with rotation
 const appLogger = winston.createLogger({
   level: 'info',
@@ -327,6 +340,19 @@ class Logger {
       timestamp: new Date().toISOString(),
       ...context
     });
+  }
+
+  /**
+   * Log detailed order close calculation payloads (orders_calculated.log)
+   * @param {string|Object} payload
+   */
+  static ordersCalculated(payload) {
+    try {
+      const message = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      ordersCalculatedLogger.info(message);
+    } catch (err) {
+      this.warn('Failed to write orders_calculated log entry', { error: err.message });
+    }
   }
 
   /**
