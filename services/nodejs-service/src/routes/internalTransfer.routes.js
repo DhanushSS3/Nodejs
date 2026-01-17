@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const InternalTransferController = require('../controllers/internalTransfer.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+const { requireActiveLiveUser } = require('../middlewares/liveUserStatus.middleware');
 const { body, param, query } = require('express-validator');
 const { validateRequest } = require('../middlewares/validation.middleware');
 
@@ -122,7 +123,9 @@ const { validateRequest } = require('../middlewares/validation.middleware');
  *       500:
  *         description: Internal server error
  */
-router.get('/accounts', authenticateJWT, InternalTransferController.getUserAccounts);
+router.use(authenticateJWT, requireActiveLiveUser('internal_transfers'));
+
+router.get('/accounts', InternalTransferController.getUserAccounts);
 
 /**
  * @swagger
@@ -169,7 +172,6 @@ router.get('/accounts', authenticateJWT, InternalTransferController.getUserAccou
  *         description: Internal server error
  */
 router.post('/validate', 
-  authenticateJWT,
   [
     body('fromAccountType')
       .isIn(['main', 'strategy_provider', 'copy_follower'])
@@ -238,7 +240,6 @@ router.post('/validate',
  *         description: Internal server error
  */
 router.post('/execute',
-  authenticateJWT,
   [
     body('fromAccountType')
       .isIn(['live', 'strategy_provider', 'copy_follower'])
@@ -335,7 +336,6 @@ router.post('/execute',
  *         description: Internal server error
  */
 router.get('/history',
-  authenticateJWT,
   [
     query('page')
       .optional()
@@ -412,7 +412,6 @@ router.get('/history',
  *         description: Internal server error
  */
 router.get('/account/:accountType/:accountId/balance',
-  authenticateJWT,
   [
     param('accountType')
       .isIn(['main', 'strategy_provider', 'copy_follower'])
@@ -483,7 +482,6 @@ router.get('/account/:accountType/:accountId/balance',
  *         description: Failed to refresh cache
  */
 router.post('/refresh-cache',
-  authenticateJWT,
   [
     body('accountType')
       .isIn(['main', 'strategy_provider', 'copy_follower'])

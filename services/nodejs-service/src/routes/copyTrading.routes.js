@@ -3,6 +3,7 @@ const router = express.Router();
 const copyTradingController = require('../controllers/copyTrading.controller');
 const copyFollowerEquityMonitorController = require('../controllers/copyFollowerEquityMonitor.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+const { requireActiveLiveUser } = require('../middlewares/liveUserStatus.middleware');
 const { validateSlTpSettingsUpdate, validateSlTpSettingsGet } = require('../middlewares/copyTrading.validation');
 
 /**
@@ -10,75 +11,45 @@ const { validateSlTpSettingsUpdate, validateSlTpSettingsGet } = require('../midd
  * All routes require JWT authentication
  */
 
+router.use(authenticateJWT, requireActiveLiveUser('copy_trading'));
+
 // Create follower account (start following a strategy)
-router.post('/follow', 
-  authenticateJWT,
-  copyTradingController.createFollowerAccount
-);
+router.post('/follow', copyTradingController.createFollowerAccount);
 
 // Get user's follower accounts
-router.get('/accounts', 
-  authenticateJWT,
-  copyTradingController.getFollowerAccounts
-);
+router.get('/accounts', copyTradingController.getFollowerAccounts);
 
 // Update follower account settings (legacy)
-router.put('/accounts/:follower_id', 
-  authenticateJWT,
-  copyTradingController.updateFollowerAccount
-);
+router.put('/accounts/:follower_id', copyTradingController.updateFollowerAccount);
 
 // Update follower account settings with strict validation
-router.put('/accounts/:id', 
-  authenticateJWT,
-  copyTradingController.updateFollowerAccountStrict
-);
+router.put('/accounts/:id', copyTradingController.updateFollowerAccountStrict);
 
 // Get follower account SL/TP settings
 router.get('/accounts/:id/sl-tp-settings', 
-  authenticateJWT,
   validateSlTpSettingsGet,
   copyTradingController.getFollowerSlTpSettings
 );
 
 // Update follower account SL/TP settings for future orders
 router.put('/accounts/:id/sl-tp-settings', 
-  authenticateJWT,
   validateSlTpSettingsUpdate,
   copyTradingController.updateFollowerSlTpSettings
 );
 
 // Stop following a strategy
-router.delete('/accounts/:follower_id', 
-  authenticateJWT,
-  copyTradingController.stopFollowing
-);
+router.delete('/accounts/:follower_id', copyTradingController.stopFollowing);
 
 // Get user's copy trading overview (who they're following and total investments)
-router.get('/overview', 
-  authenticateJWT,
-  copyTradingController.getCopyTradingOverview
-);
+router.get('/overview', copyTradingController.getCopyTradingOverview);
 
 // Equity Monitor Management Routes (for monitoring and debugging)
-router.get('/equity-monitor/status', 
-  authenticateJWT,
-  copyFollowerEquityMonitorController.getEquityMonitorStatus
-);
+router.get('/equity-monitor/status', copyFollowerEquityMonitorController.getEquityMonitorStatus);
 
-router.post('/equity-monitor/start', 
-  authenticateJWT,
-  copyFollowerEquityMonitorController.startEquityMonitor
-);
+router.post('/equity-monitor/start', copyFollowerEquityMonitorController.startEquityMonitor);
 
-router.post('/equity-monitor/stop', 
-  authenticateJWT,
-  copyFollowerEquityMonitorController.stopEquityMonitor
-);
+router.post('/equity-monitor/stop', copyFollowerEquityMonitorController.stopEquityMonitor);
 
-router.get('/equity-monitor/account/:id/check', 
-  authenticateJWT,
-  copyFollowerEquityMonitorController.checkAccountThresholds
-);
+router.get('/equity-monitor/account/:id/check', copyFollowerEquityMonitorController.checkAccountThresholds);
 
 module.exports = router;

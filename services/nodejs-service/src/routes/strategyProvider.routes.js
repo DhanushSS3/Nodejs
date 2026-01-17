@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const strategyProviderController = require('../controllers/strategyProvider.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+const { requireActiveLiveUser } = require('../middlewares/liveUserStatus.middleware');
 
 // Configure multer for profile picture uploads
 const storage = multer.diskStorage({
@@ -744,7 +745,7 @@ router.use(authenticateJWT);
 router.get('/private/:accessLink', strategyProviderController.getPrivateStrategyByLink);
 
 // Strategy Provider Account Routes (requires authentication)
-router.post('/', (req, res, next) => {
+router.post('/', requireActiveLiveUser('strategy_provider_create'), (req, res, next) => {
   upload.single('profile_image')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {

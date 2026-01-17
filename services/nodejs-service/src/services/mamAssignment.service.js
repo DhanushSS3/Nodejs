@@ -11,6 +11,7 @@ const {
 } = require('../constants/mamAssignment.constants');
 const eligibilityService = require('./mamAssignmentEligibility.service');
 const portfolioEvents = require('./events/portfolio.events');
+const redisUserCache = require('./redis.user.cache.service');
 
 class MAMAssignmentService {
   async createAssignment({ mamAccountId, clientId, initiatedBy = ASSIGNMENT_INITIATORS.CLIENT, initiatedByAdminId, initiatedReason }) {
@@ -196,11 +197,6 @@ class MAMAssignmentService {
 
       await assignment.save({ transaction });
 
-      await MAMAccount.increment(
-        { total_investors: 1 },
-        { where: { id: assignment.mam_account_id }, transaction }
-      );
-
       await LiveUser.update(
         {
           mam_id: assignment.mam_account_id,
@@ -212,6 +208,25 @@ class MAMAssignmentService {
         },
         { where: { id: clientId }, transaction }
       );
+
+      const aggregates = await this._refreshMamAccountAggregates(assignment.mam_account_id, transaction);
+
+      transaction.afterCommit(async () => {
+        await redisUserCache.updateUser('live', clientId, {
+          mam_id: assignment.mam_account_id,
+          mam_status: 1,
+          mam_alloted_time: timestamp?.toISOString?.() || timestamp,
+          is_self_trading: 0,
+          copytrading_status: 0,
+          copytrader_id: ''
+        });
+
+        portfolioEvents.emitUserUpdate('mam_account', assignment.mam_account_id, {
+          type: 'mam_assignment_aggregates_refresh',
+          total_balance: aggregates.totalBalance,
+          total_investors: aggregates.totalInvestors
+        });
+      });
 
       await assignment.reload({
         include: [
@@ -372,17 +387,6 @@ class MAMAssignmentService {
 
       await assignment.save({ transaction });
 
-      await MAMAccount.decrement(
-        { total_investors: 1 },
-        {
-          where: {
-            id: assignment.mam_account_id,
-            total_investors: { [Op.gt]: 0 }
-          },
-          transaction
-        }
-      );
-
       await LiveUser.update(
         {
           mam_id: null,
@@ -483,6 +487,35 @@ class MAMAssignmentService {
       type: 'mam_assignment_update',
       ...payload
     });
+  }
+
+  async _refreshMamAccountAggregates(mamAccountId, transaction) {
+    const [totalBalance, totalInvestors] = await Promise.all([
+      LiveUser.sum('wallet_balance', {
+        where: { mam_id: mamAccountId },
+        transaction
+      }),
+      LiveUser.count({
+        where: { mam_id: mamAccountId },
+        transaction
+      })
+    ]);
+
+    const normalizedBalance = Number(totalBalance || 0);
+
+    await MAMAccount.update(
+      {
+        total_balance: normalizedBalance,
+        mam_balance: normalizedBalance,
+        total_investors: totalInvestors
+      },
+      { where: { id: mamAccountId }, transaction }
+    );
+
+    return {
+      totalBalance: normalizedBalance,
+      totalInvestors
+    };
   }
 }
 

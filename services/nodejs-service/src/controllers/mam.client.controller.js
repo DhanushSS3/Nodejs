@@ -1,6 +1,7 @@
 const mamAccountService = require('../services/mamAccount.service');
 const mamAssignmentService = require('../services/mamAssignment.service');
 const LiveUser = require('../models/liveUser.model');
+const liveUserStatusService = require('../services/liveUserStatus.service');
 const { ASSIGNMENT_INITIATORS } = require('../constants/mamAssignment.constants');
 
 function getClientId(req) {
@@ -12,7 +13,10 @@ class MAMClientController {
   async listAvailableAccounts(req, res) {
     try {
       const clientId = getClientId(req);
-      const client = await LiveUser.findByPk(clientId, { attributes: ['group'] });
+      const client = await liveUserStatusService.assertActive(
+        await LiveUser.findByPk(clientId, { attributes: ['id', 'group', 'status', 'is_active'] }),
+        { context: 'mam_list_accounts' }
+      );
       if (!client) {
         return res.status(404).json({
           success: false,
@@ -40,6 +44,7 @@ class MAMClientController {
   async requestAssignment(req, res) {
     try {
       const clientId = getClientId(req);
+      await liveUserStatusService.assertActive(clientId, { context: 'mam_request_assignment' });
       const assignment = await mamAssignmentService.createClientAssignment({
         mamAccountId: req.body.mam_account_id,
         clientId,
@@ -63,6 +68,7 @@ class MAMClientController {
   async listAssignments(req, res) {
     try {
       const clientId = getClientId(req);
+      await liveUserStatusService.assertActive(clientId, { context: 'mam_list_assignments' });
       const result = await mamAssignmentService.listAssignmentsForClient(clientId, req.query);
       return res.status(200).json({
         success: true,
@@ -80,6 +86,7 @@ class MAMClientController {
   async getAssignment(req, res) {
     try {
       const clientId = getClientId(req);
+      await liveUserStatusService.assertActive(clientId, { context: 'mam_get_assignment' });
       const assignment = await mamAssignmentService.getAssignmentForClient(clientId, req.params.id);
       return res.status(200).json({
         success: true,
@@ -97,6 +104,7 @@ class MAMClientController {
   async acceptAssignment(req, res) {
     try {
       const clientId = getClientId(req);
+      await liveUserStatusService.assertActive(clientId, { context: 'mam_accept_assignment' });
       const assignment = await mamAssignmentService.acceptAssignment({
         assignmentId: req.params.id,
         clientId,
@@ -120,6 +128,7 @@ class MAMClientController {
   async declineAssignment(req, res) {
     try {
       const clientId = getClientId(req);
+      await liveUserStatusService.assertActive(clientId, { context: 'mam_decline_assignment' });
       const assignment = await mamAssignmentService.declineAssignment({
         assignmentId: req.params.id,
         clientId,
@@ -144,6 +153,7 @@ class MAMClientController {
   async unsubscribeAssignment(req, res) {
     try {
       const clientId = getClientId(req);
+      await liveUserStatusService.assertActive(clientId, { context: 'mam_unsubscribe_assignment' });
       const assignment = await mamAssignmentService.unsubscribeAssignment({
         assignmentId: req.params.id,
         clientId,

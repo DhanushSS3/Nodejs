@@ -605,8 +605,153 @@ async function regenerateViewPassword(req, res) {
  */
 async function getUserInfo(req, res) {
   try {
+    const accountType = (req.user.account_type || req.user.user_type || 'live').toString().toLowerCase();
+    const parseDecimal = (value) => (value === null || value === undefined ? null : parseFloat(value));
+
+    if (accountType === 'mam_manager' && req.user.mam_account_id) {
+      const mamAccountId = req.user.mam_account_id;
+      const mamAccount = await MAMAccount.findByPk(mamAccountId, {
+        attributes: [
+          'id', 'mam_name', 'account_number', 'group', 'allocation_method', 'allocation_precision',
+          'rounding_strategy', 'min_client_balance', 'max_client_balance', 'max_investors',
+          'total_investors', 'total_balance', 'mam_balance', 'total_used_margin', 'status',
+          'fee_model', 'performance_fee_percent', 'management_fee_percent', 'rebate_fee_percent',
+          'fee_settlement_cycle', 'allow_partial_closures', 'terms_and_conditions',
+          'last_fee_settlement_at', 'next_fee_settlement_at', 'metadata', 'created_at', 'updated_at'
+        ]
+      });
+
+      if (!mamAccount) {
+        return res.status(404).json({
+          success: false,
+          message: 'MAM account not found'
+        });
+      }
+
+      const [assignmentCountsRaw, pendingClientRequests, awaitingClientAcceptance, activeAssignments, activeInvestorBalance] = await Promise.all([
+        MAMAssignment.findAll({
+          where: { mam_account_id: mamAccountId },
+          attributes: ['status', [fn('COUNT', '*'), 'count']]
+        }),
+        MAMAssignment.findAll({
+          where: {
+            mam_account_id: mamAccountId,
+            status: ASSIGNMENT_STATUS.CLIENT_REQUESTED
+          },
+          include: [{
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'country', 'group', 'status', 'is_active']
+          }],
+          order: [['created_at', 'DESC']]
+        }),
+        MAMAssignment.findAll({
+          where: {
+            mam_account_id: mamAccountId,
+            status: ASSIGNMENT_STATUS.ADMIN_APPROVED
+          },
+          include: [{
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'country', 'group', 'status', 'is_active']
+          }],
+          order: [['admin_reviewed_at', 'DESC'], ['created_at', 'DESC']]
+        }),
+        MAMAssignment.findAll({
+          where: {
+            mam_account_id: mamAccountId,
+            status: ASSIGNMENT_STATUS.ACTIVE
+          },
+          include: [{
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'country', 'group', 'status', 'is_active']
+          }],
+          order: [['activated_at', 'DESC']]
+        }),
+        LiveUser.sum('wallet_balance', { where: { mam_id: mamAccountId } })
+      ]);
+
+      const assignmentCounts = assignmentCountsRaw.reduce((acc, row) => {
+        const status = row.get('status');
+        const count = parseInt(row.get('count'), 10) || 0;
+        acc[status] = (acc[status] || 0) + count;
+        return acc;
+      }, {});
+
+      const mapAssignment = (assignment) => {
+        const client = assignment.client || {};
+        return {
+          assignment_id: assignment.id,
+          client_id: client.id,
+          client_name: client.name,
+          client_email: client.email,
+          client_account_number: client.account_number,
+          client_wallet_balance: parseDecimal(client.wallet_balance) || 0,
+          client_country: client.country,
+          client_group: client.group,
+          client_status: client.status,
+          client_is_active: client.is_active,
+          initiated_by: assignment.initiated_by,
+          initiated_reason: assignment.initiated_reason,
+          requested_at: assignment.created_at,
+          approved_at: assignment.admin_reviewed_at,
+          activated_at: assignment.activated_at,
+          metadata: assignment.metadata || {}
+        };
+      };
+
+      const mamManagerInfo = {
+        id: mamAccount.id,
+        mam_name: mamAccount.mam_name,
+        account_number: mamAccount.account_number,
+        account_type: 'mam_manager',
+        group: mamAccount.group,
+        allocation_method: mamAccount.allocation_method,
+        allocation_precision: parseDecimal(mamAccount.allocation_precision),
+        rounding_strategy: mamAccount.rounding_strategy,
+        min_client_balance: parseDecimal(mamAccount.min_client_balance),
+        max_client_balance: parseDecimal(mamAccount.max_client_balance),
+        max_investors: mamAccount.max_investors,
+        total_investors: mamAccount.total_investors,
+        total_balance: parseDecimal(mamAccount.total_balance) || 0,
+        mam_balance: parseDecimal(mamAccount.mam_balance) || 0,
+        total_used_margin: parseDecimal(mamAccount.total_used_margin) || 0,
+        status: mamAccount.status,
+        fee_model: mamAccount.fee_model,
+        performance_fee_percent: parseDecimal(mamAccount.performance_fee_percent),
+        management_fee_percent: parseDecimal(mamAccount.management_fee_percent),
+        rebate_fee_percent: parseDecimal(mamAccount.rebate_fee_percent),
+        fee_settlement_cycle: mamAccount.fee_settlement_cycle,
+        allow_partial_closures: mamAccount.allow_partial_closures,
+        terms_and_conditions: mamAccount.terms_and_conditions,
+        last_fee_settlement_at: mamAccount.last_fee_settlement_at,
+        next_fee_settlement_at: mamAccount.next_fee_settlement_at,
+        metadata: mamAccount.metadata || {},
+        created_at: mamAccount.created_at,
+        updated_at: mamAccount.updated_at,
+        aggregates: {
+          total_assignments: Object.values(assignmentCounts).reduce((sum, value) => sum + value, 0),
+          pending_client_requests: assignmentCounts[ASSIGNMENT_STATUS.CLIENT_REQUESTED] || 0,
+          awaiting_client_acceptance: assignmentCounts[ASSIGNMENT_STATUS.ADMIN_APPROVED] || 0,
+          active_clients: assignmentCounts[ASSIGNMENT_STATUS.ACTIVE] || 0,
+          unsubscribed_clients: assignmentCounts[ASSIGNMENT_STATUS.UNSUBSCRIBED] || 0,
+          cancelled_requests: assignmentCounts[ASSIGNMENT_STATUS.CANCELLED] || 0,
+          suspended_clients: assignmentCounts[ASSIGNMENT_STATUS.SUSPENDED] || 0,
+          active_investor_balance: parseDecimal(activeInvestorBalance) || 0
+        },
+        assignments: {
+          pending_client_requests: pendingClientRequests.map(mapAssignment),
+          awaiting_client_acceptance: awaitingClientAcceptance.map(mapAssignment),
+          active_clients: activeAssignments.map(mapAssignment)
+        }
+      };
+
+      return res.status(200).json(mamManagerInfo);
+    }
+
     // Check if this is a strategy provider context
-    if (req.user.account_type === 'strategy_provider' && req.user.strategy_provider_id) {
+    if (accountType === 'strategy_provider' && req.user.strategy_provider_id) {
       // Fetch strategy provider account details
       const strategyProvider = await StrategyProviderAccount.findByPk(req.user.strategy_provider_id, {
         attributes: [
@@ -850,6 +995,11 @@ async function getUserInfo(req, res) {
     };
 
     const mam = {
+      summary: {
+        awaiting_admin_review: awaitingAdminReviewAssignments.length,
+        pending_requests: pendingAcceptanceAssignments.length,
+        active: activeAssignments.length
+      },
       awaiting_admin_review: awaitingAdminReviewAssignments.map((assignment) => {
         const mamAccount = assignment.mamAccount || {};
         return {
