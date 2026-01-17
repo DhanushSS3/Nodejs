@@ -150,6 +150,25 @@ def build_close_confirmation_payload(
         "flow": flow,
         "close_origin": close_origin,
     }
+
+    passthrough_fields = (
+        "quantity",
+        "contract_size",
+        "entry_price",
+        "market_close_price",
+        "half_spread",
+        "close_price_adjusted",
+        "pnl_native",
+        "profit_currency",
+        "conversion",
+        "calculation_stage",
+    )
+
+    for field in passthrough_fields:
+        value = result.get(field)
+        if value is not None:
+            payload[field] = value
+
     if extra_fields:
         payload.update(extra_fields)
     return payload
@@ -461,6 +480,16 @@ class OrderCloser:
                 "used_margin_all": result_cleanup.get("used_margin_all"),
                 "order_status": "CLOSED",
                 "status": "CLOSED",
+                "quantity": float(qty),
+                "contract_size": float(contract_size) if contract_size is not None else None,
+                "entry_price": float(entry_price),
+                "market_close_price": float(close_price),
+                "half_spread": float(half_spread),
+                "close_price_adjusted": float(close_price_adj),
+                "pnl_native": float(pnl_native),
+                "profit_currency": str(profit_currency).upper() if profit_currency else None,
+                "conversion": conversion_meta,
+                "calculation_stage": "close_compute",
             }
 
             close_message_value = (
@@ -1076,4 +1105,14 @@ class OrderCloser:
             "used_margin_all": clean.get("used_margin_all"),
             "order_status": "CLOSED",
             "status": "CLOSED",
+            "quantity": float(qty),
+            "contract_size": float(contract_size) if contract_size is not None else None,
+            "entry_price": float(entry_price),
+            "market_close_price": float(close_price),
+            "half_spread": float(half_spread),
+            "close_price_adjusted": float(close_price_adj),
+            "pnl_native": float(pnl_native),
+            "profit_currency": str(profit_currency).upper() if profit_currency else None,
+            "conversion": conversion_meta,
+            "calculation_stage": "close_compute",
         }
