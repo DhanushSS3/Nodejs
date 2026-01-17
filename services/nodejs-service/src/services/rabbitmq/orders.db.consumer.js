@@ -1,6 +1,5 @@
 const amqp = require('amqplib');
 const logger = require('../logger.service');
-const { normalizeConversionMeta } = require('../utils/orderCalculations');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
 const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
@@ -1772,6 +1771,19 @@ function toNumber(value) {
   }
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function normalizeConversionMeta(meta) {
+  if (!meta || typeof meta !== 'object') {
+    return null;
+  }
+  return {
+    from_currency: meta.from_currency ? String(meta.from_currency).toUpperCase() : null,
+    pair: meta.pair ? String(meta.pair).toUpperCase() : null,
+    rate: toNumber(meta.rate),
+    invert: Boolean(meta.invert),
+    source: meta.source ? String(meta.source) : null
+  };
 }
 
 function logLocalCloseCalculation(message, context = {}) {
