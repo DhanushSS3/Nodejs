@@ -634,7 +634,8 @@ class MAMOrderService {
       const result = pyResp.data?.data || {};
       const flow = result.flow;
       const exec_price = Number.isFinite(Number(result.exec_price)) ? Number(result.exec_price) : order_price;
-      const margin = Number(result.margin_usd ?? result.used_margin_usd ?? 0);
+      const pythonMargin = Number(result.margin_usd ?? result.used_margin_usd);
+      const margin = Number.isFinite(pythonMargin) && pythonMargin > 0 ? pythonMargin : Number(requiredMargin);
       const contract_value = Number(result.contract_value ?? 0);
       const totalUsedMargin = Number(result.used_margin_executed);
 
