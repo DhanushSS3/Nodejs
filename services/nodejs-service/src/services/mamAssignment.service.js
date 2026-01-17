@@ -506,7 +506,6 @@ class MAMAssignmentService {
     await MAMAccount.update(
       {
         total_balance: normalizedBalance,
-        mam_balance: normalizedBalance,
         total_investors: totalInvestors
       },
       { where: { id: mamAccountId }, transaction }

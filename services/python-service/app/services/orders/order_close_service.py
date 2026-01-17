@@ -34,12 +34,14 @@ from app.services.groups.group_config_helper import get_group_config_with_fallba
 from app.services.logging.provider_logger import (
     get_provider_errors_logger,
     get_worker_close_logger,
+    get_orders_calculated_logger,
 )
 from app.services.rabbitmq_client import publish_db_update
 
 logger = get_worker_close_logger()
 error_logger = get_provider_errors_logger()
 symbol_logger = get_symbol_holders_logger()
+calc_logger = get_orders_calculated_logger()
 
 # User-level locks to prevent race conditions during order operations
 _user_locks: Dict[str, asyncio.Lock] = {}
@@ -216,6 +218,19 @@ class OrderCloser:
     def __init__(self) -> None:
         pass
 
+    def _log_calculation(self, *, flow: str, stage: str, payload: Dict[str, Any]) -> None:
+        try:
+            log_payload = {
+                "type": "ORDER_CLOSE_CALC",
+                "flow": flow,
+                "stage": stage,
+                **payload
+            }
+            calc_logger.info(orjson.dumps(log_payload).decode())
+        except Exception:
+            # Avoid throwing inside accounting flow – logging is best-effort
+            pass
+
     async def close_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         missing = [k for k in ("symbol", "order_type", "user_id", "user_type", "order_id") if k not in payload]
         if missing:
@@ -373,12 +388,56 @@ class OrderCloser:
             # Convert to USD when needed
             prices_cache: Dict[str, Dict[str, float]] = {}
             profit_usd = pnl_native
+            conversion_meta: Dict[str, Any] = {
+                "from_currency": str(profit_currency).upper() if profit_currency else "USD",
+                "pair": None,
+                "rate": None,
+                "invert": False,
+                "source": None
+            }
             if profit_currency and str(profit_currency).upper() not in ("USD", "USDT"):
-                conv = await convert_to_usd(pnl_native, str(profit_currency).upper(), prices_cache=prices_cache, strict=False)
+                conv, meta = await convert_to_usd(
+                    pnl_native,
+                    str(profit_currency).upper(),
+                    prices_cache=prices_cache,
+                    strict=False,
+                    with_metadata=True
+                )
                 profit_usd = float(conv or 0.0)
+                if meta:
+                    conversion_meta.update(meta)
+            else:
+                conversion_meta.update({"pair": "USD", "rate": 1.0, "source": "native"})
 
             swap_val = _safe_float(order_hash.get("swap")) or 0.0
             net_profit = float(profit_usd) - float(total_commission) + float(swap_val)
+
+            self._log_calculation(
+                flow="local",
+                stage="close_compute",
+                payload={
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "user_type": user_type,
+                    "symbol": symbol,
+                    "order_type": order_type,
+                    "quantity": qty,
+                    "contract_size": contract_size,
+                    "entry_price": entry_price,
+                    "market_close_price": close_price,
+                    "half_spread": half_spread,
+                    "close_price_adjusted": close_price_adj,
+                    "commission_entry": commission_entry,
+                    "commission_exit": commission_exit,
+                    "total_commission": total_commission,
+                    "swap": swap_val,
+                    "pnl_native": pnl_native,
+                    "profit_currency": profit_currency,
+                    "conversion": conversion_meta,
+                    "profit_usd": profit_usd,
+                    "net_profit": net_profit
+                }
+            )
 
             # Remove order and recompute margins
             result_cleanup = await self._cleanup_after_close(user_type, user_id, order_id, symbol)
@@ -945,12 +1004,56 @@ class OrderCloser:
             pnl_native = (float(entry_price) - float(close_price_adj)) * float(qty) * float(contract_size or 0.0)
 
         profit_usd = pnl_native
+        conversion_meta: Dict[str, Any] = {
+            "from_currency": str(profit_currency).upper() if profit_currency else "USD",
+            "pair": None,
+            "rate": None,
+            "invert": False,
+            "source": None
+        }
         if profit_currency and str(profit_currency).upper() not in ("USD", "USDT"):
-            conv = await convert_to_usd(pnl_native, str(profit_currency).upper(), prices_cache={}, strict=False)
+            conv, meta = await convert_to_usd(
+                pnl_native,
+                str(profit_currency).upper(),
+                prices_cache={},
+                strict=False,
+                with_metadata=True
+            )
             profit_usd = float(conv or 0.0)
+            if meta:
+                conversion_meta.update(meta)
+        else:
+            conversion_meta.update({"pair": "USD", "rate": 1.0, "source": "native"})
 
         swap_val = _safe_float(order_hash.get("swap")) or 0.0
         net_profit = float(profit_usd) - float(total_commission) + float(swap_val)
+
+        self._log_calculation(
+            flow="provider",
+            stage="close_compute",
+            payload={
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_type": user_type,
+                "symbol": symbol,
+                "order_type": order_type,
+                "quantity": qty,
+                "contract_size": contract_size,
+                "entry_price": entry_price,
+                "market_close_price": close_price,
+                "half_spread": half_spread,
+                "close_price_adjusted": close_price_adj,
+                "commission_entry": commission_entry,
+                "commission_exit": commission_exit,
+                "total_commission": total_commission,
+                "swap": swap_val,
+                "pnl_native": pnl_native,
+                "profit_currency": profit_currency,
+                "conversion": conversion_meta,
+                "profit_usd": profit_usd,
+                "net_profit": net_profit
+            }
+        )
 
         clean = await self._cleanup_after_close(user_type, user_id, order_id, symbol)
         if not clean.get("ok"):

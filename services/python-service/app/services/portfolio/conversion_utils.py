@@ -14,7 +14,8 @@ async def convert_to_usd(
     from_currency: str,
     prices_cache: Optional[Dict[str, Dict[str, float]]] = None,
     strict: bool = True,
-) -> Optional[float]:
+    with_metadata: bool = False,
+):
     """
     Convert a monetary amount from `from_currency` to USD using market prices.
     - Uses ask price for conservative conversion.
@@ -27,7 +28,8 @@ async def convert_to_usd(
         strict: if True and conversion not possible -> return None
 
     Returns:
-        float or None when strict and conversion not possible
+        float or None when strict and conversion not possible. If `with_metadata=True`,
+        returns a tuple (result, metadata_dict).
     """
     try:
         if amount is None:
@@ -35,8 +37,17 @@ async def convert_to_usd(
         if not from_currency:
             return None if strict else amount
         fc = str(from_currency).upper()
+        metadata = {
+            "from_currency": fc,
+            "pair": None,
+            "invert": False,
+            "rate": None,
+            "source": None
+        }
+
         if fc in ("USD", "USDT"):
-            return float(amount)
+            result = float(amount)
+            return (result, metadata.copy()) if with_metadata else result
 
         cache = prices_cache or {}
 
@@ -53,11 +64,13 @@ async def convert_to_usd(
             if ask and ask > 0:
                 rate = ask
                 invert = False
+                metadata.update({"pair": direct, "source": "cache_direct"})
         elif inverse in cache:
             ask = _safe_float(cache[inverse].get("ask"))
             if ask and ask > 0:
                 rate = ask
                 invert = True
+                metadata.update({"pair": inverse, "source": "cache_inverse"})
 
         # 2) Fallback to Redis per-symbol hashes
         if rate == 0.0:
@@ -68,6 +81,7 @@ async def convert_to_usd(
                 if ask and ask > 0:
                     rate = ask
                     invert = False
+                    metadata.update({"pair": direct, "source": "redis_direct"})
             if rate == 0.0:
                 data2 = await redis_cluster.hmget(f"market:{inverse}", ["ask"])  # expect [ask]
                 if data2 and data2[0]:
@@ -75,6 +89,7 @@ async def convert_to_usd(
                     if ask2 and ask2 > 0:
                         rate = ask2
                         invert = True
+                        metadata.update({"pair": inverse, "source": "redis_inverse"})
 
         # 3) Fallback to global snapshot hash market:prices (JSON values)
         if rate == 0.0:
@@ -87,6 +102,7 @@ async def convert_to_usd(
                         if ask and ask > 0:
                             rate = ask
                             invert = False
+                            metadata.update({"pair": direct, "source": "snapshot_direct"})
                     except Exception:
                         pass
                 if rate == 0.0:
@@ -98,6 +114,7 @@ async def convert_to_usd(
                             if ask2 and ask2 > 0:
                                 rate = ask2
                                 invert = True
+                                metadata.update({"pair": inverse, "source": "snapshot_inverse"})
                         except Exception:
                             pass
             except Exception as e:
@@ -106,16 +123,29 @@ async def convert_to_usd(
         if rate == 0.0:
             if strict:
                 logger.warning(f"Conversion rate not found for {fc}->USD (no {direct} or {inverse}); strict=True returning None")
-                return None
+                return (None, metadata.copy()) if with_metadata else None
             logger.warning(f"Conversion rate not found for {fc}->USD; returning amount unchanged (non-strict)")
-            return float(amount)
+            result = float(amount)
+            return (result, metadata.copy()) if with_metadata else result
 
         if invert:
-            return float(amount) / rate
-        return float(amount) * rate
+            result = float(amount) / rate
+        else:
+            result = float(amount) * rate
+
+        metadata.update({
+            "invert": invert,
+            "rate": rate,
+            "pair": metadata.get("pair") or (direct if not invert else inverse)
+        })
+
+        return (result, metadata.copy()) if with_metadata else result
     except Exception as e:
         logger.error(f"convert_to_usd error for {amount} {from_currency}: {e}")
-        return None if strict else float(amount)
+        if strict:
+            return (None, metadata.copy()) if with_metadata else None
+        fallback = float(amount)
+        return (fallback, metadata.copy()) if with_metadata else fallback
 
 
 def _safe_float(v) -> Optional[float]:
