@@ -129,6 +129,21 @@ class MAMOrderService {
       groupFields
     });
 
+    logger.info('MAM order execution completed', {
+      mam_account_id: mamAccountId,
+      mam_order_id: mamOrder.id,
+      requested_volume: volume,
+      executed_volume: executionSummary.executedVolume,
+      rejected_investors: executionSummary.rejectedCount,
+      rejected_volume: executionSummary.rejectedVolume,
+      allocation_preview: executionSummary.allocationSnapshot?.map((entry) => ({
+        client_id: entry.client_id,
+        allocated_volume: entry.allocated_volume,
+        status: entry.status,
+        reason: entry.reason
+      }))
+    });
+
     await mamOrder.update({
       execution_summary: executionSummary.executionSnapshot,
       allocation_snapshot: executionSummary.allocationSnapshot,
@@ -477,7 +492,24 @@ class MAMOrderService {
       leverage: Number(client.leverage) || 100
     });
 
+    logger.debug('MAM allocation margin evaluation', {
+      mam_order_id: mamOrderId,
+      client_id: clientId,
+      lots,
+      symbol,
+      required_margin: Number(requiredMargin.toFixed(6)),
+      wallet_balance: Number(assignment.client.wallet_balance || 0),
+      free_margin_snapshot: snapshot?.free_margin
+    });
+
     if (requiredMargin > assignment.client.wallet_balance) {
+      logger.warn('MAM allocation rejected - insufficient wallet', {
+        mam_order_id: mamOrderId,
+        client_id: clientId,
+        lots,
+        required_margin: Number(requiredMargin.toFixed(6)),
+        wallet_balance: Number(assignment.client.wallet_balance || 0)
+      });
       return { success: false, reason: 'Insufficient wallet balance for margin' };
     }
 
