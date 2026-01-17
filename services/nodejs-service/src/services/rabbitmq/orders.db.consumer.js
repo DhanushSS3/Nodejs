@@ -1,4 +1,7 @@
 const amqp = require('amqplib');
+const fs = require('fs');
+const path = require('path');
+const winston = require('winston');
 const logger = require('../logger.service');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
@@ -28,6 +31,7 @@ const sequelize = require('../../config/db');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
+const calcLogger = createOrdersCalcLogger();
 
 // Performance monitoring for throughput tracking
 let messageCount = 0;
@@ -572,6 +576,13 @@ async function applyDbUpdate(msg) {
         logger.error('Failed to backfill SQL order from Redis canonical', { order_id, error: e.message });
       }
     }
+
+    // Emit calculation log for local close confirmations (Python already logs provider flows)
+    logLocalCloseCalculation(msg, {
+      row,
+      userId: resolvedUserId || user_id,
+      userType: resolvedUserType,
+    });
 
     // Wallet payout and transaction records (idempotent per order)
     try {
@@ -1755,6 +1766,91 @@ async function shutdownOrdersDbConsumer() {
   } catch (err) {
     logger.error('❌ Error during Orders DB consumer shutdown:', err.message);
     throw err;
+  }
+}
+
+function createOrdersCalcLogger() {
+  try {
+    const logsDir = path.join(__dirname, '../../logs');
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    return winston.createLogger({
+      level: 'info',
+      format: winston.format.printf((info) => info.message),
+      transports: [
+        new winston.transports.File({
+          filename: path.join(logsDir, 'orders_calculated.log'),
+          maxsize: 200 * 1024 * 1024,
+          maxFiles: 10
+        })
+      ]
+    });
+  } catch (err) {
+    logger.warn('orders_calculated logger disabled', { error: err.message });
+    return { info: () => {} };
+  }
+}
+
+function toNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function logLocalCloseCalculation(message, context = {}) {
+  try {
+    if (!message || message.type !== 'ORDER_CLOSE_CONFIRMED') {
+      return;
+    }
+
+    const flow = message.flow || message.close_origin || 'local';
+    const origin = message.close_origin || flow;
+    if (origin && origin !== 'local' && flow !== 'local') {
+      return;
+    }
+
+    const row = context.row || {};
+    const userId = context.userId || message.user_id;
+    const userType = context.userType || message.user_type;
+    const symbol = row.symbol || message.symbol;
+    const orderType = row.order_type || message.order_type;
+
+    const logPayload = {
+      type: 'ORDER_CLOSE_CALC',
+      stage: 'db_consumer',
+      source: 'node_orders_db_consumer',
+      flow: flow || 'local',
+      origin: origin || 'local',
+      order_id: message.order_id != null ? String(message.order_id) : null,
+      user_id: userId != null ? String(userId) : null,
+      user_type: userType != null ? String(userType) : null,
+      symbol: symbol ? String(symbol).toUpperCase() : null,
+      order_type: orderType ? normalizeOrderType(orderType) : null,
+      close_price: toNumber(message.close_price ?? row.close_price),
+      net_profit: toNumber(message.net_profit ?? row.net_profit),
+      commission_total: toNumber(message.commission ?? row.commission),
+      commission_entry: toNumber(message.commission_entry),
+      commission_exit: toNumber(message.commission_exit),
+      profit_usd: toNumber(message.profit_usd),
+      swap: toNumber(message.swap ?? row.swap),
+      used_margin_executed: toNumber(message.used_margin_executed),
+      used_margin_all: toNumber(message.used_margin_all),
+      contract_value: toNumber(row.contract_value ?? message.contract_value),
+      margin: toNumber(row.margin ?? message.margin),
+      close_message: message.close_message || null,
+      trigger_lifecycle_id: message.trigger_lifecycle_id || null,
+      timestamp: new Date().toISOString()
+    };
+
+    calcLogger.info(JSON.stringify(logPayload));
+  } catch (error) {
+    logger.warn('Failed to log calculation for ORDER_CLOSE_CONFIRMED', {
+      error: error.message,
+      order_id: message?.order_id
+    });
   }
 }
 
