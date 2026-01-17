@@ -65,7 +65,11 @@ class MAMOrderService {
     }
 
     const groupName = mamAccount.group;
-    const groupFields = await groupsCache.getGroupFields(groupName, symbol, ['type', 'contract_size']);
+    const groupFields = await groupsCache.getGroupFields(
+      groupName,
+      symbol,
+      ['type', 'contract_size', 'margin', 'group_margin', 'crypto_margin_factor']
+    );
     await this._assertMarketOpen(groupFields?.type);
 
     const freeMarginSnapshots = await this._fetchFreeMargins(assignments);
@@ -529,15 +533,18 @@ class MAMOrderService {
       };
     }
 
+    const instrumentType = Number(groupFields?.type) || 0;
     const contractSize = Number(groupFields?.contract_size) || 100000;
     const orderPrice = Number(order_price);
     const contractValue = contractSize * lots;
+    const marginFactor = this._resolveMarginFactor({ instrumentType, groupFields });
 
     const requiredMargin = this._estimateMargin({
       lots,
       order_price: orderPrice,
       contractSize,
-      leverage: Number(client.leverage) || 100
+      leverage: Number(client.leverage) || 100,
+      marginFactor
     });
 
     logger.debug('MAM allocation margin evaluation', {
@@ -548,6 +555,8 @@ class MAMOrderService {
       order_price: Number(orderPrice),
       contract_size: contractSize,
       contract_value: Number(contractValue.toFixed(6)),
+      instrument_type: instrumentType || null,
+      margin_factor: marginFactor,
       required_margin: Number(requiredMargin.toFixed(6)),
       wallet_balance: Number(assignment.client.wallet_balance || 0),
       free_margin_snapshot: snapshot?.free_margin
@@ -627,6 +636,7 @@ class MAMOrderService {
       const exec_price = Number.isFinite(Number(result.exec_price)) ? Number(result.exec_price) : order_price;
       const margin = Number(result.margin_usd ?? result.used_margin_usd ?? 0);
       const contract_value = Number(result.contract_value ?? 0);
+      const totalUsedMargin = Number(result.used_margin_executed);
 
       await liveOrder.update({
         order_status: flow === 'provider' ? ORDER_STATUS.QUEUED : ORDER_STATUS.OPEN,
@@ -636,9 +646,18 @@ class MAMOrderService {
         commission: result.commission_entry ?? null
       });
 
-      await updateUserUsedMargin('live', clientId).catch((error) => {
-        logger.warn('Failed to update user margin after MAM order', { clientId, error: error.message });
-      });
+      if (Number.isFinite(totalUsedMargin)) {
+        try {
+          await updateUserUsedMargin({ userType: 'live', userId: clientId, usedMargin: totalUsedMargin });
+        } catch (error) {
+          logger.warn('Failed to update user margin after MAM order', { clientId, error: error.message });
+        }
+      } else {
+        logger.warn('Skipped user margin mirror update - missing total margin', {
+          clientId,
+          mam_order_id: mamOrderId
+        });
+      }
 
       try {
         portfolioEvents.emitUserUpdate('live', clientId, {
@@ -742,10 +761,31 @@ class MAMOrderService {
     }
   }
 
-  _estimateMargin({ lots, order_price, contractSize, leverage }) {
+  _resolveMarginFactor({ instrumentType, groupFields }) {
+    if (Number(instrumentType) !== 4) {
+      return 1;
+    }
+
+    const candidates = [
+      groupFields?.crypto_margin_factor,
+      groupFields?.group_margin,
+      groupFields?.margin
+    ];
+
+    for (const value of candidates) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+
+    return 1;
+  }
+
+  _estimateMargin({ lots, order_price, contractSize, leverage, marginFactor = 1 }) {
     if (!(lots > 0)) return 0;
     const contractValue = contractSize * lots;
-    const notional = contractValue * order_price;
+    const notional = contractValue * order_price * (Number.isFinite(marginFactor) ? marginFactor : 1);
     if (!(leverage > 0)) return notional;
     return notional / leverage;
   }
