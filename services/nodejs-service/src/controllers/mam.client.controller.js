@@ -140,6 +140,29 @@ class MAMClientController {
       });
     }
   }
+
+  async unsubscribeAssignment(req, res) {
+    try {
+      const clientId = getClientId(req);
+      const assignment = await mamAssignmentService.unsubscribeAssignment({
+        assignmentId: req.params.id,
+        clientId,
+        reason: req.body?.reason,
+        requestIp: req.ip
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM account unsubscribed. Manual control restored.',
+        data: assignment
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Failed to unsubscribe from MAM account'
+      });
+    }
+  }
 }
 
 module.exports = new MAMClientController();

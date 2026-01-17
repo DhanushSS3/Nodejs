@@ -54,11 +54,21 @@ const declineAssignmentValidation = [
     .isLength({ max: 500 }).withMessage('reason cannot exceed 500 characters')
 ];
 
+const unsubscribeAssignmentValidation = [
+  param('id')
+    .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer'),
+  body('reason')
+    .optional()
+    .isString().withMessage('reason must be text')
+    .isLength({ max: 500 }).withMessage('reason cannot exceed 500 characters')
+];
+
 module.exports = {
   createAdminAssignmentValidation,
   listAssignmentsValidation,
   createClientAssignmentValidation,
   acceptAssignmentValidation,
   assignmentIdParamValidation,
-  declineAssignmentValidation
+  declineAssignmentValidation,
+  unsubscribeAssignmentValidation
 };

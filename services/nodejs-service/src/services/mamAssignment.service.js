@@ -6,6 +6,7 @@ const LiveUser = require('../models/liveUser.model');
 const {
   ASSIGNMENT_STATUS,
   ASSIGNMENT_INITIATORS,
+  ASSIGNMENT_UNSUBSCRIBE_ACTORS,
   ELIGIBILITY_FAILURES
 } = require('../constants/mamAssignment.constants');
 const eligibilityService = require('./mamAssignmentEligibility.service');
@@ -215,6 +216,87 @@ class MAMAssignmentService {
         assignment_id: assignment.id,
         status: assignment.status,
         action: 'accepted'
+      });
+
+      return assignment;
+    });
+  }
+
+  async unsubscribeAssignment({ assignmentId, clientId, reason, requestIp }) {
+    return sequelize.transaction(async (transaction) => {
+      const assignment = await MAMAssignment.findByPk(assignmentId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction
+      });
+      if (!assignment) {
+        const error = new Error('MAM assignment not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (assignment.client_live_user_id !== clientId) {
+        const error = new Error('Assignment does not belong to this client');
+        error.statusCode = 403;
+        throw error;
+      }
+      if (assignment.status !== ASSIGNMENT_STATUS.ACTIVE) {
+        const error = new Error('Only active assignments can be unsubscribed');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const timestamp = new Date();
+      assignment.status = ASSIGNMENT_STATUS.UNSUBSCRIBED;
+      assignment.deactivated_at = timestamp;
+      assignment.unsubscribe_reason = reason || null;
+      assignment.unsubscribed_by = ASSIGNMENT_UNSUBSCRIBE_ACTORS.CLIENT;
+      assignment.metadata = {
+        ...(assignment.metadata || {}),
+        last_unsubscribe_ip: requestIp || null,
+        last_unsubscribe_at: timestamp
+      };
+      assignment.eligibility_fail_reason = null;
+
+      await assignment.save({ transaction });
+
+      await MAMAccount.decrement(
+        { total_investors: 1 },
+        {
+          where: {
+            id: assignment.mam_account_id,
+            total_investors: { [Op.gt]: 0 }
+          },
+          transaction
+        }
+      );
+
+      await LiveUser.update(
+        {
+          mam_id: null,
+          mam_status: 0,
+          mam_alloted_time: null,
+          is_self_trading: 1,
+          copytrading_status: 0,
+          copytrader_id: null
+        },
+        { where: { id: clientId }, transaction }
+      );
+
+      await assignment.reload({
+        include: [
+          { model: MAMAccount, as: 'mamAccount' },
+          {
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'is_self_trading']
+          }
+        ],
+        transaction
+      });
+
+      this._emitClientAssignmentUpdate(clientId, {
+        assignment_id: assignment.id,
+        status: assignment.status,
+        action: 'unsubscribed'
       });
 
       return assignment;

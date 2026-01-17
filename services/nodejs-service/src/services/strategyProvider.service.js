@@ -29,6 +29,12 @@ class StrategyProviderService {
       if (!user) {
         throw new Error('User not found or inactive');
       }
+
+      if (Number(user.is_self_trading) === 0) {
+        const error = new Error('Strategy provider accounts are unavailable while manual trading is disabled for this user');
+        error.statusCode = 403;
+        throw error;
+      }
       
       // Check if strategy name is already taken
       const existingStrategy = await StrategyProviderAccount.findOne({

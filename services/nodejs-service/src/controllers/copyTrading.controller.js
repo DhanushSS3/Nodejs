@@ -171,6 +171,13 @@ async function createFollowerAccount(req, res) {
       });
     }
 
+    if (Number(liveUser.is_self_trading) === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Copy trading features are unavailable while manual trading is disabled for this user'
+      });
+    }
+
     // Comprehensive validation using internal transfer service logic
     const investmentAmountFloat = parseFloat(investment_amount);
     const minBalance = 100.00;

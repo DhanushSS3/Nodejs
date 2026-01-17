@@ -374,6 +374,13 @@ router.post(
   handleValidationErrors,
   mammController.declineAssignment
 );
+router.post(
+  '/mam/assignments/:id/unsubscribe',
+  authenticateJWT,
+  require('../middlewares/mamAssignment.validation').unsubscribeAssignmentValidation,
+  handleValidationErrors,
+  mammController.unsubscribeAssignment
+);
 
 /**
  * Lightweight admin endpoint secured by static secret for closed order lookup
