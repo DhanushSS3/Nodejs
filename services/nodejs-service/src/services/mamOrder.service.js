@@ -117,13 +117,19 @@ class MAMOrderService {
       throw error;
     }
 
+    const executionPrice = await this._resolveExecutionPrice({
+      symbol,
+      order_type,
+      fallbackPrice: order_price
+    });
+
     const executionSummary = await this._executeAllocations({
       mamOrder,
       allocation,
       mamAccount,
       symbol,
       order_type,
-      order_price,
+      order_price: executionPrice,
       stop_loss,
       take_profit,
       groupFields
@@ -181,6 +187,42 @@ class MAMOrderService {
       rejected_volume: executionSummary.rejectedVolume,
       allocation: executionSummary.allocationSnapshot
     };
+  }
+
+  async _resolveExecutionPrice({ symbol, order_type, fallbackPrice }) {
+    const normalizedSymbol = (symbol || '').toUpperCase();
+    const side = (order_type || '').toUpperCase();
+
+    try {
+      const [bidRaw, askRaw] = await redisCluster.hmget(`market:${normalizedSymbol}`, 'bid', 'ask');
+      const bid = bidRaw != null ? Number(bidRaw) : null;
+      const ask = askRaw != null ? Number(askRaw) : null;
+
+      if (side === 'SELL' && Number.isFinite(bid) && bid > 0) {
+        return bid;
+      }
+
+      if (Number.isFinite(ask) && ask > 0) {
+        return ask;
+      }
+
+      if (Number.isFinite(bid) && bid > 0) {
+        return bid;
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch market price for MAM order, using fallback price', {
+        symbol: normalizedSymbol,
+        error: error.message
+      });
+    }
+
+    if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+      return Number(fallbackPrice);
+    }
+
+    const err = new Error('Market price unavailable for symbol');
+    err.statusCode = 503;
+    throw err;
   }
 
   async closeMamOrder({ mamAccountId, managerId, payload }) {
@@ -503,7 +545,7 @@ class MAMOrderService {
       client_id: clientId,
       lots,
       symbol,
-      order_price: orderPrice,
+      order_price: Number(orderPrice),
       contract_size: contractSize,
       contract_value: Number(contractValue.toFixed(6)),
       required_margin: Number(requiredMargin.toFixed(6)),
