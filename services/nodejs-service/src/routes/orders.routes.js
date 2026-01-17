@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateJWT } = require('../middlewares/auth.middleware');
+const { ensureTradingUserState } = require('../middlewares/tradingAuth.middleware');
 const ordersController = require('../controllers/orders.controller');
 
 // POST /api/orders/instant/place
@@ -91,7 +92,7 @@ const ordersController = require('../controllers/orders.controller');
  *       500:
  *         description: Internal server error
  */
-router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrder);
+router.post('/instant/place', authenticateJWT, ensureTradingUserState, ordersController.placeInstantOrder);
 
 // POST /api/orders/pending/place
 /**
@@ -162,7 +163,7 @@ router.post('/instant/place', authenticateJWT, ordersController.placeInstantOrde
  *       500:
  *         description: Internal server error
  */
-router.post('/pending/place', authenticateJWT, ordersController.placePendingOrder);
+router.post('/pending/place', authenticateJWT, ensureTradingUserState, ordersController.placePendingOrder);
 
 // POST /api/orders/pending/cancel
 /**
@@ -220,7 +221,7 @@ router.post('/pending/place', authenticateJWT, ordersController.placePendingOrde
  *       409:
  *         description: Conflict (order is not pending)
  */
-router.post('/pending/cancel', authenticateJWT, ordersController.cancelPendingOrder);
+router.post('/pending/cancel', authenticateJWT, ensureTradingUserState, ordersController.cancelPendingOrder);
 
 // POST /api/orders/pending/modify
 /**
@@ -291,7 +292,7 @@ router.post('/pending/cancel', authenticateJWT, ordersController.cancelPendingOr
  *       409:
  *         description: Conflict (order is not pending)
  */
-router.post('/pending/modify', authenticateJWT, ordersController.modifyPendingOrder);
+router.post('/pending/modify', authenticateJWT, ensureTradingUserState, ordersController.modifyPendingOrder);
 
 // POST /api/orders/close
 /**
@@ -337,7 +338,7 @@ router.post('/pending/modify', authenticateJWT, ordersController.modifyPendingOr
  *       503:
  *         description: Provider rejected/timeout
  */
-router.post('/close', authenticateJWT, ordersController.closeOrder);
+router.post('/close', authenticateJWT, ensureTradingUserState, ordersController.closeOrder);
 
 // POST /api/orders/close-all
 /**
@@ -379,7 +380,7 @@ router.post('/close', authenticateJWT, ordersController.closeOrder);
  *       409:
  *         description: Another close operation already running
  */
-router.post('/close-all', authenticateJWT, ordersController.closeAllOrders);
+router.post('/close-all', authenticateJWT, ensureTradingUserState, ordersController.closeAllOrders);
 
 // POST /api/orders/stoploss/add
 /**
@@ -461,7 +462,7 @@ router.post('/close-all', authenticateJWT, ordersController.closeAllOrders);
  *       503:
  *         description: Provider rejected/timeout
  */
-router.post('/stoploss/add', authenticateJWT, ordersController.addStopLoss);
+router.post('/stoploss/add', authenticateJWT, ensureTradingUserState, ordersController.addStopLoss);
 
 // POST /api/orders/takeprofit/add
 /**
@@ -543,7 +544,7 @@ router.post('/stoploss/add', authenticateJWT, ordersController.addStopLoss);
  *       503:
  *         description: Provider rejected/timeout
  */
-router.post('/takeprofit/add', authenticateJWT, ordersController.addTakeProfit);
+router.post('/takeprofit/add', authenticateJWT, ensureTradingUserState, ordersController.addTakeProfit);
 
 // POST /api/orders/stoploss/cancel
 /**
@@ -601,7 +602,7 @@ router.post('/takeprofit/add', authenticateJWT, ordersController.addTakeProfit);
  *       409:
  *         description: Conflict (no active SL or order not OPEN)
  */
-router.post('/stoploss/cancel', authenticateJWT, ordersController.cancelStopLoss);
+router.post('/stoploss/cancel', authenticateJWT, ensureTradingUserState, ordersController.cancelStopLoss);
 
 // POST /api/orders/takeprofit/cancel
 /**
@@ -659,7 +660,7 @@ router.post('/stoploss/cancel', authenticateJWT, ordersController.cancelStopLoss
  *       409:
  *         description: Conflict (no active TP or order not OPEN)
  */
-router.post('/takeprofit/cancel', authenticateJWT, ordersController.cancelTakeProfit);
+router.post('/takeprofit/cancel', authenticateJWT, ensureTradingUserState, ordersController.cancelTakeProfit);
 
 // GET /api/orders/closed
 /**

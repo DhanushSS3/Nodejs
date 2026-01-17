@@ -25,6 +25,22 @@ function getTokenUserId(user) {
   return user?.sub || user?.user_id || user?.id;
 }
 
+function getTradingAuthContext(req) {
+  const tokenUser = req.user || {};
+  const resolvedRecord = req.userResolved?.record || {};
+  const resolvedId = req.userResolved?.id;
+
+  return {
+    tokenUser,
+    userId: resolvedId || getTokenUserId(tokenUser),
+    role: tokenUser.role || tokenUser.user_role,
+    isSelfTrading: resolvedRecord.is_self_trading ?? tokenUser.is_self_trading,
+    status: resolvedRecord.status ?? tokenUser.status,
+    group: (resolvedRecord.group || tokenUser.group || 'Classic').toString(),
+    isActive: resolvedRecord.is_active ?? tokenUser.is_active
+  };
+}
+
 // Validate pending order payload and derive parsed fields
 function validatePendingPayload(body) {
   const errors = [];
@@ -95,12 +111,12 @@ async function placeInstantOrder(req, res) {
       body: req.body,
     }).catch(() => { });
     // JWT checks
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
-    const userGroup = user && user.group ? String(user.group) : 'Classic';
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
+    const userGroup = authContext.group;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for order placement' });
@@ -552,12 +568,12 @@ async function placePendingOrder(req, res) {
       body: req.body,
     }).catch(() => { });
     // JWT checks
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
-    const userGroup = user && user.group ? String(user.group) : 'Classic';
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
+    const userGroup = authContext.group;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for pending order placement' });
@@ -903,12 +919,12 @@ async function modifyPendingOrder(req, res) {
     }).catch(() => { });
 
     // JWT checks
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
-    const userGroupFromToken = user && user.group ? String(user.group) : 'Classic';
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
+    const userGroupFromToken = authContext.group;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed for pending modify' });
@@ -1171,11 +1187,12 @@ async function closeOrder(req, res) {
       headers: req.headers,
       body: req.body,
     }).catch(() => { });
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
+    const tokenUser = authContext.tokenUser;
 
     const body = req.body || {};
     const req_user_type = normalizeStr(body.user_type).toLowerCase();
@@ -1210,8 +1227,8 @@ async function closeOrder(req, res) {
     if (tokenUserId && !isInternalAuth) {
       const normalizedReqUserId = normalizeStr(req_user_id);
       const normalizedTokenUserId = normalizeStr(tokenUserId);
-      const normalizedStrategyAccountId = user.strategy_provider_id ? normalizeStr(user.strategy_provider_id) : null;
-      const normalizedCopyFollowerAccountId = user.copy_follower_account_id ? normalizeStr(user.copy_follower_account_id) : null;
+      const normalizedStrategyAccountId = tokenUser?.strategy_provider_id ? normalizeStr(tokenUser.strategy_provider_id) : null;
+      const normalizedCopyFollowerAccountId = tokenUser?.copy_follower_account_id ? normalizeStr(tokenUser.copy_follower_account_id) : null;
 
       const matchesTokenUser = normalizedTokenUserId && normalizedTokenUserId === normalizedReqUserId;
       const matchesStrategyProviderAccount = req_user_type === 'strategy_provider'
@@ -1547,11 +1564,12 @@ async function closeAllOrders(req, res) {
       body: req.body
     }).catch(() => { });
 
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
+    const tokenUser = authContext.tokenUser;
 
     const body = req.body || {};
     const req_user_type = normalizeStr(body.user_type).toLowerCase();
@@ -1580,8 +1598,8 @@ async function closeAllOrders(req, res) {
     if (tokenUserId && !isInternalAuth) {
       const normalizedReqUserId = normalizeStr(req_user_id);
       const normalizedTokenUserId = normalizeStr(tokenUserId);
-      const normalizedStrategyAccountId = user.strategy_provider_id ? normalizeStr(user.strategy_provider_id) : null;
-      const normalizedCopyFollowerAccountId = user.copy_follower_account_id ? normalizeStr(user.copy_follower_account_id) : null;
+      const normalizedStrategyAccountId = tokenUser?.strategy_provider_id ? normalizeStr(tokenUser.strategy_provider_id) : null;
+      const normalizedCopyFollowerAccountId = tokenUser?.copy_follower_account_id ? normalizeStr(tokenUser.copy_follower_account_id) : null;
 
       const matchesTokenUser = normalizedTokenUserId && normalizedTokenUserId === normalizedReqUserId;
       const matchesStrategyProviderAccount = req_user_type === 'strategy_provider'
@@ -1647,11 +1665,11 @@ async function addStopLoss(req, res) {
       body: req.body,
     }).catch(() => { });
     // Basic auth checks
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed' });
@@ -1865,11 +1883,11 @@ async function addTakeProfit(req, res) {
       headers: req.headers,
       body: req.body,
     }).catch(() => { });
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed' });
@@ -2143,11 +2161,11 @@ async function cancelStopLoss(req, res) {
       headers: req.headers,
       body: req.body,
     }).catch(() => { });
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed' });
@@ -2360,11 +2378,11 @@ async function cancelTakeProfit(req, res) {
       headers: req.headers,
       body: req.body,
     }).catch(() => { });
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
 
     if (role && role !== 'trader') {
       return res.status(403).json({ success: false, message: 'User role not allowed' });
@@ -2568,11 +2586,11 @@ async function cancelPendingOrder(req, res) {
   const operationId = `pending_cancel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
     orderReqLogger.logOrderRequest({ endpoint: 'cancelPendingOrder', operationId, method: req.method, path: req.originalUrl || req.url, ip: req.ip, user: req.user, headers: req.headers, body: req.body }).catch(() => { });
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
-    const role = user.role || user.user_role;
-    const isSelfTrading = user.is_self_trading;
-    const userStatus = user.status;
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
+    const role = authContext.role;
+    const isSelfTrading = authContext.isSelfTrading;
+    const userStatus = authContext.status;
 
     if (role && role !== 'trader') return res.status(403).json({ success: false, message: 'User role not allowed for pending cancel' });
     if (isSelfTrading !== undefined && String(isSelfTrading) !== '1') return res.status(403).json({ success: false, message: 'Manual trading is disabled while this account is managed by MAM' });
@@ -2721,8 +2739,8 @@ async function getClosedOrders(req, res) {
   const operationId = `closed_orders_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
     // JWT user
-    const user = req.user || {};
-    const tokenUserId = getTokenUserId(user);
+    const authContext = getTradingAuthContext(req);
+    const tokenUserId = authContext.userId;
     if (!tokenUserId) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }

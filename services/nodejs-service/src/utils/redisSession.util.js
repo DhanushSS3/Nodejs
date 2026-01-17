@@ -347,6 +347,36 @@ async function deleteSession(userId, sessionId, userType, refreshToken = null) {
   }
 }
 
+async function revokeAllUserSessions(userId, userType) {
+  try {
+    const activeSessions = await getUserActiveSessions(userId, userType);
+    const revoked = [];
+
+    for (const session of activeSessions) {
+      let refreshToken;
+      try {
+        const sessionData = await getSession(userId, session.sessionId, userType);
+        refreshToken = sessionData?.refresh_token;
+      } catch (loadError) {
+        console.error('Failed to load session data during revocation', {
+          userId,
+          userType,
+          sessionId: session.sessionId,
+          error: loadError.message
+        });
+      }
+
+      await deleteSession(userId, session.sessionId, userType, refreshToken);
+      revoked.push(session.sessionId);
+    }
+
+    return revoked;
+  } catch (error) {
+    console.error('Failed to revoke user sessions:', error);
+    throw error;
+  }
+}
+
 async function validateRefreshToken(refreshToken) {
   try {
     const refreshKey = getRefreshTokenKey(refreshToken);
@@ -523,6 +553,7 @@ module.exports = {
   addUserSession,
   removeUserSession,
   enforceSessionLimit,
+  revokeAllUserSessions,
   MAX_CONCURRENT_SESSIONS,
   getEmailKey,
   getIPKey,
