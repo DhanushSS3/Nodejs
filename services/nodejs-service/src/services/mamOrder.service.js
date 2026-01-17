@@ -419,7 +419,8 @@ class MAMOrderService {
         lots,
         stop_loss,
         take_profit,
-        groupFields
+        groupFields,
+        snapshot
       });
 
       allocationSnapshot.push(this._buildSnapshotEntry({
@@ -464,7 +465,8 @@ class MAMOrderService {
     lots,
     stop_loss,
     take_profit,
-    groupFields
+    groupFields,
+    snapshot
   }) {
     const client = assignment.client;
     if (!client) {
