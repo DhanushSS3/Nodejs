@@ -101,18 +101,6 @@ function defineAssociations() {
     as: 'mamAssignments'
   });
 
-  LiveUser.hasMany(MAMOrder, {
-    foreignKey: 'master_live_user_id',
-    as: 'mamMasterOrders',
-    constraints: false
-  });
-
-  MAMOrder.belongsTo(LiveUser, {
-    foreignKey: 'master_live_user_id',
-    as: 'masterTrader',
-    constraints: false
-  });
-
   LiveUserOrder.belongsTo(MAMOrder, {
     foreignKey: 'parent_mam_order_id',
     as: 'parentMAMOrder',
