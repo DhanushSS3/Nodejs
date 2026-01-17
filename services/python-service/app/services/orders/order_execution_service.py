@@ -310,6 +310,17 @@ class OrderExecutor:
         except (TypeError, ValueError):
             crypto_margin_factor = None
 
+        if crypto_margin_factor is None and group_margin_cfg is not None:
+            crypto_margin_factor = group_margin_cfg
+
+        if crypto_margin_factor is None:
+            try:
+                crypto_margin_factor = float(g.get("margin")) if g.get("margin") is not None else (
+                    float(gfb.get("margin")) if gfb.get("margin") is not None else None
+                )
+            except (TypeError, ValueError):
+                crypto_margin_factor = None
+
         # Block trading outside allowed market hours for non-crypto instruments
         if not _is_market_open_by_type(instrument_type):
             result = {"ok": False, "reason": "market_closed"}
