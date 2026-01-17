@@ -229,6 +229,38 @@ class MAMOrderService {
     throw err;
   }
 
+  async _resolveClosePrice({ symbol, orderType, fallbackPrice }) {
+    const normalizedSymbol = (symbol || '').toUpperCase();
+    const baseSide = (orderType || '').toUpperCase();
+    const prefersBid = baseSide === 'BUY'; // Closing BUY means SELL -> bid
+
+    try {
+      const [bidRaw, askRaw] = await redisCluster.hmget(`market:${normalizedSymbol}`, 'bid', 'ask');
+      const bid = bidRaw != null ? Number(bidRaw) : null;
+      const ask = askRaw != null ? Number(askRaw) : null;
+
+      const preferred = prefersBid ? bid : ask;
+      const secondary = prefersBid ? ask : bid;
+
+      if (Number.isFinite(preferred) && preferred > 0) {
+        return preferred;
+      }
+      if (Number.isFinite(secondary) && secondary > 0) {
+        return secondary;
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch market close price', { symbol: normalizedSymbol, error: error.message });
+    }
+
+    if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+      return Number(fallbackPrice);
+    }
+
+    const err = new Error('Market close price unavailable for symbol');
+    err.statusCode = 503;
+    throw err;
+  }
+
   async closeMamOrder({ mamAccountId, managerId, payload }) {
     const {
       order_id: mamOrderIdRaw,
@@ -876,6 +908,22 @@ class MAMOrderService {
         ? (canonical.stop_loss != null && Number(canonical.stop_loss) > 0)
         : (row?.stop_loss != null && Number(row.stop_loss) > 0);
 
+      let closePrice;
+      try {
+        closePrice = await this._resolveClosePrice({
+          symbol: resolved.symbol,
+          orderType: resolved.order_type,
+          fallbackPrice: closePayload.close_price
+        });
+      } catch (priceError) {
+        logger.warn('Unable to resolve close price for MAM child order', {
+          order_id: orderId,
+          symbol: resolved.symbol,
+          error: priceError.message
+        });
+        return { success: false, reason: 'close_price_unavailable' };
+      }
+
       const close_id = await idGenerator.generateCloseOrderId();
       const takeprofit_cancel_id = hasTP ? await idGenerator.generateTakeProfitCancelId() : undefined;
       const stoploss_cancel_id = hasSL ? await idGenerator.generateStopLossCancelId() : undefined;
@@ -932,7 +980,7 @@ class MAMOrderService {
       if (resolved.entry_price) pyPayload.entry_price = resolved.entry_price;
       if (takeprofit_cancel_id) pyPayload.takeprofit_cancel_id = takeprofit_cancel_id;
       if (stoploss_cancel_id) pyPayload.stoploss_cancel_id = stoploss_cancel_id;
-      if (closePayload.close_price) pyPayload.close_price = closePayload.close_price;
+      pyPayload.close_price = closePrice;
 
       let pyResp;
       try {
