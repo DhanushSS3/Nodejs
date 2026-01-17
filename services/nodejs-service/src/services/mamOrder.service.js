@@ -487,10 +487,14 @@ class MAMOrderService {
       };
     }
 
+    const contractSize = Number(groupFields?.contract_size) || 100000;
+    const orderPrice = Number(order_price);
+    const contractValue = contractSize * lots;
+
     const requiredMargin = this._estimateMargin({
       lots,
-      order_price,
-      contractSize: Number(groupFields?.contract_size) || 100000,
+      order_price: orderPrice,
+      contractSize,
       leverage: Number(client.leverage) || 100
     });
 
@@ -499,6 +503,9 @@ class MAMOrderService {
       client_id: clientId,
       lots,
       symbol,
+      order_price: orderPrice,
+      contract_size: contractSize,
+      contract_value: Number(contractValue.toFixed(6)),
       required_margin: Number(requiredMargin.toFixed(6)),
       wallet_balance: Number(assignment.client.wallet_balance || 0),
       free_margin_snapshot: snapshot?.free_margin
