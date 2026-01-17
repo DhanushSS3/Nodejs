@@ -1793,7 +1793,7 @@ function logLocalCloseCalculation(message, context = {}) {
 
     const logPayload = {
       type: 'ORDER_CLOSE_CALC',
-      stage: 'db_consumer',
+      stage: message.calculation_stage || 'db_consumer',
       source: 'node_orders_db_consumer',
       flow: flow || 'local',
       origin: origin || 'local',
@@ -1802,7 +1802,14 @@ function logLocalCloseCalculation(message, context = {}) {
       user_type: userType != null ? String(userType) : null,
       symbol: symbol ? String(symbol).toUpperCase() : null,
       order_type: orderType ? normalizeOrderType(orderType) : null,
+      quantity: toNumber(message.quantity ?? row.order_quantity),
+      contract_size: toNumber(message.contract_size),
+      entry_price: toNumber(message.entry_price ?? row.order_price),
+      market_close_price: toNumber(message.market_close_price),
+      half_spread: toNumber(message.half_spread),
+      close_price_adjusted: toNumber(message.close_price_adjusted),
       close_price: toNumber(message.close_price ?? row.close_price),
+      pnl_native: toNumber(message.pnl_native),
       net_profit: toNumber(message.net_profit ?? row.net_profit),
       commission_total: toNumber(message.commission ?? row.commission),
       commission_entry: toNumber(message.commission_entry),
@@ -1813,6 +1820,8 @@ function logLocalCloseCalculation(message, context = {}) {
       used_margin_all: toNumber(message.used_margin_all),
       contract_value: toNumber(row.contract_value ?? message.contract_value),
       margin: toNumber(row.margin ?? message.margin),
+      profit_currency: message.profit_currency ? String(message.profit_currency).toUpperCase() : null,
+      conversion: normalizeConversionMeta(message.conversion),
       close_message: message.close_message || null,
       trigger_lifecycle_id: message.trigger_lifecycle_id || null,
       timestamp: new Date().toISOString()
