@@ -15,7 +15,7 @@ class SuperadminMAMAssignmentController {
 
       return res.status(201).json({
         success: true,
-        message: 'Assignment created and pending client approval',
+        message: 'Assignment created and pending client review',
         data: assignment
       });
     } catch (error) {
@@ -82,6 +82,48 @@ class SuperadminMAMAssignmentController {
       return res.status(error.statusCode || 400).json({
         success: false,
         message: error.message || 'Failed to cancel assignment'
+      });
+    }
+  }
+
+  async approveAssignment(req, res) {
+    try {
+      const assignment = await mamAssignmentService.adminApproveAssignment({
+        assignmentId: req.params.id,
+        adminId: req.admin?.id,
+        notes: req.body?.notes
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Assignment approved and awaiting client acceptance',
+        data: assignment
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Failed to approve assignment'
+      });
+    }
+  }
+
+  async rejectAssignment(req, res) {
+    try {
+      const assignment = await mamAssignmentService.adminRejectAssignment({
+        assignmentId: req.params.id,
+        adminId: req.admin?.id,
+        reason: req.body?.reason
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Assignment rejected',
+        data: assignment
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Failed to reject assignment'
       });
     }
   }

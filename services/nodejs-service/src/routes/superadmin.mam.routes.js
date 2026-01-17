@@ -13,7 +13,9 @@ const {
 const {
   createAdminAssignmentValidation,
   listAssignmentsValidation,
-  assignmentIdParamValidation
+  assignmentIdParamValidation,
+  adminApproveAssignmentValidation,
+  adminRejectAssignmentValidation
 } = require('../middlewares/mamAssignment.validation');
 
 router.use(authenticateAdmin, requireRole(['superadmin']));
@@ -71,6 +73,20 @@ router.post(
   assignmentIdParamValidation,
   validateRequest,
   mamAssignmentController.cancelAssignment
+);
+
+router.post(
+  '/mam/assignments/:id/approve',
+  adminApproveAssignmentValidation,
+  validateRequest,
+  mamAssignmentController.approveAssignment
+);
+
+router.post(
+  '/mam/assignments/:id/reject',
+  adminRejectAssignmentValidation,
+  validateRequest,
+  mamAssignmentController.rejectAssignment
 );
 
 module.exports = router;

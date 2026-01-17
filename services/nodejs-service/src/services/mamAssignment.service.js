@@ -13,11 +13,17 @@ const eligibilityService = require('./mamAssignmentEligibility.service');
 const portfolioEvents = require('./events/portfolio.events');
 
 class MAMAssignmentService {
-  async createAssignment({ mamAccountId, clientId, initiatedBy, initiatedByAdminId, initiatedReason }) {
+  async createAssignment({ mamAccountId, clientId, initiatedBy = ASSIGNMENT_INITIATORS.CLIENT, initiatedByAdminId, initiatedReason }) {
     const eligibility = await eligibilityService.checkEligibility({ mamAccountId, clientId });
     if (!eligibility.valid) {
       throw this._buildEligibilityError(eligibility);
     }
+
+    const isAdminInitiated = initiatedBy === ASSIGNMENT_INITIATORS.ADMIN;
+    const initialStatus = isAdminInitiated
+      ? ASSIGNMENT_STATUS.ADMIN_APPROVED
+      : ASSIGNMENT_STATUS.CLIENT_REQUESTED;
+    const reviewTimestamp = isAdminInitiated ? new Date() : null;
 
     const payload = {
       mam_account_id: mamAccountId,
@@ -25,7 +31,10 @@ class MAMAssignmentService {
       initiated_by: initiatedBy,
       initiated_by_admin_id: initiatedBy === ASSIGNMENT_INITIATORS.ADMIN ? initiatedByAdminId : null,
       initiated_reason: initiatedReason || null,
-      status: ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT
+      status: initialStatus,
+      admin_reviewed_by_admin_id: isAdminInitiated ? (initiatedByAdminId || null) : null,
+      admin_reviewed_at: reviewTimestamp,
+      admin_review_notes: isAdminInitiated ? initiatedReason || null : null
     };
 
     const assignment = await MAMAssignment.create(payload);
@@ -124,7 +133,11 @@ class MAMAssignmentService {
 
   async cancelAssignment({ assignmentId, actor }) {
     const assignment = await this.getAssignmentById(assignmentId);
-    if (assignment.status !== ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT) {
+    const cancellableStatuses = [
+      ASSIGNMENT_STATUS.CLIENT_REQUESTED,
+      ASSIGNMENT_STATUS.ADMIN_APPROVED
+    ];
+    if (!cancellableStatuses.includes(assignment.status)) {
       const error = new Error('Only pending assignments can be cancelled');
       error.statusCode = 400;
       throw error;
@@ -159,8 +172,8 @@ class MAMAssignmentService {
         error.statusCode = 403;
         throw error;
       }
-      if (assignment.status !== ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT) {
-        const error = new Error('Assignment is not pending acceptance');
+      if (assignment.status !== ASSIGNMENT_STATUS.ADMIN_APPROVED) {
+        const error = new Error('Assignment is not pending client acceptance');
         error.statusCode = 400;
         throw error;
       }
@@ -216,6 +229,107 @@ class MAMAssignmentService {
         assignment_id: assignment.id,
         status: assignment.status,
         action: 'accepted'
+      });
+
+      return assignment;
+    });
+  }
+
+  async adminApproveAssignment({ assignmentId, adminId, notes }) {
+    return sequelize.transaction(async (transaction) => {
+      const assignment = await MAMAssignment.findByPk(assignmentId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction
+      });
+      if (!assignment) {
+        const error = new Error('MAM assignment not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (assignment.status !== ASSIGNMENT_STATUS.CLIENT_REQUESTED) {
+        const error = new Error('Only client requested assignments can be approved');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      assignment.status = ASSIGNMENT_STATUS.ADMIN_APPROVED;
+      assignment.admin_reviewed_by_admin_id = adminId || null;
+      assignment.admin_reviewed_at = new Date();
+      assignment.admin_review_notes = notes || null;
+      assignment.rejected_by = null;
+      assignment.rejected_at = null;
+      assignment.rejected_ip = null;
+      assignment.rejected_reason = null;
+
+      await assignment.save({ transaction });
+
+      await assignment.reload({
+        include: [
+          { model: MAMAccount, as: 'mamAccount' },
+          {
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'is_self_trading']
+          }
+        ],
+        transaction
+      });
+
+      this._emitClientAssignmentUpdate(assignment.client_live_user_id, {
+        assignment_id: assignment.id,
+        status: assignment.status,
+        action: 'admin_approved'
+      });
+
+      return assignment;
+    });
+  }
+
+  async adminRejectAssignment({ assignmentId, adminId, reason }) {
+    return sequelize.transaction(async (transaction) => {
+      const assignment = await MAMAssignment.findByPk(assignmentId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction
+      });
+      if (!assignment) {
+        const error = new Error('MAM assignment not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (![ASSIGNMENT_STATUS.CLIENT_REQUESTED, ASSIGNMENT_STATUS.ADMIN_APPROVED].includes(assignment.status)) {
+        const error = new Error('Assignment cannot be rejected in its current state');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const timestamp = new Date();
+      assignment.status = ASSIGNMENT_STATUS.REJECTED;
+      assignment.admin_reviewed_by_admin_id = adminId || null;
+      assignment.admin_reviewed_at = timestamp;
+      assignment.admin_review_notes = reason || null;
+      assignment.rejected_by = 'admin';
+      assignment.rejected_at = timestamp;
+      assignment.rejected_ip = null;
+      assignment.rejected_reason = reason || null;
+
+      await assignment.save({ transaction });
+
+      await assignment.reload({
+        include: [
+          { model: MAMAccount, as: 'mamAccount' },
+          {
+            model: LiveUser,
+            as: 'client',
+            attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance', 'is_self_trading']
+          }
+        ],
+        transaction
+      });
+
+      this._emitClientAssignmentUpdate(assignment.client_live_user_id, {
+        assignment_id: assignment.id,
+        status: assignment.status,
+        action: 'admin_rejected'
       });
 
       return assignment;
@@ -319,16 +433,18 @@ class MAMAssignmentService {
         error.statusCode = 403;
         throw error;
       }
-      if (assignment.status !== ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT) {
+      if (assignment.status !== ASSIGNMENT_STATUS.ADMIN_APPROVED) {
         const error = new Error('Assignment is not pending acceptance');
         error.statusCode = 400;
         throw error;
       }
 
+      const timestamp = new Date();
       assignment.status = ASSIGNMENT_STATUS.REJECTED;
-      assignment.rejected_at = new Date();
+      assignment.rejected_at = timestamp;
       assignment.rejected_ip = declinedIp || null;
       assignment.rejected_reason = reason || null;
+      assignment.rejected_by = 'client';
 
       await assignment.save({ transaction });
 

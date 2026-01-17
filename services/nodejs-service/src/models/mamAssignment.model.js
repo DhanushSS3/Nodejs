@@ -9,6 +9,7 @@ const {
 const assignmentStatuses = Object.values(ASSIGNMENT_STATUS);
 const initiators = Object.values(ASSIGNMENT_INITIATORS);
 const unsubscribeActors = Object.values(ASSIGNMENT_UNSUBSCRIBE_ACTORS);
+const rejectionActors = ['client', 'admin'];
 
 const MAMAssignment = sequelize.define('MAMAssignment', {
   id: {
@@ -54,13 +55,47 @@ const MAMAssignment = sequelize.define('MAMAssignment', {
     type: DataTypes.TEXT,
     allowNull: true
   },
+  admin_reviewed_by_admin_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'admins',
+      key: 'id'
+    },
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  },
+  admin_reviewed_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  admin_review_notes: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
   status: {
     type: DataTypes.ENUM(...assignmentStatuses),
     allowNull: false,
-    defaultValue: ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT
+    defaultValue: ASSIGNMENT_STATUS.CLIENT_REQUESTED
   },
   eligibility_fail_reason: {
     type: DataTypes.STRING(64),
+    allowNull: true
+  },
+  rejected_by: {
+    type: DataTypes.ENUM(...rejectionActors),
+    allowNull: true
+  },
+  rejected_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  rejected_ip: {
+    type: DataTypes.STRING(64),
+    allowNull: true
+  },
+  rejected_reason: {
+    type: DataTypes.TEXT,
     allowNull: true
   },
   accepted_at: {

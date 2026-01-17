@@ -790,10 +790,23 @@ async function getUserInfo(req, res) {
       'fee_model'
     ];
 
-    const pendingAssignments = await MAMAssignment.findAll({
+    const pendingAcceptanceAssignments = await MAMAssignment.findAll({
       where: {
         client_live_user_id: userId,
-        status: ASSIGNMENT_STATUS.PENDING_CLIENT_ACCEPT
+        status: ASSIGNMENT_STATUS.ADMIN_APPROVED
+      },
+      include: [{
+        model: MAMAccount,
+        as: 'mamAccount',
+        attributes: mamAccountSummaryAttributes
+      }],
+      order: [['admin_reviewed_at', 'DESC'], ['created_at', 'DESC']]
+    });
+
+    const awaitingAdminReviewAssignments = await MAMAssignment.findAll({
+      where: {
+        client_live_user_id: userId,
+        status: ASSIGNMENT_STATUS.CLIENT_REQUESTED
       },
       include: [{
         model: MAMAccount,
@@ -837,7 +850,21 @@ async function getUserInfo(req, res) {
     };
 
     const mam = {
-      pending_requests: pendingAssignments.map((assignment) => {
+      awaiting_admin_review: awaitingAdminReviewAssignments.map((assignment) => {
+        const mamAccount = assignment.mamAccount || {};
+        return {
+          assignment_id: assignment.id,
+          mam_id: mamAccount.id,
+          mam_name: mamAccount.mam_name,
+          manager_name: mamAccount.metadata?.manager_name || mamAccount.mam_name,
+          allocation_method: mamAccount.allocation_method,
+          fees: formatFees(mamAccount),
+          requested_at: assignment.created_at,
+          initiated_by: assignment.initiated_by,
+          initiated_reason: assignment.initiated_reason
+        };
+      }),
+      pending_requests: pendingAcceptanceAssignments.map((assignment) => {
         const mamAccount = assignment.mamAccount || {};
         return {
           assignment_id: assignment.id,
@@ -848,6 +875,8 @@ async function getUserInfo(req, res) {
           fees: formatFees(mamAccount),
           expires_at: assignment.metadata?.expires_at || assignment.created_at,
           requested_at: assignment.created_at,
+          approved_at: assignment.admin_reviewed_at,
+          admin_notes: assignment.admin_review_notes,
           initiated_by: assignment.initiated_by
         };
       }),

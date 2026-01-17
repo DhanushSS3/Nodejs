@@ -1,6 +1,9 @@
 const { body, param, query } = require('express-validator');
 const { ASSIGNMENT_STATUS } = require('../constants/mamAssignment.constants');
 
+const assignmentIdParam = () => param('id')
+  .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer');
+
 const createAdminAssignmentValidation = [
   body('mam_account_id')
     .isInt({ min: 1 }).withMessage('mam_account_id must be a positive integer'),
@@ -35,19 +38,22 @@ const createClientAssignmentValidation = [
     .isInt({ min: 1 }).withMessage('mam_account_id must be a positive integer')
 ];
 
-const acceptAssignmentValidation = [
-  param('id')
-    .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer')
-];
+const acceptAssignmentValidation = [assignmentIdParam()];
 
-const assignmentIdParamValidation = [
-  param('id')
-    .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer')
-];
+const assignmentIdParamValidation = [assignmentIdParam()];
+
+const adminReviewNotesValidation = body('notes')
+  .optional()
+  .isString().withMessage('notes must be text')
+  .isLength({ max: 1000 }).withMessage('notes cannot exceed 1000 characters');
+
+const adminRejectReasonValidation = body('reason')
+  .optional()
+  .isString().withMessage('reason must be text')
+  .isLength({ max: 1000 }).withMessage('reason cannot exceed 1000 characters');
 
 const declineAssignmentValidation = [
-  param('id')
-    .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer'),
+  assignmentIdParam(),
   body('reason')
     .optional()
     .isString().withMessage('reason must be text')
@@ -55,8 +61,7 @@ const declineAssignmentValidation = [
 ];
 
 const unsubscribeAssignmentValidation = [
-  param('id')
-    .isInt({ min: 1 }).withMessage('Assignment id must be a positive integer'),
+  assignmentIdParam(),
   body('reason')
     .optional()
     .isString().withMessage('reason must be text')
@@ -69,6 +74,8 @@ module.exports = {
   createClientAssignmentValidation,
   acceptAssignmentValidation,
   assignmentIdParamValidation,
+  adminApproveAssignmentValidation: [assignmentIdParam(), adminReviewNotesValidation],
+  adminRejectAssignmentValidation: [assignmentIdParam(), adminRejectReasonValidation],
   declineAssignmentValidation,
   unsubscribeAssignmentValidation
 };
