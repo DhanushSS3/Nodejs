@@ -1,5 +1,6 @@
 const amqp = require('amqplib');
 const logger = require('../logger.service');
+const { normalizeConversionMeta } = require('../utils/orderCalculations');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const DemoUserOrder = require('../../models/demoUserOrder.model');
 const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
