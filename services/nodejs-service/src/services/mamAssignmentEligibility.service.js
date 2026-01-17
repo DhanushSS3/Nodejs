@@ -31,6 +31,10 @@ class MAMAssignmentEligibilityService {
       return this._fail(ELIGIBILITY_FAILURES.CLIENT_INACTIVE, 'Client account is inactive.');
     }
 
+    if (String(mamAccount.group).trim().toLowerCase() !== String(client.group).trim().toLowerCase()) {
+      return this._fail(ELIGIBILITY_FAILURES.CLIENT_GROUP_MISMATCH, 'Client must belong to the same group as the MAM account.');
+    }
+
     const assignmentWhere = {
       client_live_user_id: clientId,
       status: { [Op.in]: BLOCKING_ASSIGNMENT_STATUSES }

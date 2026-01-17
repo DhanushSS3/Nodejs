@@ -103,12 +103,17 @@ class MAMAccountService {
   async listActiveAccountsForClient(query = {}) {
     const {
       search,
-      limit = 100
+      limit = 100,
+      group
     } = query;
 
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 200);
 
     const where = { status: 'active' };
+
+    if (group) {
+      where.group = group;
+    }
 
     if (search) {
       const searchTerm = `%${search.trim()}%`;

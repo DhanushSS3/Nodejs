@@ -1,5 +1,6 @@
 const mamAccountService = require('../services/mamAccount.service');
 const mamAssignmentService = require('../services/mamAssignment.service');
+const LiveUser = require('../models/liveUser.model');
 const { ASSIGNMENT_INITIATORS } = require('../constants/mamAssignment.constants');
 
 function getClientId(req) {
@@ -10,7 +11,19 @@ class MAMClientController {
 
   async listAvailableAccounts(req, res) {
     try {
-      const accounts = await mamAccountService.listActiveAccountsForClient(req.query);
+      const clientId = getClientId(req);
+      const client = await LiveUser.findByPk(clientId, { attributes: ['group'] });
+      if (!client) {
+        return res.status(404).json({
+          success: false,
+          message: 'Client account not found'
+        });
+      }
+
+      const accounts = await mamAccountService.listActiveAccountsForClient({
+        ...req.query,
+        group: client.group
+      });
       return res.status(200).json({
         success: true,
         message: 'Active MAM accounts retrieved successfully',
