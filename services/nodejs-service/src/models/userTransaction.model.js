@@ -1,4 +1,5 @@
-const { DataTypes } = require('sequelize');
+// @ts-nocheck
+const { DataTypes, Op } = require('sequelize'); // Destructured Op for cleaner scopes
 const sequelize = require('../config/db');
 
 const UserTransaction = sequelize.define('UserTransaction', {
@@ -19,7 +20,7 @@ const UserTransaction = sequelize.define('UserTransaction', {
     comment: 'Reference to user (live_users or demo_users)',
   },
   user_type: {
-    type: DataTypes.ENUM('live', 'demo', 'strategy_provider', 'copy_follower'),
+    type: DataTypes.ENUM('live', 'demo', 'strategy_provider', 'copy_follower', 'mam_account'),
     allowNull: false,
     comment: 'Type of user account',
   },
@@ -78,22 +79,21 @@ const UserTransaction = sequelize.define('UserTransaction', {
   user_email: {
     type: DataTypes.STRING(255),
     allowNull: true,
-    comment: 'User email at the time of transaction (snapshot for audit purposes)',
+    comment: 'User email snapshot for audit purposes',
   },
   method_type: {
     type: DataTypes.ENUM('BANK', 'UPI', 'SWIFT', 'IBAN', 'PAYPAL', 'CRYPTO', 'OTHER'),
     allowNull: true,
-    comment: 'Payment method type used for deposit/withdraw transactions',
+    comment: 'Payment method type',
   },
   notes: {
     type: DataTypes.TEXT,
     allowNull: true,
-    comment: 'Additional notes or description',
   },
   metadata: {
     type: DataTypes.JSON,
     allowNull: true,
-    comment: 'Additional flexible data (JSON format)',
+    comment: 'Additional flexible data',
   },
 }, {
   tableName: 'user_transactions',
@@ -101,94 +101,43 @@ const UserTransaction = sequelize.define('UserTransaction', {
   createdAt: 'created_at',
   updatedAt: 'updated_at',
   indexes: [
-    {
-      name: 'idx_user_transactions_user_id',
-      fields: ['user_id']
-    },
-    {
-      name: 'idx_user_transactions_user_type',
-      fields: ['user_type']
-    },
-    {
-      name: 'idx_user_transactions_type',
-      fields: ['type']
-    },
-    {
-      name: 'idx_user_transactions_status',
-      fields: ['status']
-    },
-    {
-      name: 'idx_user_transactions_created_at',
-      fields: ['created_at']
-    },
-    {
-      name: 'idx_user_transactions_transaction_id',
-      fields: ['transaction_id']
-    },
-    {
-      name: 'idx_user_transactions_order_id',
-      fields: ['order_id']
-    },
-    {
-      name: 'idx_user_transactions_user_type_user_id',
-      fields: ['user_type', 'user_id']
-    },
-    {
-      name: 'idx_user_transactions_user_created',
-      fields: ['user_id', 'created_at']
-    },
-    {
-      name: 'idx_user_transactions_user_email',
-      fields: ['user_email']
-    },
-    {
-      name: 'idx_user_transactions_method_type',
-      fields: ['method_type']
-    }
-  ],
-  scopes: {
-    // Scope for live users only
-    liveUsers: {
-      where: { user_type: 'live' }
-    },
-    // Scope for demo users only
-    demoUsers: {
-      where: { user_type: 'demo' }
-    },
-    // Scope for completed transactions only
-    completed: {
-      where: { status: 'completed' }
-    },
-    // Scope for pending transactions
-    pending: {
-      where: { status: 'pending' }
-    },
-    // Scope for specific user
-    forUser(userId, userType) {
-      return {
-        where: { 
-          user_id: userId,
-          user_type: userType
-        }
-      };
-    },
-    // Scope for specific transaction types
-    ofType(transactionType) {
-      return {
-        where: { type: transactionType }
-      };
-    },
-    // Scope for date range
-    dateRange(startDate, endDate) {
-      return {
-        where: {
-          created_at: {
-            [sequelize.Sequelize.Op.between]: [startDate, endDate]
-          }
-        }
-      };
+    { name: 'idx_user_transactions_user_id', fields: ['user_id'] },
+    { name: 'idx_user_transactions_user_type', fields: ['user_type'] },
+    { name: 'idx_user_transactions_type', fields: ['type'] },
+    { name: 'idx_user_transactions_status', fields: ['status'] },
+    { name: 'idx_user_transactions_created_at', fields: ['created_at'] },
+    { name: 'idx_user_transactions_transaction_id', fields: ['transaction_id'] },
+    { name: 'idx_user_transactions_order_id', fields: ['order_id'] },
+    { name: 'idx_user_transactions_user_type_user_id', fields: ['user_type', 'user_id'] },
+    { name: 'idx_user_transactions_user_created', fields: ['user_id', 'created_at'] },
+    { name: 'idx_user_transactions_user_email', fields: ['user_email'] },
+    { name: 'idx_user_transactions_method_type', fields: ['method_type'] }
+  ]
+});
+
+// Adding scopes using the addScope method is often cleaner for functional scopes
+UserTransaction.addScope('liveUsers', { where: { user_type: 'live' } });
+UserTransaction.addScope('demoUsers', { where: { user_type: 'demo' } });
+UserTransaction.addScope('completed', { where: { status: 'completed' } });
+UserTransaction.addScope('pending', { where: { status: 'pending' } });
+
+UserTransaction.addScope('forUser', (userId, userType) => ({
+  where: { 
+    user_id: userId,
+    user_type: userType
+  }
+}));
+
+UserTransaction.addScope('ofType', (transactionType) => ({
+  where: { type: transactionType }
+}));
+
+UserTransaction.addScope('dateRange', (startDate, endDate) => ({
+  where: {
+    created_at: {
+      [Op.between]: [startDate, endDate]
     }
   }
-});
+}));
 
 module.exports = UserTransaction;

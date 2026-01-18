@@ -20,7 +20,7 @@ const { applyOrderClosePayout } = require('../order.payout.service');
 // Copy trading service for strategy provider order distribution
 const copyTradingService = require('../copyTrading.service');
 // Performance fee service for copy followers
-const { calculateAndApplyPerformanceFee } = require('../performanceFee.service');
+const { calculateAndApplyPerformanceFee, calculateAndApplyMamPerformanceFee } = require('../performanceFee.service');
 // Strategy provider statistics service
 const StrategyProviderStatsService = require('../strategyProviderStats.service');
 // Sequelize for database transactions
@@ -1374,6 +1374,52 @@ async function applyDbUpdate(msg) {
             copyFollowerUserId: parseInt(String(user_id), 10),
             orderNetProfit: Number(net_profit) || 0,
             error: performanceFeeError.message
+          });
+        }
+      });
+    }
+
+    if (type === 'ORDER_CLOSE_CONFIRMED' && String(user_type) === 'live' && (Number(net_profit) || 0) > 0) {
+      setImmediate(async () => {
+        try {
+          const orderIdStr = String(order_id);
+          const liveOrderRow = row || await LiveUserOrder.findOne({ where: { order_id: orderIdStr } });
+
+          if (!liveOrderRow || !liveOrderRow.parent_mam_order_id) {
+            return;
+          }
+
+          logger.info('Calculating MAM performance fee', {
+            liveOrderId: orderIdStr,
+            liveUserId: parseInt(String(user_id), 10),
+            parentMamOrderId: liveOrderRow.parent_mam_order_id,
+            orderNetProfit: Number(net_profit) || 0
+          });
+
+          const mamPerformanceFeeResult = await calculateAndApplyMamPerformanceFee({
+            liveOrderId: orderIdStr,
+            liveUserId: parseInt(String(user_id), 10),
+            parentMamOrderId: liveOrderRow.parent_mam_order_id,
+            orderNetProfit: Number(net_profit) || 0,
+            symbol: liveOrderRow.symbol ? String(liveOrderRow.symbol).toUpperCase() : undefined,
+            orderType: liveOrderRow.order_type ? String(liveOrderRow.order_type).toUpperCase() : undefined
+          });
+
+          if (mamPerformanceFeeResult.performanceFeeCharged) {
+            logger.info('MAM performance fee applied successfully', {
+              liveOrderId: orderIdStr,
+              parentMamOrderId: mamPerformanceFeeResult.parentMamOrderId,
+              mamAccountId: mamPerformanceFeeResult.mamAccountId,
+              performanceFeeAmount: mamPerformanceFeeResult.performanceFeeAmount,
+              adjustedNetProfit: mamPerformanceFeeResult.adjustedNetProfit
+            });
+          }
+        } catch (mamPerformanceFeeError) {
+          logger.error('Failed to calculate and apply MAM performance fee', {
+            order_id: String(order_id),
+            live_user_id: parseInt(String(user_id), 10),
+            orderNetProfit: Number(net_profit) || 0,
+            error: mamPerformanceFeeError.message
           });
         }
       });

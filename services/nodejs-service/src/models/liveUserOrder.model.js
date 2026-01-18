@@ -78,6 +78,16 @@ const LiveUserOrder = sequelize.define('LiveUserOrder', {
     type: DataTypes.DECIMAL(18, 8), 
     allowNull: true 
   },
+  performance_fee_amount: {
+    type: DataTypes.DECIMAL(18, 8),
+    allowNull: true,
+    comment: 'Total performance fee deducted from this order (if any)'
+  },
+  net_profit_after_fees: {
+    type: DataTypes.DECIMAL(18, 8),
+    allowNull: true,
+    comment: 'Net profit after performance fee deductions (if applicable)'
+  },
   swap: { 
     type: DataTypes.DECIMAL(18, 8), 
     allowNull: true 

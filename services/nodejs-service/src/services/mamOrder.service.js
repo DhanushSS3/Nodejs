@@ -369,8 +369,7 @@ class MAMOrderService {
         throw error;
       }
 
-      await this._refreshMamOrderState(mamOrderId);
-      await this._refreshMamAccountAggregates(mamAccountId);
+      await this.syncMamAggregates({ mamOrderId, mamAccountId });
 
       try {
         portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
@@ -1106,6 +1105,13 @@ class MAMOrderService {
         error: error.message
       });
     }
+  }
+
+  async syncMamAggregates({ mamOrderId, mamAccountId }) {
+    await Promise.all([
+      mamOrderId ? this._refreshMamOrderState(mamOrderId) : Promise.resolve(),
+      mamAccountId ? this._refreshMamAccountAggregates(mamAccountId) : Promise.resolve()
+    ]);
   }
 }
 

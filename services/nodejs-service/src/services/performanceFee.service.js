@@ -2,9 +2,16 @@ const sequelize = require('../config/db');
 const { Transaction } = require('sequelize');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const LiveUser = require('../models/liveUser.model');
+const LiveUserOrder = require('../models/liveUserOrder.model');
+const MAMAccount = require('../models/mamAccount.model');
+const MAMOrder = require('../models/mamOrder.model');
+const MAMAssignment = require('../models/mamAssignment.model');
 const UserTransaction = require('../models/userTransaction.model');
+const { ASSIGNMENT_STATUS } = require('../constants/mamAssignment.constants');
 const idGenerator = require('./idGenerator.service');
 const logger = require('./logger.service');
+const portfolioEvents = require('./events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
 
 /**
@@ -252,6 +259,311 @@ async function calculateAndApplyPerformanceFee({
   }
 }
 
+async function _updateMamOrderDerivedProfits(parentMamOrderId, transaction) {
+  if (!parentMamOrderId) return;
+
+  const baseWhere = {
+    parent_mam_order_id: parentMamOrderId,
+    order_status: 'CLOSED'
+  };
+
+  const [grossRow, netAfterFeesRow] = await Promise.all([
+    LiveUserOrder.findOne({
+      attributes: [[sequelize.fn('SUM', sequelize.col('net_profit')), 'gross_sum']],
+      where: baseWhere,
+      transaction,
+      raw: true
+    }),
+    LiveUserOrder.findOne({
+      attributes: [[
+        sequelize.fn('SUM', sequelize.literal('COALESCE(net_profit_after_fees, net_profit)')),
+        'net_after_fees_sum'
+      ]],
+      where: baseWhere,
+      transaction,
+      raw: true
+    })
+  ]);
+
+  const grossSum = grossRow?.gross_sum != null ? Number(grossRow.gross_sum) : 0;
+  const netAfterFeesSum = netAfterFeesRow?.net_after_fees_sum != null
+    ? Number(netAfterFeesRow.net_after_fees_sum)
+    : grossSum;
+
+  await MAMOrder.update({
+    gross_profit: grossSum,
+    net_profit_after_fees: netAfterFeesSum
+  }, {
+    where: { id: parentMamOrderId },
+    transaction
+  });
+}
+
+async function calculateAndApplyMamPerformanceFee({
+  liveOrderId,
+  liveUserId,
+  parentMamOrderId,
+  orderNetProfit,
+  symbol,
+  orderType
+} = {}) {
+  const normalizedOrderId = String(liveOrderId || '').trim();
+  const normalizedUserId = parseInt(String(liveUserId), 10);
+  const normalizedNetProfit = Number(orderNetProfit) || 0;
+
+  if (!normalizedOrderId || Number.isNaN(normalizedUserId)) {
+    throw new Error('liveOrderId and liveUserId are required for MAM performance fee calculation');
+  }
+
+  if (normalizedNetProfit <= 0) {
+    return {
+      performanceFeeCharged: false,
+      performanceFeeAmount: 0,
+      adjustedNetProfit: normalizedNetProfit,
+      reason: 'order_not_profitable'
+    };
+  }
+
+  const existingOrder = await LiveUserOrder.findOne({ where: { order_id: normalizedOrderId } });
+  if (!existingOrder) {
+    throw new Error(`Live user order not found for performance fee: ${normalizedOrderId}`);
+  }
+
+  const effectiveParentMamOrderId = parentMamOrderId || existingOrder.parent_mam_order_id;
+  if (!effectiveParentMamOrderId) {
+    return {
+      performanceFeeCharged: false,
+      performanceFeeAmount: 0,
+      adjustedNetProfit: normalizedNetProfit,
+      reason: 'not_mam_child_order'
+    };
+  }
+
+  if (Number(existingOrder.performance_fee_amount) > 0 || Number(existingOrder.net_profit_after_fees) > 0) {
+    return {
+      performanceFeeCharged: false,
+      performanceFeeAmount: Number(existingOrder.performance_fee_amount) || 0,
+      adjustedNetProfit: Number(existingOrder.net_profit_after_fees) || normalizedNetProfit,
+      reason: 'performance_fee_already_applied'
+    };
+  }
+
+  const mamOrder = await MAMOrder.findByPk(effectiveParentMamOrderId);
+  if (!mamOrder) {
+    throw new Error(`Parent MAM order not found for child order ${normalizedOrderId}`);
+  }
+
+  const mamAccountId = mamOrder.mam_account_id;
+  const mamAccount = await MAMAccount.findByPk(mamAccountId);
+  if (!mamAccount || mamAccount.status !== 'active') {
+    return {
+      performanceFeeCharged: false,
+      performanceFeeAmount: 0,
+      adjustedNetProfit: normalizedNetProfit,
+      reason: 'mam_account_inactive'
+    };
+  }
+
+  const performanceFeePercentage = Number(mamAccount.performance_fee_percent || 0);
+  if (!(performanceFeePercentage > 0)) {
+    return {
+      performanceFeeCharged: false,
+      performanceFeeAmount: 0,
+      adjustedNetProfit: normalizedNetProfit,
+      reason: 'zero_performance_fee'
+    };
+  }
+
+  const activeAssignment = await MAMAssignment.findOne({
+    where: {
+      mam_account_id: mamAccountId,
+      client_live_user_id: normalizedUserId,
+      status: ASSIGNMENT_STATUS.ACTIVE
+    }
+  });
+
+  if (!activeAssignment) {
+    return {
+      performanceFeeCharged: false,
+      performanceFeeAmount: 0,
+      adjustedNetProfit: normalizedNetProfit,
+      reason: 'assignment_not_active'
+    };
+  }
+
+  const rawFee = (normalizedNetProfit * performanceFeePercentage) / 100;
+  const performanceFeeAmount = Math.min(normalizedNetProfit, Number(rawFee.toFixed(8)));
+  const adjustedNetProfit = Math.max(0, Number((normalizedNetProfit - performanceFeeAmount).toFixed(8)));
+
+  const result = await sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async (t) => {
+    const [liveUser, mamAccountForUpdate, liveOrderForUpdate] = await Promise.all([
+      LiveUser.findByPk(normalizedUserId, { transaction: t, lock: t.LOCK.UPDATE }),
+      MAMAccount.findByPk(mamAccountId, { transaction: t, lock: t.LOCK.UPDATE }),
+      LiveUserOrder.findOne({ where: { order_id: normalizedOrderId }, transaction: t, lock: t.LOCK.UPDATE })
+    ]);
+
+    if (!liveUser || !mamAccountForUpdate || !liveOrderForUpdate) {
+      throw new Error('Failed to lock rows required for MAM performance fee application');
+    }
+
+    const liveBalanceBefore = Number(liveUser.wallet_balance || 0);
+    const liveBalanceAfter = liveBalanceBefore - performanceFeeAmount;
+    const liveNetBefore = Number(liveUser.net_profit || 0);
+    const liveNetAfter = liveNetBefore - performanceFeeAmount;
+
+    await liveUser.update({
+      wallet_balance: liveBalanceAfter,
+      net_profit: liveNetAfter
+    }, { transaction: t });
+
+    const mamBalanceBefore = Number(mamAccountForUpdate.mam_balance || 0);
+    const mamBalanceAfter = mamBalanceBefore + performanceFeeAmount;
+
+    await mamAccountForUpdate.update({ mam_balance: mamBalanceAfter }, { transaction: t });
+
+    await liveOrderForUpdate.update({
+      performance_fee_amount: performanceFeeAmount,
+      net_profit_after_fees: adjustedNetProfit
+    }, { transaction: t });
+
+    await _updateMamOrderDerivedProfits(effectiveParentMamOrderId, t);
+
+    const liveTxnId = await idGenerator.generateTransactionId();
+    await UserTransaction.create({
+      transaction_id: liveTxnId,
+      user_id: normalizedUserId,
+      user_type: 'live',
+      order_id: normalizedOrderId,
+      type: 'performance_fee',
+      amount: -Math.abs(performanceFeeAmount),
+      balance_before: liveBalanceBefore,
+      balance_after: liveBalanceAfter,
+      status: 'completed',
+      notes: `Performance fee for MAM order ${normalizedOrderId}`,
+      metadata: {
+        mam_account_id: mamAccountId,
+        parent_mam_order_id: effectiveParentMamOrderId,
+        performance_fee_percentage: performanceFeePercentage,
+        order_net_profit: normalizedNetProfit,
+        symbol,
+        order_type: orderType
+      }
+    }, { transaction: t });
+
+    const mamTxnId = await idGenerator.generateTransactionId();
+    await UserTransaction.create({
+      transaction_id: mamTxnId,
+      user_id: mamAccountId,
+      user_type: 'mam_account',
+      order_id: normalizedOrderId,
+      type: 'performance_fee_earned',
+      amount: Math.abs(performanceFeeAmount),
+      balance_before: mamBalanceBefore,
+      balance_after: mamBalanceAfter,
+      status: 'completed',
+      notes: `Performance fee earned from live user ${normalizedUserId} order ${normalizedOrderId}`,
+      metadata: {
+        client_live_user_id: normalizedUserId,
+        parent_mam_order_id: effectiveParentMamOrderId,
+        performance_fee_percentage: performanceFeePercentage,
+        order_net_profit: normalizedNetProfit,
+        symbol,
+        order_type: orderType
+      }
+    }, { transaction: t });
+
+    return {
+      liveBalanceBefore,
+      liveBalanceAfter,
+      liveNetAfter,
+      mamBalanceBefore,
+      mamBalanceAfter,
+      liveTxnId,
+      mamTxnId
+    };
+  });
+
+  try {
+    await redisCluster.hset(`user:{live:${normalizedUserId}}:config`, {
+      wallet_balance: String(result.liveBalanceAfter)
+    });
+  } catch (error) {
+    logger.warn('Failed to update Redis cache for live user after MAM performance fee', {
+      error: error.message,
+      liveUserId: normalizedUserId
+    });
+  }
+
+  try {
+    await redisCluster.hset(`mam_account:${mamAccountId}:summary`, {
+      mam_balance: String(result.mamBalanceAfter)
+    });
+  } catch (error) {
+    logger.warn('Failed to update Redis cache for MAM account after performance fee', {
+      error: error.message,
+      mamAccountId
+    });
+  }
+
+  try {
+    portfolioEvents.emitUserUpdate('live', String(normalizedUserId), {
+      type: 'wallet_balance_update',
+      reason: 'mam_performance_fee',
+      order_id: normalizedOrderId
+    });
+    portfolioEvents.emitUserUpdate('live', String(normalizedUserId), {
+      type: 'order_update',
+      order_id: normalizedOrderId,
+      update: {
+        performance_fee_amount: performanceFeeAmount,
+        net_profit_after_fees: adjustedNetProfit
+      }
+    });
+  } catch (error) {
+    logger.warn('Failed to emit live user portfolio events after MAM performance fee', {
+      error: error.message,
+      liveUserId: normalizedUserId,
+      liveOrderId: normalizedOrderId
+    });
+  }
+
+  try {
+    portfolioEvents.emitUserUpdate('mam_account', String(mamAccountId), {
+      type: 'wallet_balance_update',
+      reason: 'performance_fee_earned',
+      parent_mam_order_id: effectiveParentMamOrderId,
+      order_id: normalizedOrderId
+    });
+  } catch (error) {
+    logger.warn('Failed to emit MAM account portfolio event after performance fee', {
+      error: error.message,
+      mamAccountId,
+      liveOrderId: normalizedOrderId
+    });
+  }
+
+  logger.info('Applied MAM performance fee', {
+    liveOrderId: normalizedOrderId,
+    liveUserId: normalizedUserId,
+    parentMamOrderId: effectiveParentMamOrderId,
+    mamAccountId,
+    performanceFeeAmount,
+    performanceFeePercentage,
+    adjustedNetProfit
+  });
+
+  return {
+    performanceFeeCharged: true,
+    performanceFeeAmount,
+    adjustedNetProfit,
+    performanceFeePercentage,
+    mamAccountId,
+    parentMamOrderId: effectiveParentMamOrderId,
+    reason: 'performance_fee_applied'
+  };
+}
+
 module.exports = {
-  calculateAndApplyPerformanceFee
+  calculateAndApplyPerformanceFee,
+  calculateAndApplyMamPerformanceFee
 };
