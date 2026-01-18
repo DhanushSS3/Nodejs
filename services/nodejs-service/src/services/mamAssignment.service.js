@@ -411,6 +411,16 @@ class MAMAssignmentService {
         transaction
       });
 
+      const aggregates = await this._refreshMamAccountAggregates(assignment.mam_account_id, transaction);
+
+      transaction.afterCommit(() => {
+        portfolioEvents.emitUserUpdate('mam_account', assignment.mam_account_id, {
+          type: 'mam_assignment_aggregates_refresh',
+          total_balance: aggregates.totalBalance,
+          total_investors: aggregates.totalInvestors
+        });
+      });
+
       this._emitClientAssignmentUpdate(clientId, {
         assignment_id: assignment.id,
         status: assignment.status,
