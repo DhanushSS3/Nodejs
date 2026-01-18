@@ -26,6 +26,10 @@ const { redisCluster } = require('../../config/redis');
  * @param {string} params.orderType - Order type (BUY/SELL)
  * @returns {Object} Performance fee calculation result
  */
+async function recalculateMamOrderDerivedProfits(parentMamOrderId, transaction) {
+  return _updateMamOrderDerivedProfits(parentMamOrderId, transaction);
+}
+
 async function calculateAndApplyPerformanceFee({
   copyFollowerOrderId,
   copyFollowerUserId,
