@@ -20,6 +20,7 @@ const portfolioEvents = require('../events/portfolio.events');
 const { applyOrderClosePayout } = require('../order.payout.service');
 // Copy trading service for strategy provider order distribution
 const copyTradingService = require('../copyTrading.service');
+const mamOrderService = require('../mamOrder.service');
 // Performance fee service for copy followers and MAM derived helpers
 const {
   calculateAndApplyPerformanceFee,
@@ -1419,11 +1420,12 @@ async function applyDbUpdate(msg) {
 
             try {
               const parentMamOrder = await MAMOrder.findByPk(parentMamOrderId, { attributes: ['id', 'mam_account_id'] });
-              if (parentMamOrder?.mam_account_id) {
-                await refreshMamAccountAggregates(parentMamOrder.mam_account_id);
-              }
+              await mamOrderService.syncMamAggregates({
+                mamOrderId: parentMamOrderId,
+                mamAccountId: parentMamOrder?.mam_account_id
+              });
             } catch (aggregateError) {
-              logger.error('Failed to refresh MAM account aggregates after child close', {
+              logger.error('Failed to refresh MAM aggregates after child close', {
                 order_id: orderIdStr,
                 parent_mam_order_id: parentMamOrderId,
                 error: aggregateError.message

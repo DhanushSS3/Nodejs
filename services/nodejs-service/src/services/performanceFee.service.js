@@ -271,7 +271,7 @@ async function _updateMamOrderDerivedProfits(parentMamOrderId, transaction) {
     order_status: 'CLOSED'
   };
 
-  const [grossRow, netAfterFeesRow] = await Promise.all([
+  const [grossRow, netAfterFeesRow, priceRow] = await Promise.all([
     LiveUserOrder.findOne({
       attributes: [[sequelize.fn('SUM', sequelize.col('net_profit')), 'gross_sum']],
       where: baseWhere,
@@ -286,6 +286,23 @@ async function _updateMamOrderDerivedProfits(parentMamOrderId, transaction) {
       where: baseWhere,
       transaction,
       raw: true
+    }),
+    LiveUserOrder.findOne({
+      attributes: [
+        [sequelize.fn('SUM', sequelize.literal('order_price * order_quantity')), 'entry_notional'],
+        [sequelize.fn('SUM', sequelize.col('order_quantity')), 'entry_volume'],
+        [sequelize.fn('SUM', sequelize.literal('close_price * order_quantity')), 'exit_notional'],
+        [
+          sequelize.fn(
+            'SUM',
+            sequelize.literal('CASE WHEN close_price IS NOT NULL THEN order_quantity ELSE 0 END')
+          ),
+          'exit_volume'
+        ]
+      ],
+      where: baseWhere,
+      transaction,
+      raw: true
     })
   ]);
 
@@ -294,10 +311,40 @@ async function _updateMamOrderDerivedProfits(parentMamOrderId, transaction) {
     ? Number(netAfterFeesRow.net_after_fees_sum)
     : grossSum;
 
-  await MAMOrder.update({
+  const entryVolume = priceRow?.entry_volume != null ? Number(priceRow.entry_volume) : 0;
+  const exitVolume = priceRow?.exit_volume != null ? Number(priceRow.exit_volume) : 0;
+
+  let averageEntryPrice = null;
+  let averageExitPrice = null;
+
+  if (entryVolume > 0) {
+    const entryNotional = priceRow?.entry_notional != null ? Number(priceRow.entry_notional) : 0;
+    if (Number.isFinite(entryNotional) && entryNotional !== 0) {
+      averageEntryPrice = entryNotional / entryVolume;
+    }
+  }
+
+  if (exitVolume > 0) {
+    const exitNotional = priceRow?.exit_notional != null ? Number(priceRow.exit_notional) : 0;
+    if (Number.isFinite(exitNotional) && exitNotional !== 0) {
+      averageExitPrice = exitNotional / exitVolume;
+    }
+  }
+
+  const updatePayload = {
     gross_profit: grossSum,
     net_profit_after_fees: netAfterFeesSum
-  }, {
+  };
+
+  if (averageEntryPrice != null && Number.isFinite(averageEntryPrice)) {
+    updatePayload.average_entry_price = averageEntryPrice;
+  }
+
+  if (averageExitPrice != null && Number.isFinite(averageExitPrice)) {
+    updatePayload.average_exit_price = averageExitPrice;
+  }
+
+  await MAMOrder.update(updatePayload, {
     where: { id: parentMamOrderId },
     transaction
   });
