@@ -109,6 +109,19 @@ async function fetchMamClientOrders(assignments) {
     const liveMeta = clientMeta.get(String(order.order_user_id)) || {};
     const orderUser = order.user || {};
 
+    let createdAtIso = null;
+    const rawCreatedAt = order.created_at;
+    if (rawCreatedAt) {
+      try {
+        const dateObj = rawCreatedAt instanceof Date ? rawCreatedAt : new Date(rawCreatedAt);
+        if (!Number.isNaN(dateObj.getTime())) {
+          createdAtIso = dateObj.toISOString();
+        }
+      } catch (_) {
+        createdAtIso = null;
+      }
+    }
+
     const base = {
       order_id: order.order_id,
       order_company_name: String(order.symbol || order.order_company_name || '').toUpperCase(),
@@ -125,7 +138,7 @@ async function fetchMamClientOrders(assignments) {
       swap: order.swap?.toString?.() ?? null,
       parent_mam_order_id: order.parent_mam_order_id,
       order_source: order.order_source,
-      created_at: order.created_at ? order.created_at.toISOString() : null,
+      created_at: createdAtIso,
       client_live_user_id: order.order_user_id,
       client_name: liveMeta.client_name || orderUser.name || null,
       client_account_number: liveMeta.client_account_number || orderUser.account_number || null,

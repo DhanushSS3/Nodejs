@@ -42,7 +42,6 @@ async function refreshMamAccountAggregates(mamAccountId, { transaction } = {}) {
 
   await MAMAccount.update({
     total_balance: normalizedBalance,
-    mam_balance: normalizedBalance,
     total_used_margin: normalizedMargin,
     total_investors: assignments.length
   }, {
