@@ -1,6 +1,7 @@
 const url = require('url');
 const jwt = require('jsonwebtoken');
 const { WebSocketServer } = require('ws');
+const { Op } = require('sequelize');
 const { redisCluster } = require('../../../config/redis');
 const LiveUser = require('../../models/liveUser.model');
 const DemoUser = require('../../models/demoUser.model');
@@ -9,6 +10,8 @@ const DemoUserOrder = require('../../models/demoUserOrder.model');
 const StrategyProviderOrder = require('../../models/strategyProviderOrder.model');
 const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
 const StrategyProviderAccount = require('../../models/strategyProviderAccount.model');
+const MAMAssignment = require('../../models/mamAssignment.model');
+const { ASSIGNMENT_STATUS } = require('../../constants/mamAssignment.constants');
 const logger = require('../logger.service');
 const portfolioEvents = require('../events/portfolio.events');
 const {
@@ -19,8 +22,48 @@ const {
 const userConnCounts = new Map(); // key: user_type:user_id -> count
 const userConnections = new Map(); // key: user_type:user_id -> array of WebSocket objects
 
+const ACTIVE_MAM_ASSIGNMENT_STATUSES = [
+  ASSIGNMENT_STATUS.ACTIVE,
+  ASSIGNMENT_STATUS.UNSUBSCRIBED,
+  ASSIGNMENT_STATUS.SUSPENDED,
+];
+
 function getUserKey(userType, userId) {
   return `${String(userType).toLowerCase()}:${String(userId)}`;
+}
+
+function getMamManagerConnectionKey(mamAccountId, clientId) {
+  return `mam_manager:${mamAccountId}:client:${clientId}`;
+}
+
+async function validateMamManagerClientAccess({ mamAccountId, clientId }) {
+  if (!mamAccountId || !Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+    const error = new Error('MAM manager account missing');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (!Number.isInteger(clientId) || clientId <= 0) {
+    const error = new Error('mam_client_id must be a positive integer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const assignment = await MAMAssignment.findOne({
+    where: {
+      mam_account_id: mamAccountId,
+      client_live_user_id: clientId,
+      status: { [Op.in]: ACTIVE_MAM_ASSIGNMENT_STATUSES }
+    }
+  });
+
+  if (!assignment) {
+    const error = new Error('Client not assigned to this MAM account');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return assignment;
 }
 
 function shouldRemovePendingImmediately(evt) {
@@ -288,6 +331,12 @@ function createPortfolioWSServer() {
     const params = url.parse(req.url, true);
     const token = params.query.token;
     const copyFollowerAccountId = params.query.copy_follower_account_id;
+    const mamClientIdParam = params.query.mam_client_id;
+
+    if (copyFollowerAccountId && mamClientIdParam) {
+      ws.close(4400, 'Provide only one of copy_follower_account_id or mam_client_id');
+      return;
+    }
 
     let user;
     try {
@@ -302,7 +351,12 @@ function createPortfolioWSServer() {
     }
 
     // Determine user ID and type based on JWT structure and parameters
-    let userId, userType, copyFollowerAccount = null;
+    let userId;
+    let userType;
+    let copyFollowerAccount = null;
+    let connectionKey;
+    let isMamManagerStream = false;
+    let mamStreamMeta = null;
     const sessionOwnerId = user.sub || user.user_id || user.id;
     const sessionIdFromToken = user.session_id || user.sessionId || user.jwtid || user.jti;
     const sessionOwnerType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
@@ -350,6 +404,7 @@ function createPortfolioWSServer() {
 
         userId = copyFollowerAccount.id; // Use copy follower account ID as userId
         userType = 'copy_follower';
+        connectionKey = getUserKey(userType, userId);
 
       } catch (error) {
         logger.error('Copy follower account validation failed', {
@@ -361,14 +416,44 @@ function createPortfolioWSServer() {
         return;
       }
 
+    } else if (mamClientIdParam) {
+      const managerAccountType = (user.account_type || '').toString().toLowerCase();
+      if (managerAccountType !== 'mam_manager') {
+        ws.close(4403, 'mam_client_id stream requires MAM manager authentication');
+        return;
+      }
+
+      const mamAccountId = parseInt(user.mam_account_id, 10);
+      const clientId = parseInt(mamClientIdParam, 10);
+
+      try {
+        await validateMamManagerClientAccess({ mamAccountId, clientId });
+      } catch (validationError) {
+        const status = validationError.statusCode || 4403;
+        ws.close(status, validationError.message);
+        return;
+      }
+
+      userId = clientId;
+      userType = 'live';
+      isMamManagerStream = true;
+      mamStreamMeta = { mamAccountId, clientId };
+      connectionKey = getMamManagerConnectionKey(mamAccountId, clientId);
+
     } else if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
       // Strategy provider: use strategy_provider_id as userId
       userId = user.strategy_provider_id;
       userType = 'strategy_provider';
+      connectionKey = getUserKey(userType, userId);
     } else {
       // Live/Demo user: use regular user ID and account type
       userId = user.sub || user.user_id || user.id;
       userType = (user.account_type || user.user_type || 'live').toString().toLowerCase();
+      connectionKey = getUserKey(userType, userId);
+    }
+
+    if (!connectionKey) {
+      connectionKey = getUserKey(userType, userId);
     }
 
     const userKey = getUserKey(userType, userId);
@@ -377,22 +462,34 @@ function createPortfolioWSServer() {
       sessionOwnerType,
       sessionId: sessionIdFromToken,
     };
+    ws._connectionKey = connectionKey;
+    ws._mamStreamMeta = mamStreamMeta;
+    ws._isMamManagerStream = isMamManagerStream;
 
     // Add new connection
-    const cnt = addConnection(userKey, ws);
+    const cnt = addConnection(connectionKey, ws);
 
-    logger.info('WS portfolio connected', { userId, userType, connections: cnt });
+    logger.info('WS portfolio connected', {
+      userId,
+      userType,
+      connections: cnt,
+      connectionKey,
+      mamStream: isMamManagerStream,
+      mamAccountId: mamStreamMeta?.mamAccountId,
+    });
 
     let alive = true;
     ws.on('close', () => {
       alive = false;
       if (!ws._removedFromLimit) {
-        removeConnection(userKey, ws);
+        removeConnection(ws._connectionKey || connectionKey, ws);
       }
       logger.info('WS portfolio closed', {
         userId,
         userType,
-        remainingConnections: userConnCounts.get(userKey) || 0
+        remainingConnections: userConnCounts.get(ws._connectionKey || connectionKey) || 0,
+        connectionKey: ws._connectionKey || connectionKey,
+        mamStream: ws._isMamManagerStream,
       });
     });
 
