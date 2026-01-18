@@ -1364,43 +1364,35 @@ async function applyDbUpdate(msg) {
                   type: 'wallet_balance_update',
                   reason: 'performance_fee_earned',
                   order_id: String(order_id),
-                });
-              } catch (wsError) {
-                logger.warn('Failed to emit strategy provider WS update for performance fee', {
-                  error: wsError.message,
-                  order_id: String(order_id),
-                  strategyProviderId: copyFollowerOrder.strategy_provider_id
-                });
-              }
-            }
-          }
-        } catch (performanceFeeError) {
-          logger.error('Failed to calculate and apply performance fee', {
             copyFollowerOrderId: String(order_id),
             copyFollowerUserId: parseInt(String(user_id), 10),
-            orderNetProfit: Number(net_profit) || 0,
-            error: performanceFeeError.message
+            strategyProviderId: copyFollowerOrder.strategy_provider_id,
+            orderNetProfit: Number(net_profit) || 0
           });
-        }
-      });
-    }
 
-    if (type === 'ORDER_CLOSE_CONFIRMED' && String(user_type) === 'live') {
-      setImmediate(async () => {
-        try {
-          const orderIdStr = String(order_id);
-          const liveOrderRow = row || await LiveUserOrder.findOne({ where: { order_id: orderIdStr } });
+          const performanceFeeResult = await calculateAndApplyPerformanceFee({
+            copyFollowerOrderId: String(order_id),
+            copyFollowerUserId: parseInt(String(user_id), 10),
+            strategyProviderId: copyFollowerOrder.strategy_provider_id,
+            orderNetProfit: Number(net_profit) || 0,
+            symbol: copyFollowerOrder.symbol ? String(copyFollowerOrder.symbol).toUpperCase() : undefined,
+            orderType: copyFollowerOrder.order_type ? String(copyFollowerOrder.order_type).toUpperCase() : undefined
+          }, { adjustAccountNetProfit: true });
 
-          if (!liveOrderRow) {
-            return;
-          }
+          if (performanceFeeResult.performanceFeeCharged) {
+            logger.info('Performance fee applied successfully', {
+              order_id: String(order_id),
+              originalNetProfit: Number(net_profit) || 0,
+              adjustedNetProfit: performanceFeeResult.adjustedNetProfit,
+              performanceFeeAmount: performanceFeeResult.performanceFeeAmount
+            });
 
-          const parentMamOrderId = liveOrderRow.parent_mam_order_id;
-          if (parentMamOrderId) {
+            // Emit WebSocket update for strategy provider who earned the fee
             try {
-              await recalculateMamOrderDerivedProfits(parentMamOrderId);
-            } catch (derivedError) {
-              logger.error('Failed to recalculate MAM order derived profits after child close', {
+              portfolioEvents.emitUserUpdate('strategy_provider', String(copyFollowerOrder.strategy_provider_id), {
+                type: 'wallet_balance_update',
+                reason: 'performance_fee_earned',
+                order_id: String(order_id),
                 order_id: orderIdStr,
                 parent_mam_order_id: parentMamOrderId,
                 error: derivedError.message

@@ -2,17 +2,26 @@ const { Op } = require('sequelize');
 const LiveUser = require('../models/liveUser.model');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const MAMAccount = require('../models/mamAccount.model');
+const MAMAssignment = require('../models/mamAssignment.model');
+const { ASSIGNMENT_STATUS } = require('../constants/mamAssignment.constants');
 
 const OPEN_CHILD_STATUSES = ['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'];
 
 async function refreshMamAccountAggregates(mamAccountId, { transaction } = {}) {
   if (!mamAccountId) return null;
 
-  const liveUsers = await LiveUser.findAll({
-    where: { mam_id: mamAccountId },
-    attributes: ['id', 'wallet_balance'],
+  const assignments = await MAMAssignment.findAll({
+    where: {
+      mam_account_id: mamAccountId,
+      status: ASSIGNMENT_STATUS.ACTIVE
+    },
+    include: [{ model: LiveUser, as: 'client', attributes: ['id', 'wallet_balance'] }],
     transaction
   });
+
+  const liveUsers = assignments
+    .map((assignment) => assignment.client)
+    .filter(Boolean);
 
   const clientIds = liveUsers.map((user) => user.id);
   const totalBalance = liveUsers.reduce((sum, user) => sum + Number(user.wallet_balance || 0), 0);
@@ -35,7 +44,7 @@ async function refreshMamAccountAggregates(mamAccountId, { transaction } = {}) {
     total_balance: normalizedBalance,
     mam_balance: normalizedBalance,
     total_used_margin: normalizedMargin,
-    total_investors: liveUsers.length
+    total_investors: assignments.length
   }, {
     where: { id: mamAccountId },
     transaction
@@ -44,7 +53,7 @@ async function refreshMamAccountAggregates(mamAccountId, { transaction } = {}) {
   return {
     totalBalance: normalizedBalance,
     totalUsedMargin: normalizedMargin,
-    totalInvestors: liveUsers.length
+    totalInvestors: assignments.length
   };
 }
 
