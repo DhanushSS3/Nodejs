@@ -1326,6 +1326,12 @@ async function applyDbUpdate(msg) {
     if (type === 'ORDER_CLOSE_CONFIRMED') {
       setImmediate(async () => {
         try {
+          logger.info('Post-close async tasks started', {
+            order_id: String(order_id),
+            user_type: String(user_type),
+            net_profit: Number(net_profit) || 0
+          });
+
           // Copy follower performance fee
           if (String(user_type) === 'copy_follower' && (Number(net_profit) || 0) > 0) {
             const CopyFollowerOrder = require('../../models/copyFollowerOrder.model');
@@ -1379,68 +1385,85 @@ async function applyDbUpdate(msg) {
           if (String(user_type) === 'live') {
             const orderIdStr = String(order_id);
             const liveOrderRow = row || await LiveUserOrder.findOne({ where: { order_id: orderIdStr } });
-            if (!liveOrderRow) return;
+
+            if (!liveOrderRow) {
+              logger.warn('Post-close async: Live order row not found for MAM processing', {
+                order_id: orderIdStr
+              });
+              return;
+            }
 
             const parentMamOrderId = liveOrderRow.parent_mam_order_id;
-            if (parentMamOrderId) {
-              try {
-                await recalculateMamOrderDerivedProfits(parentMamOrderId);
-              } catch (derivedError) {
-                logger.error('Failed to recalculate MAM order derived profits after child close', {
-                  order_id: orderIdStr,
-                  parent_mam_order_id: parentMamOrderId,
-                  error: derivedError.message
-                });
+
+            if (!parentMamOrderId) {
+              logger.info('Post-close async: No parent MAM order associated with child order', {
+                order_id: orderIdStr
+              });
+              return;
+            }
+
+            logger.info('Post-close async: Processing MAM parent for child close', {
+              order_id: orderIdStr,
+              parent_mam_order_id: parentMamOrderId
+            });
+
+            try {
+              await recalculateMamOrderDerivedProfits(parentMamOrderId);
+            } catch (derivedError) {
+              logger.error('Failed to recalculate MAM order derived profits after child close', {
+                order_id: orderIdStr,
+                parent_mam_order_id: parentMamOrderId,
+                error: derivedError.message
+              });
+            }
+
+            try {
+              const parentMamOrder = await MAMOrder.findByPk(parentMamOrderId, { attributes: ['id', 'mam_account_id'] });
+              if (parentMamOrder?.mam_account_id) {
+                await refreshMamAccountAggregates(parentMamOrder.mam_account_id);
               }
+            } catch (aggregateError) {
+              logger.error('Failed to refresh MAM account aggregates after child close', {
+                order_id: orderIdStr,
+                parent_mam_order_id: parentMamOrderId,
+                error: aggregateError.message
+              });
+            }
 
+            if ((Number(net_profit) || 0) > 0) {
               try {
-                const parentMamOrder = await MAMOrder.findByPk(parentMamOrderId, { attributes: ['id', 'mam_account_id'] });
-                if (parentMamOrder?.mam_account_id) {
-                  await refreshMamAccountAggregates(parentMamOrder.mam_account_id);
-                }
-              } catch (aggregateError) {
-                logger.error('Failed to refresh MAM account aggregates after child close', {
-                  order_id: orderIdStr,
-                  parent_mam_order_id: parentMamOrderId,
-                  error: aggregateError.message
+                logger.info('Calculating MAM performance fee', {
+                  liveOrderId: orderIdStr,
+                  liveUserId: parseInt(String(user_id), 10),
+                  parentMamOrderId,
+                  orderNetProfit: Number(net_profit) || 0
                 });
-              }
 
-              if ((Number(net_profit) || 0) > 0) {
-                try {
-                  logger.info('Calculating MAM performance fee', {
+                const mamPerformanceFeeResult = await calculateAndApplyMamPerformanceFee({
+                  liveOrderId: orderIdStr,
+                  liveUserId: parseInt(String(user_id), 10),
+                  parentMamOrderId,
+                  orderNetProfit: Number(net_profit) || 0,
+                  symbol: liveOrderRow.symbol ? String(liveOrderRow.symbol).toUpperCase() : undefined,
+                  orderType: liveOrderRow.order_type ? String(liveOrderRow.order_type).toUpperCase() : undefined
+                });
+
+                if (mamPerformanceFeeResult.performanceFeeCharged) {
+                  logger.info('MAM performance fee applied successfully', {
                     liveOrderId: orderIdStr,
-                    liveUserId: parseInt(String(user_id), 10),
-                    parentMamOrderId,
-                    orderNetProfit: Number(net_profit) || 0
-                  });
-
-                  const mamPerformanceFeeResult = await calculateAndApplyMamPerformanceFee({
-                    liveOrderId: orderIdStr,
-                    liveUserId: parseInt(String(user_id), 10),
-                    parentMamOrderId,
-                    orderNetProfit: Number(net_profit) || 0,
-                    symbol: liveOrderRow.symbol ? String(liveOrderRow.symbol).toUpperCase() : undefined,
-                    orderType: liveOrderRow.order_type ? String(liveOrderRow.order_type).toUpperCase() : undefined
-                  });
-
-                  if (mamPerformanceFeeResult.performanceFeeCharged) {
-                    logger.info('MAM performance fee applied successfully', {
-                      liveOrderId: orderIdStr,
-                      parentMamOrderId: mamPerformanceFeeResult.parentMamOrderId,
-                      mamAccountId: mamPerformanceFeeResult.mamAccountId,
-                      performanceFeeAmount: mamPerformanceFeeResult.performanceFeeAmount,
-                      adjustedNetProfit: mamPerformanceFeeResult.adjustedNetProfit
-                    });
-                  }
-                } catch (mamPerformanceFeeError) {
-                  logger.error('Failed to calculate and apply MAM performance fee', {
-                    order_id: String(order_id),
-                    live_user_id: parseInt(String(user_id), 10),
-                    orderNetProfit: Number(net_profit) || 0,
-                    error: mamPerformanceFeeError.message
+                    parentMamOrderId: mamPerformanceFeeResult.parentMamOrderId,
+                    mamAccountId: mamPerformanceFeeResult.mamAccountId,
+                    performanceFeeAmount: mamPerformanceFeeResult.performanceFeeAmount,
+                    adjustedNetProfit: mamPerformanceFeeResult.adjustedNetProfit
                   });
                 }
+              } catch (mamPerformanceFeeError) {
+                logger.error('Failed to calculate and apply MAM performance fee', {
+                  order_id: String(order_id),
+                  live_user_id: parseInt(String(user_id), 10),
+                  orderNetProfit: Number(net_profit) || 0,
+                  error: mamPerformanceFeeError.message
+                });
               }
             }
           }
