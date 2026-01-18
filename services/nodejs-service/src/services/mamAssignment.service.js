@@ -12,6 +12,7 @@ const {
 const eligibilityService = require('./mamAssignmentEligibility.service');
 const portfolioEvents = require('./events/portfolio.events');
 const redisUserCache = require('./redis.user.cache.service');
+const { refreshMamAccountAggregates } = require('./mamAggregates.service');
 
 class MAMAssignmentService {
   async createAssignment({ mamAccountId, clientId, initiatedBy = ASSIGNMENT_INITIATORS.CLIENT, initiatedByAdminId, initiatedReason }) {
@@ -209,7 +210,7 @@ class MAMAssignmentService {
         { where: { id: clientId }, transaction }
       );
 
-      const aggregates = await this._refreshMamAccountAggregates(assignment.mam_account_id, transaction);
+      const aggregates = await refreshMamAccountAggregates(assignment.mam_account_id, { transaction });
 
       transaction.afterCommit(async () => {
         await redisUserCache.updateUser('live', clientId, {
@@ -500,31 +501,7 @@ class MAMAssignmentService {
   }
 
   async _refreshMamAccountAggregates(mamAccountId, transaction) {
-    const [totalBalance, totalInvestors] = await Promise.all([
-      LiveUser.sum('wallet_balance', {
-        where: { mam_id: mamAccountId },
-        transaction
-      }),
-      LiveUser.count({
-        where: { mam_id: mamAccountId },
-        transaction
-      })
-    ]);
-
-    const normalizedBalance = Number(totalBalance || 0);
-
-    await MAMAccount.update(
-      {
-        total_balance: normalizedBalance,
-        total_investors: totalInvestors
-      },
-      { where: { id: mamAccountId }, transaction }
-    );
-
-    return {
-      totalBalance: normalizedBalance,
-      totalInvestors
-    };
+    return refreshMamAccountAggregates(mamAccountId, { transaction });
   }
 }
 

@@ -11,6 +11,7 @@ const idGenerator = require('./idGenerator.service');
 const portfolioEvents = require('./events/portfolio.events');
 const orderLifecycleService = require('./orderLifecycle.service');
 const { resolveOpenOrder } = require('./order.resolver.service');
+const { refreshMamAccountAggregates } = require('./mamAggregates.service');
 
 const MAMAccount = require('../models/mamAccount.model');
 const MAMAssignment = require('../models/mamAssignment.model');
@@ -164,7 +165,7 @@ class MAMOrderService {
       order_status: executionSummary.executedVolume > 0 ? ORDER_STATUS.OPEN : ORDER_STATUS.QUEUED
     });
 
-    await this._updateMamAccountAggregates(mamAccount, executionSummary);
+    await this._updateMamAccountAggregates(mamAccount.id);
 
     try {
       portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
@@ -822,22 +823,12 @@ class MAMOrderService {
     return notional / leverage;
   }
 
-  async _updateMamAccountAggregates(mamAccount, executionSummary) {
+  async _updateMamAccountAggregates(mamAccountId, transaction) {
     try {
-      const totalBalance = await LiveUser.sum('wallet_balance', {
-        where: {
-          mam_id: mamAccount.id
-        }
-      });
-
-      await mamAccount.update({
-        total_balance: Number(totalBalance || 0),
-        mam_balance: Number(totalBalance || 0),
-        total_used_margin: executionSummary.totalMargin
-      });
+      await refreshMamAccountAggregates(mamAccountId, { transaction });
     } catch (error) {
       logger.warn('Failed to update MAM account aggregates after order', {
-        mam_account_id: mamAccount.id,
+        mam_account_id: mamAccountId,
         error: error.message
       });
     }
@@ -1110,7 +1101,7 @@ class MAMOrderService {
   async syncMamAggregates({ mamOrderId, mamAccountId }) {
     await Promise.all([
       mamOrderId ? this._refreshMamOrderState(mamOrderId) : Promise.resolve(),
-      mamAccountId ? this._refreshMamAccountAggregates(mamAccountId) : Promise.resolve()
+      mamAccountId ? refreshMamAccountAggregates(mamAccountId) : Promise.resolve()
     ]);
   }
 }

@@ -565,5 +565,6 @@ async function calculateAndApplyMamPerformanceFee({
 
 module.exports = {
   calculateAndApplyPerformanceFee,
-  calculateAndApplyMamPerformanceFee
+  calculateAndApplyMamPerformanceFee,
+  recalculateMamOrderDerivedProfits
 };
