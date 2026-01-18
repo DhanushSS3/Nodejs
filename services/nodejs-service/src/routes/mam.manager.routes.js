@@ -60,4 +60,65 @@ router.get(
   mamManagerController.getClientOrders
 );
 
+router.get(
+  '/clients/:client_id/closed-orders',
+  authenticateJWT,
+  requireMamManager,
+  [
+    param('client_id')
+      .isInt({ min: 1 }).withMessage('client_id must be a positive integer'),
+    query('page')
+      .optional()
+      .isInt({ min: 1 }).withMessage('page must be  1'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('start_date')
+      .optional()
+      .isISO8601().withMessage('start_date must be a valid date'),
+    query('end_date')
+      .optional()
+      .isISO8601().withMessage('end_date must be a valid date'),
+    query('symbol')
+      .optional()
+      .isString().withMessage('symbol must be a string'),
+    query('order_type')
+      .optional()
+      .isString().withMessage('order_type must be a string')
+  ],
+  validateRequest,
+  mamManagerController.getClientClosedOrders
+);
+
+router.get(
+  '/clients/closed-orders',
+  authenticateJWT,
+  requireMamManager,
+  [
+    query('client_id')
+      .optional()
+      .isInt({ min: 1 }).withMessage('client_id must be a positive integer'),
+    query('page')
+      .optional()
+      .isInt({ min: 1 }).withMessage('page must be >= 1'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('start_date')
+      .optional()
+      .isISO8601().withMessage('start_date must be a valid date'),
+    query('end_date')
+      .optional()
+      .isISO8601().withMessage('end_date must be a valid date'),
+    query('symbol')
+      .optional()
+      .isString().withMessage('symbol must be a string'),
+    query('order_type')
+      .optional()
+      .isString().withMessage('order_type must be a string')
+  ],
+  validateRequest,
+  mamManagerController.getClosedOrders
+);
+
 module.exports = router;

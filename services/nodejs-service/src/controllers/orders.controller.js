@@ -2741,23 +2741,27 @@ async function getClosedOrders(req, res) {
     // JWT user
     const authContext = getTradingAuthContext(req);
     const tokenUserId = authContext.userId;
+    const tokenUser = authContext.tokenUser || req.user || {};
+
     if (!tokenUserId) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
-    // Block inactive users
-    const userStatus = user.status;
+
+    // Block inactive users when status is available
+    const userStatus = authContext.status ?? tokenUser.status;
     if (userStatus !== undefined && String(userStatus) === '0') {
       return res.status(403).json({ success: false, message: 'User status is not allowed' });
     }
+
     // Resolve account type from JWT and determine order model
-    const userType = String(user.account_type || user.user_type || 'live').toLowerCase();
+    const userType = String(tokenUser.account_type || tokenUser.user_type || 'live').toLowerCase();
     let OrderModel;
     let queryUserId = parseInt(tokenUserId, 10);
 
-    if (user.account_type === 'strategy_provider' && user.strategy_provider_id) {
+    if (tokenUser.account_type === 'strategy_provider' && tokenUser.strategy_provider_id) {
       // For strategy providers, use StrategyProviderOrder model and strategy_provider_id
       OrderModel = StrategyProviderOrder;
-      queryUserId = parseInt(user.strategy_provider_id, 10);
+      queryUserId = parseInt(tokenUser.strategy_provider_id, 10);
     } else if (userType === 'live') {
       OrderModel = LiveUserOrder;
     } else {
