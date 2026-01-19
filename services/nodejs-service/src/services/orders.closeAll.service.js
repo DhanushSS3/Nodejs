@@ -32,16 +32,12 @@ class CloseAllOrdersService {
       if (!Number.isNaN(t) && t === 4) {
         return true; // Crypto always open
       }
-
-      const now = new Date();
-      const day = now.getUTCDay(); // 0=Sunday
-      if (day === 0 || day === 6) return false;
-      const hour = now.getUTCHours();
-      return hour >= 0 && hour < 22;
     } catch (error) {
-      logger.warn('CloseAll: market hours check failed', { error: error.message, typeVal });
-      return true;
+      logger.warn('CloseAll: market hours parse failed', { error: error.message, typeVal });
     }
+
+    const day = new Date().getUTCDay(); // 0=Sunday, 6=Saturday
+    return day !== 0 && day !== 6;
   }
 
   async ensureMarketOpen(ctx) {
