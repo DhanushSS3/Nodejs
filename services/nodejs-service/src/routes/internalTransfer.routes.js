@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const InternalTransferController = require('../controllers/internalTransfer.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
-const { requireActiveLiveUser } = require('../middlewares/liveUserStatus.middleware');
+const { requireActiveLiveUser, requireActiveLiveOrStrategyProvider } = require('../middlewares/liveUserStatus.middleware');
 const { body, param, query } = require('express-validator');
 const { validateRequest } = require('../middlewares/validation.middleware');
 
@@ -123,9 +123,9 @@ const { validateRequest } = require('../middlewares/validation.middleware');
  *       500:
  *         description: Internal server error
  */
-router.use(authenticateJWT, requireActiveLiveUser('internal_transfers'));
+router.use(authenticateJWT);
 
-router.get('/accounts', InternalTransferController.getUserAccounts);
+router.get('/accounts', requireActiveLiveOrStrategyProvider('internal_transfers_accounts'), InternalTransferController.getUserAccounts);
 
 /**
  * @swagger
