@@ -1,5 +1,6 @@
 const multer = require('multer');
 const path = require('path');
+const logger = require('../services/logger.service');
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -29,6 +30,7 @@ const fileFilter = (req, file, cb) => {
       'image/bmp',
       'image/tiff'
     ];
+    const fallbackMimes = ['application/octet-stream'];
 
     // Allowed file extensions (case-insensitive)
     const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'];
@@ -36,13 +38,22 @@ const fileFilter = (req, file, cb) => {
     // Get file extension from original filename
     const fileExtension = path.extname(file.originalname).toLowerCase();
     
-    // Validate MIME type
-    if (!allowedMimes.includes(file.mimetype.toLowerCase())) {
-      const error = new Error(`Invalid file type: ${file.mimetype}. Only image files (JPEG, PNG, GIF, WebP, BMP, TIFF) are allowed.`);
-      error.code = 'INVALID_FILE_TYPE';
-      error.field = file.fieldname;
-      error.filename = file.originalname;
-      return cb(error, false);
+    // Validate MIME type (allow certain fallbacks if extension is trusted)
+    const normalizedMime = (file.mimetype || '').toLowerCase();
+    if (!allowedMimes.includes(normalizedMime)) {
+      if (fallbackMimes.includes(normalizedMime) && allowedExtensions.includes(fileExtension)) {
+        logger.warn('File upload received generic MIME type, trusting extension for validation', {
+          field: file.fieldname,
+          filename: file.originalname,
+          mimetype: file.mimetype
+        });
+      } else {
+        const error = new Error(`Invalid file type: ${file.mimetype}. Only image files (JPEG, PNG, GIF, WebP, BMP, TIFF) are allowed.`);
+        error.code = 'INVALID_FILE_TYPE';
+        error.field = file.fieldname;
+        error.filename = file.originalname;
+        return cb(error, false);
+      }
     }
     
     // Validate file extension
