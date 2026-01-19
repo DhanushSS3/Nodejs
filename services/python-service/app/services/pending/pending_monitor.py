@@ -246,6 +246,45 @@ class PendingMonitor:
         except Exception:
             logger.exception("reject_pending publish failed for %s", order_id)
 
+    async def _notify_mam_pending_cancellation(self, meta: Dict[str, Any], order_id: str,
+                                               user_type: str, user_id: str, symbol: str,
+                                               order_type: str, reason: str):
+        if not meta:
+            return
+        mam_order_id = meta.get("parent_mam_order_id")
+        if mam_order_id is None:
+            return
+        mam_account_id = meta.get("mam_account_id")
+        payload = {
+            "type": "MAM_PENDING_CHILD_CANCELLED",
+            "mam_order_id": str(mam_order_id),
+            "mam_account_id": str(mam_account_id) if mam_account_id is not None else None,
+            "child_order_id": str(order_id),
+            "user_id": str(user_id),
+            "user_type": str(user_type),
+            "symbol": str(symbol).upper(),
+            "order_type": str(order_type).upper(),
+            "reason": reason,
+        }
+        try:
+            await self._publish(DB_UPDATE_QUEUE, payload)
+            logger.info(
+                "Published MAM pending child cancellation message",
+                extra={
+                    "mam_order_id": payload["mam_order_id"],
+                    "child_order_id": payload["child_order_id"],
+                    "reason": reason
+                }
+            )
+        except Exception:
+            logger.exception(
+                "Failed to publish MAM pending cancellation message",
+                extra={
+                    "mam_order_id": payload["mam_order_id"],
+                    "child_order_id": payload["child_order_id"]
+                }
+            )
+
     async def _execute_pending(self, order_id: str, user_type: str, user_id: str, symbol: str,
                                order_type: str, order_qty: float, exec_px: float, group: str):
         # Send to OPEN worker as executed
@@ -395,6 +434,15 @@ class PendingMonitor:
                             except Exception:
                                 logger.exception("Failed to log margin reject for %s:%s", user_type, user_id)
                         await self.remove_pending(symbol, order_type, oid)
+                        await self._notify_mam_pending_cancellation(
+                            meta,
+                            oid,
+                            user_type,
+                            user_id,
+                            symbol,
+                            order_type,
+                            reason="insufficient_margin_pretrigger"
+                        )
                         await self._reject_pending(oid, user_type, user_id, reason="insufficient_margin_pretrigger")
                         continue
                     # Execute

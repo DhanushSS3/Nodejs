@@ -1,4 +1,5 @@
 const amqp = require('amqplib');
+const { Op } = require('sequelize');
 const logger = require('../logger.service');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
 const MAMOrder = require('../../models/mamOrder.model');
@@ -35,6 +36,7 @@ const sequelize = require('../../config/db');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@127.0.0.1/';
 const ORDER_DB_UPDATE_QUEUE = process.env.ORDER_DB_UPDATE_QUEUE || 'order_db_update_queue';
+const PENDING_CHILD_STATUSES = ['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL', 'MODIFY'];
 
 // Performance monitoring for throughput tracking
 let messageCount = 0;
@@ -50,6 +52,149 @@ function logRedisAudit(event, context = {}) {
     logger.redis(event, context);
   } catch (err) {
     logger.warn('Failed to write redis audit log', { event, error: err.message });
+  }
+}
+
+async function handleMamPendingChildCancel(msg) {
+  const {
+    mam_order_id,
+    mam_account_id,
+    child_order_id,
+    user_id,
+    user_type,
+    symbol,
+    order_type,
+    reason
+  } = msg || {};
+
+  if (!mam_order_id) {
+    logger.warn('MAM child cancellation missing parent id', { msg });
+    return;
+  }
+
+  const parentId = Number(mam_order_id);
+  const providedMamAccountId = mam_account_id != null ? Number(mam_account_id) : null;
+  let parentOrder = null;
+  let resolvedMamAccountId = providedMamAccountId;
+
+  try {
+    if (child_order_id) {
+      try {
+        await LiveUserOrder.update({
+          order_status: 'CANCELLED',
+          status: 'CANCELLED',
+          close_message: reason || 'insufficient_margin_pretrigger'
+        }, {
+          where: { order_id: String(child_order_id) }
+        });
+      } catch (orderUpdateError) {
+        logger.warn('Failed to sync child order cancellation from monitor', {
+          child_order_id,
+          error: orderUpdateError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate(String(user_type || 'live'), String(user_id), {
+          type: 'order_pending_cancelled',
+          order_id: String(child_order_id),
+          reason: reason || 'insufficient_margin_pretrigger'
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit live user update for MAM pending cancellation', {
+          child_order_id,
+          error: eventError.message
+        });
+      }
+    }
+
+    if (!resolvedMamAccountId || Number.isNaN(resolvedMamAccountId)) {
+      try {
+        parentOrder = await MAMOrder.findByPk(parentId, {
+          attributes: ['id', 'mam_account_id', 'order_status', 'metadata']
+        });
+        resolvedMamAccountId = parentOrder?.mam_account_id || null;
+      } catch (lookupError) {
+        logger.warn('Failed to fetch MAM order while resolving account id', {
+          mam_order_id,
+          error: lookupError.message
+        });
+      }
+    }
+
+    const remaining = await LiveUserOrder.count({
+      where: {
+        parent_mam_order_id: parentId,
+        order_status: { [Op.in]: PENDING_CHILD_STATUSES }
+      }
+    });
+
+    if (remaining === 0) {
+      if (!parentOrder) {
+        try {
+          parentOrder = await MAMOrder.findByPk(parentId);
+        } catch (fetchError) {
+          logger.warn('Failed to fetch parent MAM order during cancellation update', {
+            mam_order_id,
+            error: fetchError.message
+          });
+        }
+      }
+
+      if (parentOrder) {
+        try {
+          const metadata = {
+            ...(parentOrder.metadata || {}),
+            cancelled_at: new Date().toISOString(),
+            cancelled_reason: reason || 'insufficient_margin_pretrigger',
+            cancelled_by: 'system_pending_monitor'
+          };
+          await parentOrder.update({
+            order_status: 'CANCELLED',
+            metadata
+          });
+        } catch (parentUpdateError) {
+          logger.warn('Failed to mark MAM order cancelled after child drains', {
+            mam_order_id,
+            error: parentUpdateError.message
+          });
+        }
+      }
+    }
+
+    try {
+      await mamOrderService.syncMamAggregates({
+        mamOrderId: parentId,
+        mamAccountId: resolvedMamAccountId
+      });
+    } catch (aggError) {
+      logger.warn('Failed to refresh MAM aggregates after child cancellation', {
+        mam_order_id,
+        error: aggError.message
+      });
+    }
+
+    try {
+      portfolioEvents.emitUserUpdate('mam_account', String(resolvedMamAccountId || 'unknown'), {
+        type: 'mam_pending_child_cancelled',
+        mam_order_id: parentId,
+        child_order_id: child_order_id ? Number(child_order_id) : null,
+        remaining_pending_children: remaining,
+        reason: reason || 'insufficient_margin_pretrigger'
+      });
+    } catch (mamEventError) {
+      logger.warn('Failed to emit mam account update for child cancellation', {
+        mam_order_id,
+        error: mamEventError.message
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to handle MAM pending child cancellation', {
+      error: error.message,
+      mam_order_id,
+      child_order_id
+    });
+    throw error;
   }
 }
 
@@ -1552,6 +1697,8 @@ async function startOrdersDbConsumer() {
           await handleOrderRejectionRecord(payload);
         } else if (payload.type === 'ORDER_CLOSE_ID_UPDATE') {
           await handleCloseIdUpdate(payload);
+        } else if (payload.type === 'MAM_PENDING_CHILD_CANCELLED') {
+          await handleMamPendingChildCancel(payload);
         } else {
           await applyDbUpdate(payload);
         }

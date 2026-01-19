@@ -99,6 +99,27 @@ router.post(
 );
 
 router.post(
+  '/pending/cancel',
+  authenticateJWT,
+  requireMamManager,
+  [
+    body('order_id')
+      .exists().withMessage('order_id is required')
+      .isInt({ gt: 0 }).withMessage('order_id must be a positive integer'),
+    body('cancel_message')
+      .optional()
+      .isString().withMessage('cancel_message must be a string')
+      .isLength({ max: 255 }).withMessage('cancel_message must be <= 255 characters'),
+    body('status')
+      .optional()
+      .isString().withMessage('status must be a string')
+      .isLength({ max: 20 }).withMessage('status must be <= 20 characters')
+  ],
+  validateRequest,
+  mamOrdersController.cancelPendingOrder
+);
+
+router.post(
   '/close',
   authenticateJWT,
   requireMamManager,

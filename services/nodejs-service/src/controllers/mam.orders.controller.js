@@ -65,6 +65,39 @@ class MAMOrdersController {
     }
   }
 
+  async cancelPendingOrder(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    const payload = {
+      order_id: Number(req.body.order_id),
+      cancel_message: req.body.cancel_message ? String(req.body.cancel_message).trim() : undefined,
+      status: req.body.status ? String(req.body.status).trim().toUpperCase() : undefined
+    };
+
+    try {
+      const result = await mamOrderService.cancelPendingOrder({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id,
+        payload
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM pending order cancellation dispatched',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to cancel MAM pending order',
+        details: error.details || undefined
+      });
+    }
+  }
+
   async closeMamOrder(req, res) {
     const mamAccountId = req.user?.mam_account_id || req.user?.sub;
     if (!mamAccountId) {

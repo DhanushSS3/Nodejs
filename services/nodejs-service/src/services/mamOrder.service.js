@@ -410,6 +410,216 @@ class MAMOrderService {
     }
   }
 
+  async _cancelChildPendingOrder({ order, cancelMessage, status, mamAccountId, mamOrderId }) {
+    const orderId = order.order_id;
+    const userId = order.order_user_id;
+    const currentStatus = String(order.order_status || '').toUpperCase();
+    if (!PENDING_CHILD_STATUSES.includes(currentStatus)) {
+      return { skipped: true, reason: `status_${currentStatus}` };
+    }
+
+    let canonical = null;
+    try {
+      canonical = await redisCluster.hgetall(`order_data:${orderId}`);
+      if (canonical && Object.keys(canonical).length === 0) {
+        canonical = null;
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch canonical order for pending cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    const symbol = canonical?.symbol
+      ? String(canonical.symbol).toUpperCase()
+      : String(order.symbol || order.order_company_name).toUpperCase();
+    const orderType = canonical?.order_type
+      ? String(canonical.order_type).toUpperCase()
+      : String(order.order_type).toUpperCase();
+
+    let isProviderFlow = false;
+    try {
+      const cfg = await redisCluster.hgetall(`user:{live:${userId}}:config`);
+      const sendPref = cfg?.sending_orders ? String(cfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = sendPref === 'barclays';
+    } catch (error) {
+      logger.warn('Failed to read provider config for pending cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    if (!isProviderFlow) {
+      await this._finalizeLocalPendingCancel({
+        order,
+        symbol,
+        orderType,
+        cancelMessage,
+        mamOrderId,
+        mamAccountId
+      });
+      return { success: true, flow: 'local' };
+    }
+
+    const cancel_id = await idGenerator.generateCancelOrderId();
+    if (!cancel_id) {
+      return { success: false, reason: 'cancel_id_generation_failed' };
+    }
+
+    try {
+      await order.update({ cancel_id, status });
+    } catch (error) {
+      logger.warn('Failed to persist cancel_id on child pending order', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    await this._mirrorPendingCancelStatus({ userId, orderId, status, cancel_id });
+
+    const pyPayload = {
+      order_id: orderId,
+      cancel_id,
+      order_type: orderType,
+      user_id: String(userId),
+      user_type: 'live',
+      status: 'CANCELLED',
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      source: 'mam'
+    };
+
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/pending/cancel`,
+        pyPayload,
+        { timeout: 5000 }
+      );
+      return { success: true, flow: 'provider', cancel_id };
+    } catch (error) {
+      logger.error('Python pending cancel failed for MAM child order', {
+        order_id: orderId,
+        parent_mam_order_id: mamOrderId,
+        error: error.message
+      });
+      return { success: false, reason: error?.response?.data?.message || 'python_pending_cancel_failed' };
+    }
+  }
+
+  async _finalizeLocalPendingCancel({ order, symbol, orderType, cancelMessage, mamOrderId, mamAccountId }) {
+    const orderId = order.order_id;
+    const userId = order.order_user_id;
+
+    try {
+      await redisCluster.zrem(`pending_index:{${symbol}}:${orderType}`, orderId);
+    } catch (error) {
+      logger.warn('Failed to remove order from pending index during cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    try {
+      await redisCluster.del(`pending_orders:${orderId}`);
+    } catch (error) {
+      logger.warn('Failed to delete pending order hash during cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    try {
+      const tag = `live:${userId}`;
+      const idxKey = `user_orders_index:{${tag}}`;
+      const holdingKey = `user_holdings:{${tag}}:${orderId}`;
+      const pipeline = redisCluster.pipeline();
+      pipeline.srem(idxKey, orderId);
+      pipeline.del(holdingKey);
+      await pipeline.exec();
+    } catch (error) {
+      logger.warn('Failed to cleanup user holdings during pending cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    try {
+      await redisCluster.del(`order_data:${orderId}`);
+    } catch (error) {
+      logger.warn('Failed to delete order_data during pending cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    try {
+      await order.update({
+        order_status: 'CANCELLED',
+        status: 'CANCELLED',
+        close_message: cancelMessage
+      });
+    } catch (error) {
+      logger.warn('Failed to persist SQL cancel status for child order', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    try {
+      portfolioEvents.emitUserUpdate('live', String(order.order_user_id), {
+        type: 'order_update',
+        order_id: orderId,
+        update: {
+          order_status: 'CANCELLED',
+          parent_mam_order_id: mamOrderId
+        },
+        reason: 'mam_pending_cancel'
+      });
+      portfolioEvents.emitUserUpdate('live', String(order.order_user_id), {
+        type: 'pending_cancelled',
+        order_id: orderId,
+        reason: 'mam_pending_cancel'
+      });
+    } catch (error) {
+      logger.warn('Failed to emit user update for pending cancel', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+  }
+
+  async _mirrorPendingCancelStatus({ userId, orderId, status, cancel_id }) {
+    const tag = `live:${userId}`;
+    const holdingKey = `user_holdings:{${tag}}:${orderId}`;
+    const canonicalKey = `order_data:${orderId}`;
+
+    try {
+      await redisCluster.hset(holdingKey, {
+        cancel_id: String(cancel_id),
+        status
+      });
+    } catch (error) {
+      logger.warn('Failed to mirror cancel info to holdings', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+
+    try {
+      await redisCluster.hset(canonicalKey, {
+        cancel_id: String(cancel_id),
+        status
+      });
+    } catch (error) {
+      logger.warn('Failed to mirror cancel info to canonical data', {
+        order_id: orderId,
+        error: error.message
+      });
+    }
+  }
+
   async _resolveExecutionPrice({ symbol, order_type, fallbackPrice }) {
     const normalizedSymbol = (symbol || '').toUpperCase();
     const side = (order_type || '').toUpperCase();
