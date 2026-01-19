@@ -34,6 +34,37 @@ class MAMOrdersController {
     }
   }
 
+  async placePendingOrder(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    try {
+      const result = await mamOrderService.placePendingOrder({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id,
+        payload: {
+          symbol: String(req.body.symbol || '').toUpperCase(),
+          order_type: String(req.body.order_type || '').toUpperCase(),
+          order_price: Number(req.body.order_price),
+          volume: Number(req.body.volume || req.body.order_quantity)
+        }
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'MAM pending order placed',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to place MAM pending order'
+      });
+    }
+  }
+
   async closeMamOrder(req, res) {
     const mamAccountId = req.user?.mam_account_id || req.user?.sub;
     if (!mamAccountId) {

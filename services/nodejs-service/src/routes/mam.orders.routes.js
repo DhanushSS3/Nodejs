@@ -62,6 +62,43 @@ router.post(
 );
 
 router.post(
+  '/pending',
+  authenticateJWT,
+  requireMamManager,
+  [
+    body('symbol')
+      .trim()
+      .notEmpty().withMessage('symbol is required')
+      .isLength({ max: 20 }).withMessage('symbol must be <= 20 characters'),
+    body('order_type')
+      .trim()
+      .notEmpty().withMessage('order_type is required')
+      .isIn(['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP', 'buy_limit', 'sell_limit', 'buy_stop', 'sell_stop'])
+      .withMessage('order_type must be a pending order type'),
+    body('order_price')
+      .exists().withMessage('order_price is required')
+      .isFloat({ gt: 0 }).withMessage('order_price must be greater than 0'),
+    body('volume')
+      .optional()
+      .isFloat({ gt: 0 }).withMessage('volume must be greater than 0 when provided'),
+    body('order_quantity')
+      .optional()
+      .isFloat({ gt: 0 }).withMessage('order_quantity must be greater than 0 when provided'),
+    body()
+      .custom((value) => {
+        const volume = Number(value.volume);
+        const qty = Number(value.order_quantity);
+        if ((volume > 0 && Number.isFinite(volume)) || (qty > 0 && Number.isFinite(qty))) {
+          return true;
+        }
+        throw new Error('volume or order_quantity must be provided and greater than 0');
+      })
+  ],
+  validateRequest,
+  mamOrdersController.placePendingOrder
+);
+
+router.post(
   '/close',
   authenticateJWT,
   requireMamManager,

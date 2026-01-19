@@ -27,7 +27,9 @@ const ORDER_STATUS = {
   REJECTED: 'REJECTED'
 };
 const VALID_ORDER_TYPES = ['BUY', 'SELL'];
+const VALID_PENDING_ORDER_TYPES = ['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'];
 const OPEN_CHILD_STATUSES = ['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'];
+const PENDING_CHILD_STATUSES = ['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL', 'MODIFY'];
 
 class MAMOrderService {
   async placeInstantOrder({
@@ -192,6 +194,220 @@ class MAMOrderService {
       rejected_volume: executionSummary.rejectedVolume,
       allocation: executionSummary.allocationSnapshot
     };
+  }
+
+  async placePendingOrder({
+    mamAccountId,
+    managerId,
+    payload
+  }) {
+    const validation = this._validatePendingPayload(payload);
+    if (!validation.valid) {
+      const error = new Error(validation.message);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const {
+      symbol,
+      order_type,
+      order_price,
+      volume
+    } = validation.data;
+
+    const mamAccount = await MAMAccount.findByPk(mamAccountId);
+    if (!mamAccount || mamAccount.status !== 'active') {
+      const error = new Error('MAM account is not active or not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const assignments = await this._getActiveAssignments(mamAccountId);
+    if (!assignments.length) {
+      const error = new Error('No active investors assigned to this MAM');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const groupName = mamAccount.group;
+    const groupFields = await groupsCache.getGroupFields(
+      groupName,
+      symbol,
+      ['type', 'contract_size', 'margin', 'group_margin', 'crypto_margin_factor', 'spread', 'spread_pip']
+    );
+    await this._assertMarketOpen(groupFields?.type);
+
+    const halfSpread = this._computeHalfSpreadFromGroupFields(groupFields);
+    if (!(halfSpread >= 0)) {
+      const error = new Error('Group spread configuration missing for pending orders');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const freeMarginSnapshots = await this._fetchFreeMargins(assignments);
+    const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + snap.free_margin, 0);
+    if (!(totalFreeMargin > 0)) {
+      const error = new Error('All investors have zero free margin. Cannot allocate order.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const allocation = this._computeAllocation({
+      assignments,
+      freeMarginSnapshots,
+      totalVolume: volume,
+      precision: Number(mamAccount.allocation_precision || 0.01)
+    });
+
+    const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);
+    if (!mamLock) {
+      const error = new Error('Another MAM order action is in progress. Please retry shortly.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const transaction = await sequelize.transaction();
+    let mamOrder = null;
+    try {
+      mamOrder = await MAMOrder.create({
+        mam_account_id: mamAccountId,
+        symbol,
+        order_type,
+        order_status: 'PENDING',
+        requested_volume: volume,
+        allocation_method: mamAccount.allocation_method || 'free_margin',
+        total_balance_snapshot: freeMarginSnapshots.reduce((acc, snap) => acc + snap.balance, 0),
+        total_free_margin_snapshot: totalFreeMargin,
+        metadata: {
+          initiated_by: managerId,
+          order_price,
+          order_kind: 'pending'
+        }
+      }, { transaction });
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      await releaseUserLock(mamLock);
+      logger.error('Failed to create MAM pending order', { error: error.message, mamAccountId });
+      throw error;
+    }
+
+    const allocationSnapshot = [];
+    const pendingOrders = [];
+    let rejectedCount = 0;
+    let rejectedVolume = 0;
+    let acceptedVolume = 0;
+
+    try {
+      for (const slot of allocation) {
+        const lots = Number(slot.allocated_volume || 0);
+        const snapshot = slot.snapshot || freeMarginSnapshots.find((s) => s.client_id === slot.assignment?.client_live_user_id);
+
+        if (!(lots > 0)) {
+          allocationSnapshot.push(this._buildSnapshotEntry({
+            assignment: slot.assignment,
+            snapshot,
+            lots,
+            status: 'rejected',
+            reason: 'zero_allocation_after_rounding'
+          }));
+          rejectedCount += 1;
+          rejectedVolume += lots;
+          continue;
+        }
+
+        const result = await this._placeClientPendingOrder({
+          mamOrderId: mamOrder.id,
+          assignment: slot.assignment,
+          mamAccount,
+          symbol,
+          order_type,
+          order_price,
+          lots,
+          halfSpread
+        });
+
+        allocationSnapshot.push(this._buildSnapshotEntry({
+          assignment: slot.assignment,
+          snapshot,
+          lots,
+          status: result.success ? 'pending_submitted' : 'rejected',
+          reason: result.reason,
+          order_id: result.order_id
+        }));
+
+        if (result.success) {
+          acceptedVolume += lots;
+          pendingOrders.push({
+            client_id: slot.assignment.client_live_user_id,
+            order_id: result.order_id,
+            compare_price: result.compare_price,
+            flow: result.flow,
+            order_status: result.order_status,
+            allocated_volume: lots
+          });
+        } else {
+          rejectedCount += 1;
+          rejectedVolume += lots;
+        }
+      }
+
+      if (!pendingOrders.length) {
+        await mamOrder.update({
+          order_status: 'REJECTED',
+          allocation_snapshot: allocationSnapshot,
+          rejected_investors_count: rejectedCount,
+          rejected_volume: rejectedVolume
+        });
+        const error = new Error('Failed to submit pending orders for any investor');
+        error.statusCode = 502;
+        error.details = allocationSnapshot;
+        throw error;
+      }
+
+      await mamOrder.update({
+        order_status: 'PENDING',
+        allocation_snapshot: allocationSnapshot,
+        rejected_investors_count: rejectedCount,
+        rejected_volume: rejectedVolume,
+        executed_volume: 0,
+        total_aggregated_margin: 0,
+        metadata: {
+          ...(mamOrder.metadata || {}),
+          pending_submissions: pendingOrders.length
+        }
+      });
+
+      await this._updateMamAccountAggregates(mamAccount.id);
+
+      try {
+        portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
+          type: 'mam_pending_order_update',
+          mam_order_id: mamOrder.id,
+          pending_orders: pendingOrders.length,
+          rejected_investors: rejectedCount
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit MAM pending order event', {
+          mam_account_id: mamAccountId,
+          mam_order_id: mamOrder.id,
+          error: eventError.message
+        });
+      }
+
+      return {
+        mam_order_id: mamOrder.id,
+        requested_volume: volume,
+        accepted_volume: acceptedVolume,
+        pending_orders: pendingOrders,
+        rejected_investors: rejectedCount,
+        rejected_volume,
+        allocation: allocationSnapshot
+      };
+    } finally {
+      await releaseUserLock(mamLock);
+    }
   }
 
   async _resolveExecutionPrice({ symbol, order_type, fallbackPrice }) {
@@ -454,6 +670,292 @@ class MAMOrderService {
         allocated_volume: roundedLots
       };
     });
+  }
+
+  async _placeClientPendingOrder({
+    mamOrderId,
+    assignment,
+    mamAccount,
+    symbol,
+    order_type,
+    order_price,
+    lots,
+    groupFields,
+    halfSpread
+  }) {
+    const client = assignment?.client;
+    if (!client) {
+      return { success: false, reason: 'Client profile missing' };
+    }
+
+    const clientId = client.id;
+    const userGroup = client.group || mamAccount.group;
+    if (userGroup !== mamAccount.group) {
+      return { success: false, reason: 'Client group mismatch' };
+    }
+
+    const lotValidation = await lotValidationService.validateLotSize(userGroup, symbol, lots);
+    if (!lotValidation.valid) {
+      return {
+        success: false,
+        reason: `Lot validation failed: ${lotValidation.message}`
+      };
+    }
+
+    const comparePrice = this._computeComparePrice(order_price, halfSpread);
+    if (!(comparePrice > 0)) {
+      return { success: false, reason: 'compare_price_invalid' };
+    }
+
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{live:${clientId}}:config`;
+      const cfg = await redisCluster.hgetall(userCfgKey);
+      const sendPref = cfg?.sending_orders ? String(cfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = sendPref === 'barclays';
+    } catch (error) {
+      logger.warn('Failed to read user provider config for pending order flow', {
+        client_id: clientId,
+        error: error.message
+      });
+    }
+
+    let userLock;
+    try {
+      userLock = await acquireUserLock('live', clientId);
+      if (!userLock) {
+        return { success: false, reason: 'Client is busy with another trading operation' };
+      }
+    } catch (error) {
+      logger.warn('Failed to acquire client lock for MAM pending order', {
+        client_id: clientId,
+        error: error.message
+      });
+      return { success: false, reason: 'Unable to acquire client lock' };
+    }
+
+    let liveOrder;
+    const order_id = await idGenerator.generateOrderId();
+    const orderStatus = isProviderFlow ? 'PENDING-QUEUED' : 'PENDING';
+
+    try {
+      liveOrder = await LiveUserOrder.create({
+        order_id,
+        order_user_id: clientId,
+        parent_mam_order_id: mamOrderId,
+        order_source: 'mam',
+        symbol,
+        order_type,
+        order_status: orderStatus,
+        order_price,
+        order_quantity: lots,
+        margin: 0,
+        status: 'PENDING',
+        placed_by: 'mam_manager'
+      });
+    } catch (error) {
+      await releaseUserLock(userLock);
+      logger.error('Failed to create child pending order for MAM', {
+        mam_order_id: mamOrderId,
+        client_id: clientId,
+        error: error.message
+      });
+      return { success: false, reason: 'Failed to persist client order' };
+    }
+
+    try {
+      await this._mirrorPendingOrderToCaches({
+        isProviderFlow,
+        symbol,
+        order_type,
+        order_id,
+        clientId,
+        lots,
+        order_price,
+        comparePrice,
+        userGroup,
+        halfSpread,
+        mamOrderId,
+        mamAccountId: mamAccount.id
+      });
+    } catch (cacheError) {
+      logger.error('Failed to mirror pending order to cache layers', {
+        order_id,
+        client_id: clientId,
+        error: cacheError.message
+      });
+      await liveOrder.update({
+        order_status: ORDER_STATUS.REJECTED,
+        status: ORDER_STATUS.REJECTED,
+        close_message: 'Cache error during pending placement'
+      }).catch(() => { });
+      await releaseUserLock(userLock);
+      return { success: false, reason: 'cache_error' };
+    }
+
+    try {
+      await redisCluster.publish('market_price_updates', symbol);
+    } catch (pubError) {
+      logger.warn('Failed to publish market price update for pending placement', {
+        symbol,
+        error: pubError.message
+      });
+    }
+
+    try {
+      portfolioEvents.emitUserUpdate('live', clientId, {
+        type: 'order_update',
+        order_id,
+        update: {
+          order_status: orderStatus,
+          parent_mam_order_id: mamOrderId,
+          source: 'mam'
+        },
+        reason: 'mam_pending_place'
+      });
+    } catch (eventError) {
+      logger.warn('Failed to emit portfolio event for MAM pending order', {
+        client_id: clientId,
+        order_id,
+        error: eventError.message
+      });
+    }
+
+    if (isProviderFlow) {
+      this._dispatchProviderPendingOrder({
+        order_id,
+        symbol,
+        order_type,
+        order_price,
+        order_quantity: lots,
+        clientId
+      });
+    }
+
+    await releaseUserLock(userLock);
+    return {
+      success: true,
+      order_id,
+      compare_price: comparePrice,
+      flow: isProviderFlow ? 'provider' : 'local',
+      order_status: orderStatus
+    };
+  }
+
+  async _mirrorPendingOrderToCaches({
+    isProviderFlow,
+    symbol,
+    order_type,
+    order_id,
+    clientId,
+    lots,
+    order_price,
+    comparePrice,
+    userGroup,
+    halfSpread,
+    mamOrderId,
+    mamAccountId
+  }) {
+    const orderStatus = isProviderFlow ? 'PENDING-QUEUED' : 'PENDING';
+    const timestamp = Date.now().toString();
+    const zkey = `pending_index:{${symbol}}:${order_type}`;
+    const hkey = `pending_orders:${order_id}`;
+
+    if (!isProviderFlow) {
+      try {
+        await redisCluster.zadd(zkey, comparePrice, order_id);
+        await redisCluster.hset(hkey, {
+          symbol,
+          order_type,
+          user_type: 'live',
+          user_id: String(clientId),
+          order_price_user: String(order_price),
+          order_price_compare: String(comparePrice),
+          order_quantity: String(lots),
+          status: orderStatus,
+          created_at: timestamp,
+          group: userGroup,
+          parent_mam_order_id: String(mamOrderId),
+          mam_account_id: String(mamAccountId)
+        });
+        await redisCluster.sadd('pending_active_symbols', symbol);
+      } catch (error) {
+        throw error;
+      }
+    }
+
+    const hashTag = `live:${clientId}`;
+    const orderKey = `user_holdings:{${hashTag}}:${order_id}`;
+    const indexKey = `user_orders_index:{${hashTag}}`;
+
+    const holdingsPipe = redisCluster.pipeline();
+    holdingsPipe.sadd(indexKey, order_id);
+    holdingsPipe.hset(orderKey, {
+      order_id: String(order_id),
+      symbol,
+      order_type,
+      order_status: orderStatus,
+      status: orderStatus,
+      execution_status: 'QUEUED',
+      order_price: String(order_price),
+      order_quantity: String(lots),
+      group: userGroup,
+      created_at: timestamp,
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      source: 'mam'
+    });
+    await holdingsPipe.exec();
+
+    await redisCluster.hset(`order_data:${order_id}`, {
+      order_id: String(order_id),
+      user_type: 'live',
+      user_id: String(clientId),
+      symbol,
+      order_type,
+      order_status: orderStatus,
+      status: orderStatus,
+      order_price: String(order_price),
+      order_quantity: String(lots),
+      group: userGroup,
+      compare_price: String(comparePrice),
+      half_spread: String(Number.isFinite(halfSpread) ? halfSpread : 0),
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      source: 'mam'
+    });
+  }
+
+  _dispatchProviderPendingOrder({ order_id, symbol, order_type, order_price, order_quantity, clientId }) {
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      pythonServiceAxios.post(`${baseUrl}/api/orders/pending/place`, {
+        order_id,
+        symbol,
+        order_type,
+        order_price,
+        order_quantity,
+        user_id: String(clientId),
+        user_type: 'live',
+        order_source: 'mam'
+      }).then(() => {
+        logger.info('Dispatched provider pending placement for MAM child order', {
+          order_id,
+          symbol
+        });
+      }).catch((error) => {
+        logger.error('Python provider pending placement failed for MAM child', {
+          order_id,
+          symbol,
+          error: error.message
+        });
+      });
+    } catch (error) {
+      logger.warn('Unable to initiate provider pending placement call', {
+        order_id,
+        error: error.message
+      });
+    }
   }
 
   async _executeAllocations({
@@ -759,6 +1261,50 @@ class MAMOrderService {
     }
 
     return { valid: true, data };
+  }
+
+  _validatePendingPayload(payload = {}) {
+    const data = {
+      symbol: String(payload.symbol || '').trim().toUpperCase(),
+      order_type: String(payload.order_type || '').trim().toUpperCase(),
+      order_price: Number(payload.order_price),
+      volume: Number(payload.volume ?? payload.order_quantity)
+    };
+
+    if (!data.symbol) {
+      return { valid: false, message: 'symbol is required' };
+    }
+    if (!VALID_PENDING_ORDER_TYPES.includes(data.order_type)) {
+      return { valid: false, message: 'order_type must be a pending order type' };
+    }
+    if (!Number.isFinite(data.order_price) || !(data.order_price > 0)) {
+      return { valid: false, message: 'order_price must be greater than 0' };
+    }
+    if (!Number.isFinite(data.volume) || !(data.volume > 0)) {
+      return { valid: false, message: 'volume must be greater than 0' };
+    }
+
+    return { valid: true, data };
+  }
+
+  _computeHalfSpreadFromGroupFields(groupFields = {}) {
+    if (!groupFields) {
+      return null;
+    }
+    const spread = Number(groupFields.spread);
+    const spreadPip = Number(groupFields.spread_pip);
+    if (Number.isFinite(spread) && Number.isFinite(spreadPip)) {
+      return (spread * spreadPip) / 2;
+    }
+    return null;
+  }
+
+  _computeComparePrice(orderPrice, halfSpread) {
+    const price = Number(orderPrice) - (Number(halfSpread) || 0);
+    if (!Number.isFinite(price)) {
+      return NaN;
+    }
+    return Number(price.toFixed(8));
   }
 
   _buildSnapshotEntry({
