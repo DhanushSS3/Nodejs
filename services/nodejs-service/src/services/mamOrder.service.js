@@ -410,6 +410,149 @@ class MAMOrderService {
     }
   }
 
+  async cancelPendingOrder({ mamAccountId, managerId, payload }) {
+    const {
+      order_id: mamOrderIdRaw,
+      cancel_message,
+      status
+    } = payload || {};
+
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      const error = new Error('order_id must be a valid MAM order id');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const mamOrder = await MAMOrder.findByPk(mamOrderId);
+    if (!mamOrder || mamOrder.mam_account_id !== mamAccountId) {
+      const error = new Error('MAM order not found for this account');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const currentStatus = String(mamOrder.order_status || '').toUpperCase();
+    if (!PENDING_CHILD_STATUSES.includes(currentStatus)) {
+      const error = new Error(`MAM order is not pending (status=${currentStatus})`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);
+    if (!mamLock) {
+      const error = new Error('Another MAM order action is in progress. Please retry shortly.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    try {
+      const childOrders = await LiveUserOrder.findAll({
+        where: {
+          parent_mam_order_id: mamOrderId,
+          order_status: {
+            [Op.in]: PENDING_CHILD_STATUSES
+          }
+        }
+      });
+
+      if (!childOrders.length) {
+        const error = new Error('No pending child orders to cancel for this MAM order');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const effectiveStatus = String(status || 'CANCELLED').toUpperCase();
+      const cancelMessage = cancel_message || 'Cancelled by MAM manager';
+
+      const results = await Promise.allSettled(childOrders.map((order) => (
+        this._cancelChildPendingOrder({
+          order,
+          cancelMessage,
+          status: effectiveStatus,
+          mamOrderId,
+          mamAccountId
+        })
+      )));
+
+      const summary = results.reduce((acc, result, idx) => {
+        const order = childOrders[idx];
+        if (result.status === 'fulfilled') {
+          const value = result.value || {};
+          if (value.skipped) {
+            acc.skipped += 1;
+            acc.skippedOrders.push({ order_id: order.order_id, reason: value.reason });
+          } else if (value.success) {
+            acc.cancelled += 1;
+            acc.cancelledOrders.push({ order_id: order.order_id, flow: value.flow || 'local' });
+          } else {
+            acc.failed += 1;
+            acc.failedOrders.push({ order_id: order.order_id, reason: value.reason || 'unknown_error' });
+          }
+        } else {
+          acc.failed += 1;
+          acc.failedOrders.push({ order_id: order.order_id, reason: result.reason?.message || 'cancel_failed' });
+        }
+        return acc;
+      }, {
+        total: childOrders.length,
+        cancelled: 0,
+        failed: 0,
+        skipped: 0,
+        cancelledOrders: [],
+        failedOrders: [],
+        skippedOrders: []
+      });
+
+      // Update parent MAM order status/metadata when no pending children remain
+      try {
+        const remaining = await LiveUserOrder.count({
+          where: {
+            parent_mam_order_id: mamOrderId,
+            order_status: {
+              [Op.in]: PENDING_CHILD_STATUSES
+            }
+          }
+        });
+
+        const updates = {};
+        if (!remaining) {
+          updates.order_status = 'CANCELLED';
+        }
+        updates.metadata = {
+          ...(mamOrder.metadata || {}),
+          last_cancelled_by: `mam_manager:${managerId}`,
+          last_cancel_message: cancelMessage,
+          last_cancel_at: new Date().toISOString()
+        };
+
+        await mamOrder.update(updates);
+      } catch (updateError) {
+        logger.warn('Failed to update MAM parent order after pending cancel', {
+          mam_order_id: mamOrderId,
+          error: updateError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
+          type: 'mam_pending_cancel_summary',
+          mam_order_id: mamOrderId,
+          summary
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit MAM pending cancel summary event', {
+          mam_account_id: mamAccountId,
+          mam_order_id: mamOrderId,
+          error: eventError.message
+        });
+      }
+
+      return summary;
+    } finally {
+      await releaseUserLock(mamLock);
+    }
+  }
+
   async _cancelChildPendingOrder({ order, cancelMessage, status, mamAccountId, mamOrderId }) {
     const orderId = order.order_id;
     const userId = order.order_user_id;
