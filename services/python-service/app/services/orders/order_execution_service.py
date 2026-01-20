@@ -1,6 +1,7 @@
 import time
 import logging
 import asyncio
+import orjson
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -604,6 +605,43 @@ class OrderExecutor:
                     "half_spread": float(half_spread_val) if half_spread_val is not None else None,
                     "contract_size": float(contract_size) if contract_size is not None else None,
                     "contract_value": float(contract_value) if contract_value is not None else None,
+                    "group": group,
+                    "leverage": float(leverage),
+                    "instrument_type": int(instrument_type),
+                    "crypto_margin_factor": float(crypto_margin_factor) if crypto_margin_factor is not None else None,
+                    "profit_currency": str(profit_currency).upper() if profit_currency else None,
+                    "provider": {},
+                }
+                _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())
+            except Exception:
+                pass
+
+        if flow == "provider":
+            try:
+                half_spread_val = None
+                if isinstance(pricing_meta.get("pricing"), dict):
+                    half_spread_val = pricing_meta["pricing"].get("half_spread")
+                calc = {
+                    "type": "ORDER_OPEN_CALC",
+                    "flow": "provider",
+                    "order_id": str(order_id),
+                    "user_type": user_type,
+                    "user_id": user_id,
+                    "symbol": symbol,
+                    "side": order_type,
+                    "final_exec_price": float(exec_price) if exec_price is not None else None,
+                    "final_order_qty": float(order_qty) if order_qty is not None else None,
+                    "single_margin_usd": float(margin_usd) if margin_usd is not None else None,
+                    "commission_entry": None,
+                    "total_used_margin_usd": float(total_margin_with_queued) if total_margin_with_queued is not None else None,
+                    "half_spread": float(half_spread_val) if half_spread_val is not None else None,
+                    "contract_size": float(contract_size) if contract_size is not None else None,
+                    "contract_value": float(contract_value) if contract_value is not None else None,
+                    "group": group,
+                    "leverage": float(leverage),
+                    "instrument_type": int(instrument_type),
+                    "crypto_margin_factor": float(crypto_margin_factor) if crypto_margin_factor is not None else None,
+                    "profit_currency": str(profit_currency).upper() if profit_currency else None,
                     "provider": {},
                 }
                 _ORDERS_CALC_LOG.info(orjson.dumps(calc).decode())

@@ -864,6 +864,12 @@ async function applyDbUpdate(msg) {
       }
     }
 
+    logOrderOpenCalculation(msg, {
+      row,
+      userId: resolvedUserId || user_id,
+      userType: resolvedUserType,
+    });
+
     // Emit calculation log for local close confirmations (Python already logs provider flows)
     logLocalCloseCalculation(msg, {
       row,
@@ -2172,6 +2178,49 @@ function normalizeConversionMeta(meta) {
     invert: Boolean(meta.invert),
     source: meta.source ? String(meta.source) : null
   };
+}
+
+function logOrderOpenCalculation(message, context = {}) {
+  try {
+    if (!message || message.type !== 'ORDER_OPEN_CONFIRMED') {
+      return;
+    }
+
+    const row = context.row || {};
+    const userId = context.userId || message.user_id;
+    const userType = context.userType || message.user_type;
+
+    const flow = message.flow || row.execution || 'local';
+    const symbol = row.symbol || message.symbol;
+    const orderType = row.order_type || message.order_type;
+
+    const logPayload = {
+      type: 'ORDER_OPEN_CALC',
+      source: 'node_orders_db_consumer',
+      flow: flow || 'local',
+      order_id: message.order_id != null ? String(message.order_id) : null,
+      user_id: userId != null ? String(userId) : null,
+      user_type: userType != null ? String(userType) : null,
+      symbol: symbol ? String(symbol).toUpperCase() : null,
+      side: orderType ? normalizeOrderType(orderType) : null,
+      final_exec_price: toNumber(message.order_price ?? row.order_price),
+      final_order_qty: toNumber(message.order_quantity ?? row.order_quantity),
+      single_margin_usd: toNumber(message.margin ?? row.margin),
+      commission_entry: toNumber(message.commission ?? row.commission),
+      contract_value: toNumber(message.contract_value ?? row.contract_value),
+      used_margin_usd: toNumber(message.used_margin_usd ?? message.used_margin_executed),
+      used_margin_executed: toNumber(message.used_margin_executed),
+      used_margin_all: toNumber(message.used_margin_all),
+      timestamp: new Date().toISOString()
+    };
+
+    logger.ordersCalculated(logPayload);
+  } catch (error) {
+    logger.warn('Failed to log calculation for ORDER_OPEN_CONFIRMED', {
+      error: error.message,
+      order_id: message?.order_id
+    });
+  }
 }
 
 function logLocalCloseCalculation(message, context = {}) {
