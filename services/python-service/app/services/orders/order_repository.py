@@ -256,10 +256,33 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
 
     # Create final config using merged data
     # Note: data should contain merged Redis + DB data at this point
+    # Final configuration assembly
+    group_val = data.get("group") if data else None
+
+    # Enforce strict group handling for live and copy trading accounts to avoid
+    # silently falling back to the "Standard" group and mis-pricing margin.
+    if user_type in ("live", "strategy_provider", "copy_follower"):
+        if _is_invalid_string_field(group_val):
+            logger.error(
+                "fetch_user_config: missing or invalid group for %s:%s after Redis+DB; rejecting to avoid Standard fallback",
+                user_type,
+                user_id,
+            )
+            # Force execute_instant_order to reject the request by returning
+            # an obviously invalid leverage and empty group.
+            return {
+                "wallet_balance": _f(data.get("wallet_balance")) if data else None,
+                "leverage": 0.0,
+                "group": "",
+                "status": status_val,
+                "sending_orders": data.get("sending_orders"),
+                "account_number": data.get("account_number"),
+            }
+
     cfg = {
         "wallet_balance": _f(data.get("wallet_balance")) if data else None,
         "leverage": _f(data.get("leverage")) if data else None,
-        "group": data.get("group") or "Standard",
+        "group": group_val or "Standard",
         "status": status_val,
         "sending_orders": data.get("sending_orders"),
         "account_number": data.get("account_number"),

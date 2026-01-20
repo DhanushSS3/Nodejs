@@ -402,7 +402,7 @@ class MAMOrderService {
         accepted_volume: acceptedVolume,
         pending_orders: pendingOrders,
         rejected_investors: rejectedCount,
-        rejected_volume,
+        rejected_volume: rejectedVolume,
         allocation: allocationSnapshot
       };
     } finally {
