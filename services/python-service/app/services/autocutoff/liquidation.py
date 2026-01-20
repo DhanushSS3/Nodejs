@@ -198,6 +198,43 @@ class LiquidationEngine:
         except Exception as e:
             logger.error("Failed to publish DB update from LiquidationEngine: %s", e)
 
+    async def _notify_mam_autocutoff_close(self, order_id: str, user_type: str, user_id: str):
+        try:
+            meta = await redis_cluster.hgetall(f"order_data:{order_id}")
+        except Exception as err:
+            logger.warning("[AUTOCUTOFF:MAM_NOTIFY_FAIL] order_id=%s error=%s", order_id, err)
+            meta = None
+
+        if not meta:
+            return
+
+        parent_mam_order_id = meta.get("parent_mam_order_id")
+        if not parent_mam_order_id:
+            return
+
+        mam_account_id = meta.get("mam_account_id")
+        payload = {
+            "type": "MAM_CHILD_AUTOCUTOFF_CLOSED",
+            "order_id": str(order_id),
+            "child_user_id": str(user_id),
+            "user_type": str(user_type),
+            "mam_order_id": str(parent_mam_order_id),
+            "mam_account_id": str(mam_account_id) if mam_account_id is not None else None,
+            "reason": "autocutoff"
+        }
+
+        try:
+            await publish_db_update(payload)
+            logger.info(
+                "[AUTOCUTOFF:MAM_NOTIFY] Published child close for MAM parent=%s order=%s",
+                payload["mam_order_id"],
+                order_id
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            logger.error("[AUTOCUTOFF:MAM_NOTIFY_ERROR] order_id=%s error=%s", order_id, err)
+
     async def _publish_db_update_with_retry(self, msg: dict, *, attempts: int = 3, base_delay: float = 0.3) -> bool:
         """
         Publish DB update with retries and shielding so cancellations don't skip the confirmation.
@@ -502,6 +539,7 @@ class LiquidationEngine:
                         ok = await self._publish_db_update_with_retry(db_msg)
                         if ok:
                             logger.info("[AUTOCUTOFF:LOCAL_CLOSE_CONFIRMED] order_id=%s close_message=Autocutoff flow=local", order_id)
+                            await self._notify_mam_autocutoff_close(order_id, user_type, user_id)
                         else:
                             logger.error("[AUTOCUTOFF:DB_UPDATE_FAILED_FINAL] order_id=%s", order_id)
                     except asyncio.CancelledError:

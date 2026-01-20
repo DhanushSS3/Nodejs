@@ -53,6 +53,145 @@ function logRedisAudit(event, context = {}) {
   } catch (err) {
     logger.warn('Failed to write redis audit log', { event, error: err.message });
   }
+
+async function handleMamChildAutocutoffClose(msg) {
+  const {
+    mam_order_id,
+    mam_account_id,
+    order_id,
+    child_user_id,
+    user_type,
+    reason
+  } = msg || {};
+
+  if (!mam_order_id) {
+    logger.warn('MAM child autocutoff message missing parent id', { msg });
+    return;
+  }
+
+  const parentId = Number(mam_order_id);
+  const providedMamAccountId = mam_account_id != null ? Number(mam_account_id) : null;
+  let parentOrder = null;
+  let resolvedMamAccountId = providedMamAccountId;
+
+  try {
+    if (order_id) {
+      try {
+        await LiveUserOrder.update({
+          order_status: 'CLOSED',
+          status: 'CLOSED',
+          close_message: reason || 'Autocutoff'
+        }, {
+          where: { order_id: String(order_id) }
+        });
+      } catch (orderUpdateError) {
+        logger.warn('Failed to sync child order close after autocutoff', {
+          order_id,
+          error: orderUpdateError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate(String(user_type || 'live'), String(child_user_id || msg.user_id), {
+          type: 'order_closed',
+          order_id: String(order_id),
+          reason: reason || 'autocutoff'
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit child autocutoff event', {
+          order_id,
+          error: eventError.message
+        });
+      }
+    }
+
+    if (!resolvedMamAccountId || Number.isNaN(resolvedMamAccountId)) {
+      try {
+        parentOrder = await MAMOrder.findByPk(parentId, {
+          attributes: ['id', 'mam_account_id', 'order_status', 'metadata']
+        });
+        resolvedMamAccountId = parentOrder?.mam_account_id || null;
+      } catch (lookupError) {
+        logger.warn('Failed to fetch MAM order while resolving account id (autocutoff)', {
+          mam_order_id,
+          error: lookupError.message
+        });
+      }
+    }
+
+    const remainingOpen = await LiveUserOrder.count({
+      where: {
+        parent_mam_order_id: parentId,
+        order_status: { [Op.in]: ['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'] }
+      }
+    });
+
+    if (remainingOpen === 0) {
+      if (!parentOrder) {
+        try {
+          parentOrder = await MAMOrder.findByPk(parentId);
+        } catch (fetchError) {
+          logger.warn('Failed to fetch parent MAM order during autocutoff closure update', {
+            mam_order_id,
+            error: fetchError.message
+          });
+        }
+      }
+
+      if (parentOrder) {
+        try {
+          const metadata = {
+            ...(parentOrder.metadata || {}),
+            closed_at: new Date().toISOString(),
+            closed_reason: reason || 'autocutoff_child_closes'
+          };
+          await parentOrder.update({
+            order_status: 'CLOSED',
+            metadata
+          });
+        } catch (parentUpdateError) {
+          logger.warn('Failed to mark MAM order closed after autocutoff', {
+            mam_order_id,
+            error: parentUpdateError.message
+          });
+        }
+      }
+    }
+
+    try {
+      await mamOrderService.syncMamAggregates({
+        mamOrderId: parentId,
+        mamAccountId: resolvedMamAccountId
+      });
+    } catch (aggError) {
+      logger.warn('Failed to refresh MAM aggregates after autocutoff child close', {
+        mam_order_id,
+        error: aggError.message
+      });
+    }
+
+    try {
+      portfolioEvents.emitUserUpdate('mam_account', String(resolvedMamAccountId || 'unknown'), {
+        type: 'mam_child_autocutoff_closed',
+        mam_order_id: parentId,
+        child_order_id: order_id ? Number(order_id) : null,
+        remaining_open_children: remainingOpen,
+        reason: reason || 'autocutoff'
+      });
+    } catch (mamEventError) {
+      logger.warn('Failed to emit mam account update for autocutoff', {
+        mam_order_id,
+        error: mamEventError.message
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to handle MAM child autocutoff message', {
+      mam_order_id,
+      error: error.message
+    });
+    throw error;
+  }
+}
 }
 
 async function handleMamPendingChildCancel(msg) {
@@ -1699,6 +1838,8 @@ async function startOrdersDbConsumer() {
           await handleCloseIdUpdate(payload);
         } else if (payload.type === 'MAM_PENDING_CHILD_CANCELLED') {
           await handleMamPendingChildCancel(payload);
+        } else if (payload.type === 'MAM_CHILD_AUTOCUTOFF_CLOSED') {
+          await handleMamChildAutocutoffClose(payload);
         } else {
           await applyDbUpdate(payload);
         }
