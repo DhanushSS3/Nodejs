@@ -1769,6 +1769,87 @@ async function applyDbUpdate(msg) {
       });
     }
 
+    // Post-commit async tasks for MAM pending -> open transitions
+    if (String(type) === 'ORDER_OPEN_CONFIRMED' || String(type) === 'ORDER_PENDING_TRIGGERED') {
+      setImmediate(async () => {
+        try {
+          // We only care about live child orders that belong to a MAM parent
+          const effectiveUserType = String(resolvedUserType || user_type || '').toLowerCase();
+          if (effectiveUserType !== 'live') {
+            return;
+          }
+
+          const orderIdStr = String(order_id);
+          let liveOrderRow = row;
+
+          if (!liveOrderRow || liveOrderRow.parent_mam_order_id == null || liveOrderRow.order_status == null) {
+            try {
+              liveOrderRow = await LiveUserOrder.findOne({ where: { order_id: orderIdStr } });
+            } catch (lookupErr) {
+              logger.warn('Post-open async: Failed to load live order row for MAM processing', {
+                order_id: orderIdStr,
+                error: lookupErr.message
+              });
+            }
+          }
+
+          if (!liveOrderRow) {
+            logger.warn('Post-open async: Live order row not found for MAM processing', {
+              order_id: orderIdStr
+            });
+            return;
+          }
+
+          const parentMamOrderId = liveOrderRow.parent_mam_order_id;
+          if (!parentMamOrderId) {
+            logger.info('Post-open async: No parent MAM order associated with child order', {
+              order_id: orderIdStr
+            });
+            return;
+          }
+
+          const childStatus = String(liveOrderRow.order_status || '').toUpperCase();
+          if (childStatus !== 'OPEN') {
+            // Only refresh aggregates when child has actually become OPEN
+            logger.info('Post-open async: Skipping MAM aggregate refresh because child status is not OPEN', {
+              order_id: orderIdStr,
+              order_status: childStatus,
+              parent_mam_order_id: parentMamOrderId,
+              messageType: String(type)
+            });
+            return;
+          }
+
+          logger.info('Post-open async: Processing MAM parent for child pending trigger/open', {
+            order_id: orderIdStr,
+            parent_mam_order_id: parentMamOrderId,
+            messageType: String(type),
+            order_status: childStatus
+          });
+
+          try {
+            const parentMamOrder = await MAMOrder.findByPk(parentMamOrderId, { attributes: ['id', 'mam_account_id'] });
+            await mamOrderService.syncMamAggregates({
+              mamOrderId: parentMamOrderId,
+              mamAccountId: parentMamOrder?.mam_account_id
+            });
+          } catch (aggregateError) {
+            logger.error('Failed to refresh MAM aggregates after child pending trigger/open', {
+              order_id: orderIdStr,
+              parent_mam_order_id: parentMamOrderId,
+              error: aggregateError.message
+            });
+          }
+        } catch (postOpenError) {
+          logger.error('Failed to process post-open MAM tasks', {
+            order_id: String(order_id),
+            user_type: String(resolvedUserType || user_type || ''),
+            error: postOpenError.message
+          });
+        }
+      });
+    }
+
   } catch (transactionError) {
     // Rollback transaction on any error
     try {
