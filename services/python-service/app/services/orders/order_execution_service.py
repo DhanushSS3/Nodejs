@@ -412,32 +412,78 @@ class OrderExecutor:
                 await save_idempotency_result(idem_key, result)
             return result
 
-        # 8) Free margin / balance check
+        # 8) Free margin check using user_portfolio snapshot
         t_portfolio = time.perf_counter()
         portfolio = await fetch_user_portfolio(user_type, user_id)
         timings_ms["portfolio_fetch_ms"] = int((time.perf_counter() - t_portfolio) * 1000)
-        
-        # Get current used_margin_all (includes queued orders)
-        current_used_margin_all = 0.0
+
+        # Derive current free margin from portfolio; fall back to wallet_balance if snapshot missing
+        current_free_margin: Optional[float] = None
+        portfolio_used_margin_all: Optional[float] = None
+        portfolio_balance: Optional[float] = None
+        portfolio_equity: Optional[float] = None
         try:
-            if portfolio and portfolio.get("used_margin_all") is not None:
-                current_used_margin_all = float(portfolio.get("used_margin_all"))
+            if portfolio:
+                # Prefer explicit free_margin field if present
+                if portfolio.get("free_margin") is not None:
+                    current_free_margin = float(portfolio.get("free_margin"))
+
+                # Capture additional fields for debugging / fallback
+                if portfolio.get("used_margin_all") is not None:
+                    portfolio_used_margin_all = float(portfolio.get("used_margin_all"))
+                elif portfolio.get("used_margin") is not None:
+                    portfolio_used_margin_all = float(portfolio.get("used_margin"))
+
+                if portfolio.get("balance") is not None:
+                    portfolio_balance = float(portfolio.get("balance"))
+                if portfolio.get("equity") is not None:
+                    portfolio_equity = float(portfolio.get("equity"))
+
+                # If free_margin not present but we have equity and used margin, derive it
+                if current_free_margin is None and (portfolio_equity is not None):
+                    current_free_margin = float(portfolio_equity) - float(portfolio_used_margin_all or 0.0)
         except (TypeError, ValueError):
-            current_used_margin_all = 0.0
-        
-        balance = float(cfg.get("wallet_balance") or 0.0)
-        
-        # Calculate free margin considering all orders (including queued)
-        free_margin_with_queued = balance - current_used_margin_all
-        
-        if free_margin_with_queued < float(margin_usd):
+            current_free_margin = None
+
+        if current_free_margin is None:
+            # If portfolio snapshot has no free_margin, determine if user has any open/queued orders.
+            # Only when there are no open orders do we treat wallet_balance as free margin.
+            has_open_orders = False
+            try:
+                existing_orders = await fetch_user_orders(user_type, user_id)
+            except Exception:
+                existing_orders = []
+
+            for od in existing_orders or []:
+                try:
+                    order_status = str(od.get("order_status", "")).upper()
+                    execution_status = str(od.get("execution_status", "")).upper()
+                    if order_status not in ("CLOSED", "CANCELLED", "REJECTED") or execution_status not in ("CLOSED", "CANCELLED", "REJECTED"):
+                        has_open_orders = True
+                        break
+                except Exception:
+                    continue
+
+            if not has_open_orders:
+                # No open orders: initial placement, use wallet_balance as free margin.
+                try:
+                    current_free_margin = float(cfg.get("wallet_balance") or 0.0)
+                except (TypeError, ValueError):
+                    current_free_margin = 0.0
+
+        # Ensure we have a numeric value before comparison (default 0.0 if still missing)
+        if current_free_margin is None:
+            current_free_margin = 0.0
+
+        if float(current_free_margin) < float(margin_usd):
             result = {
                 "ok": False,
                 "reason": "insufficient_margin",
                 "required_margin": float(margin_usd),
-                "available": float(free_margin_with_queued),
-                "current_used_margin_all": float(current_used_margin_all),
-                "balance": float(balance),
+                "available": float(current_free_margin),
+                "current_used_margin_all": float(portfolio_used_margin_all) if portfolio_used_margin_all is not None else None,
+                "balance": float(portfolio_balance) if portfolio_balance is not None else float(cfg.get("wallet_balance") or 0.0),
+                "equity": float(portfolio_equity) if portfolio_equity is not None else None,
             }
             if idem_key:
                 await save_idempotency_result(idem_key, result)
