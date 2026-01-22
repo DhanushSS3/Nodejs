@@ -132,6 +132,132 @@ class MAMOrdersController {
       });
     }
   }
+
+  async addStopLoss(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    const payload = {
+      order_id: Number(req.body.order_id),
+      stop_loss: Number(req.body.stop_loss)
+    };
+
+    try {
+      const result = await mamOrderService.addStopLoss({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id,
+        payload
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM stoploss update accepted',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to add stoploss for MAM order',
+        details: error.details || undefined
+      });
+    }
+  }
+
+  async addTakeProfit(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    const payload = {
+      order_id: Number(req.body.order_id),
+      take_profit: Number(req.body.take_profit)
+    };
+
+    try {
+      const result = await mamOrderService.addTakeProfit({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id,
+        payload
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM takeprofit update accepted',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to add takeprofit for MAM order',
+        details: error.details || undefined
+      });
+    }
+  }
+
+  async cancelStopLoss(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    const payload = {
+      order_id: Number(req.body.order_id)
+    };
+
+    try {
+      const result = await mamOrderService.cancelStopLoss({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id,
+        payload
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM stoploss cancel accepted',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to cancel stoploss for MAM order',
+        details: error.details || undefined
+      });
+    }
+  }
+
+  async cancelTakeProfit(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    const payload = {
+      order_id: Number(req.body.order_id)
+    };
+
+    try {
+      const result = await mamOrderService.cancelTakeProfit({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id,
+        payload
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM takeprofit cancel accepted',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to cancel takeprofit for MAM order',
+        details: error.details || undefined
+      });
+    }
+  }
 }
 
 module.exports = new MAMOrdersController();

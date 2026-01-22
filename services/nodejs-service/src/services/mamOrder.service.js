@@ -2003,6 +2003,1040 @@ class MAMOrderService {
       mamAccountId ? refreshMamAccountAggregates(mamAccountId) : Promise.resolve()
     ]);
   }
+
+  async addStopLoss({ mamAccountId, managerId, payload }) {
+    const { order_id: mamOrderIdRaw, stop_loss } = payload || {};
+
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      const error = new Error('order_id must be a valid MAM order id');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!(Number(stop_loss) > 0)) {
+      const error = new Error('stop_loss must be greater than 0');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const mamOrder = await MAMOrder.findByPk(mamOrderId);
+    if (!mamOrder || mamOrder.mam_account_id !== mamAccountId) {
+      const error = new Error('MAM order not found for this account');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const status = String(mamOrder.order_status || '').toUpperCase();
+    if (status && !['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'].includes(status)) {
+      const error = new Error(`MAM order is not active (status=${status})`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);
+    if (!mamLock) {
+      const error = new Error('Another MAM order action is in progress. Please retry shortly.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    try {
+      const childOrders = await LiveUserOrder.findAll({
+        where: {
+          parent_mam_order_id: mamOrderId,
+          order_status: {
+            [Op.in]: OPEN_CHILD_STATUSES
+          }
+        }
+      });
+
+      if (!childOrders.length) {
+        const error = new Error('No active child orders to apply stoploss for this MAM order');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const results = await Promise.allSettled(childOrders.map((order) => (
+        this._applyStopLossToChild({
+          order,
+          stop_loss: Number(stop_loss),
+          mamAccountId,
+          mamOrderId
+        })
+      )));
+
+      const summary = results.reduce((acc, result, idx) => {
+        const order = childOrders[idx];
+        if (result.status === 'fulfilled') {
+          const value = result.value || {};
+          if (value.skipped) {
+            acc.skipped += 1;
+            acc.skippedOrders.push({ order_id: order.order_id, reason: value.reason });
+          } else if (value.success) {
+            acc.successful += 1;
+            acc.successOrders.push({ order_id: order.order_id, stoploss_id: value.stoploss_id, flow: value.flow || 'local' });
+          } else {
+            acc.failed += 1;
+            acc.failedOrders.push({ order_id: order.order_id, reason: value.reason || 'unknown_error' });
+          }
+        } else {
+          acc.failed += 1;
+          acc.failedOrders.push({ order_id: order.order_id, reason: result.reason?.message || 'stoploss_failed' });
+        }
+        return acc;
+      }, {
+        total: childOrders.length,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        successOrders: [],
+        failedOrders: [],
+        skippedOrders: []
+      });
+
+      try {
+        const metadata = {
+          ...(mamOrder.metadata || {}),
+          stop_loss: Number(stop_loss),
+          last_stoploss_update_at: new Date().toISOString(),
+          last_stoploss_updated_by: `mam_manager:${managerId}`
+        };
+        await mamOrder.update({ metadata });
+      } catch (metaError) {
+        logger.warn('Failed to update MAM order metadata after stoploss add', {
+          mam_order_id: mamOrderId,
+          error: metaError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
+          type: 'mam_order_stoploss_update',
+          mam_order_id: mamOrderId,
+          stop_loss: Number(stop_loss),
+          summary
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit MAM order stoploss update event', {
+          mam_account_id: mamAccountId,
+          mam_order_id: mamOrderId,
+          error: eventError.message
+        });
+      }
+
+      return summary;
+    } finally {
+      await releaseUserLock(mamLock);
+    }
+  }
+
+  async _applyStopLossToChild({ order, stop_loss, mamAccountId, mamOrderId }) {
+    const orderId = order.order_id;
+    const userId = order.order_user_id;
+    const currentStatus = String(order.order_status || '').toUpperCase();
+    if (!OPEN_CHILD_STATUSES.includes(currentStatus)) {
+      return { skipped: true, reason: `status_${currentStatus}` };
+    }
+
+    let resolved;
+    try {
+      resolved = await resolveOpenOrder({
+        order_id: orderId,
+        user_id: userId,
+        user_type: 'live',
+        symbolReq: order.symbol,
+        orderTypeReq: order.order_type
+      });
+    } catch (e) {
+      if (['ORDER_NOT_OPEN', 'ORDER_NOT_FOUND'].includes(e?.code)) {
+        return { skipped: true, reason: e.code };
+      }
+      logger.warn('resolveOpenOrder failed for child MAM stoploss', {
+        order_id: orderId,
+        user_id: userId,
+        error: e.message
+      });
+      return { success: false, reason: e.message };
+    }
+
+    const canonical = resolved.canonical;
+    const row = resolved.row || order;
+
+    let symbol = resolved.symbol;
+    let order_type = resolved.order_type;
+    let entry_price_num = Number(resolved.entry_price);
+    let order_quantity_num = Number(resolved.order_quantity);
+
+    if (!(entry_price_num > 0)) {
+      return { success: false, reason: 'invalid_entry_price' };
+    }
+
+    if (order_type === 'BUY' && !(stop_loss < entry_price_num)) {
+      return { success: false, reason: 'invalid_price_for_buy' };
+    }
+    if (order_type === 'SELL' && !(stop_loss > entry_price_num)) {
+      return { success: false, reason: 'invalid_price_for_sell' };
+    }
+
+    let hasExistingSL = false;
+    if (row && row.stop_loss != null && Number(row.stop_loss) > 0) {
+      hasExistingSL = true;
+    }
+    if (!hasExistingSL && canonical && canonical.stop_loss != null && Number(canonical.stop_loss) > 0) {
+      hasExistingSL = true;
+    }
+    if (hasExistingSL) {
+      return { skipped: true, reason: 'STOPLOSS_ALREADY_EXISTS' };
+    }
+
+    const stoploss_id = await idGenerator.generateStopLossId();
+    try {
+      await order.update({ stoploss_id, status: 'STOPLOSS' });
+      await orderLifecycleService.addLifecycleId(
+        orderId,
+        'stoploss_id',
+        stoploss_id,
+        `Stoploss added via MAM - price: ${stop_loss}`
+      );
+    } catch (e) {
+      logger.warn('Failed to persist stoploss_id for MAM child before send', { order_id: orderId, error: e.message });
+    }
+
+    const pyPayload = {
+      order_id: orderId,
+      symbol,
+      user_id: String(userId),
+      user_type: 'live',
+      order_type,
+      order_price: entry_price_num,
+      stoploss_id,
+      stop_loss,
+      status: 'STOPLOSS',
+      order_status: currentStatus,
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      order_source: 'mam'
+    };
+    if (order_quantity_num > 0) pyPayload.order_quantity = order_quantity_num;
+
+    let pyResp;
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      pyResp = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/stoploss/add`,
+        pyPayload
+      );
+    } catch (err) {
+      logger.error('Python stoploss call failed for MAM child order', {
+        order_id: orderId,
+        parent_mam_order_id: mamOrderId,
+        user_id: userId,
+        error: err.message
+      });
+      return { success: false, reason: err?.response?.data?.message || 'python_stoploss_failed' };
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    const flow = result.flow || 'local';
+
+    if (String(flow).toLowerCase() === 'local') {
+      try {
+        await order.update({ stop_loss: String(stop_loss) });
+      } catch (e) {
+        logger.warn('Failed to update SQL row for MAM child stoploss (local flow)', { order_id: orderId, error: e.message });
+      }
+      try {
+        portfolioEvents.emitUserUpdate('live', String(userId), {
+          type: 'order_update',
+          order_id: orderId,
+          update: { stop_loss: String(stop_loss), parent_mam_order_id: mamOrderId },
+          reason: 'mam_stoploss_set'
+        });
+      } catch (e) {
+        logger.warn('Failed to emit WS event after MAM child stoploss set', { order_id: orderId, error: e.message });
+      }
+    }
+
+    return { success: true, stoploss_id, flow };
+  }
+
+  async addTakeProfit({ mamAccountId, managerId, payload }) {
+    const { order_id: mamOrderIdRaw, take_profit } = payload || {};
+
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      const error = new Error('order_id must be a valid MAM order id');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!(Number(take_profit) > 0)) {
+      const error = new Error('take_profit must be greater than 0');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const mamOrder = await MAMOrder.findByPk(mamOrderId);
+    if (!mamOrder || mamOrder.mam_account_id !== mamAccountId) {
+      const error = new Error('MAM order not found for this account');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const status = String(mamOrder.order_status || '').toUpperCase();
+    if (status && !['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'].includes(status)) {
+      const error = new Error(`MAM order is not active (status=${status})`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);
+    if (!mamLock) {
+      const error = new Error('Another MAM order action is in progress. Please retry shortly.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    try {
+      const childOrders = await LiveUserOrder.findAll({
+        where: {
+          parent_mam_order_id: mamOrderId,
+          order_status: {
+            [Op.in]: OPEN_CHILD_STATUSES
+          }
+        }
+      });
+
+      if (!childOrders.length) {
+        const error = new Error('No active child orders to apply takeprofit for this MAM order');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const results = await Promise.allSettled(childOrders.map((order) => (
+        this._applyTakeProfitToChild({
+          order,
+          take_profit: Number(take_profit),
+          mamAccountId,
+          mamOrderId
+        })
+      )));
+
+      const summary = results.reduce((acc, result, idx) => {
+        const order = childOrders[idx];
+        if (result.status === 'fulfilled') {
+          const value = result.value || {};
+          if (value.skipped) {
+            acc.skipped += 1;
+            acc.skippedOrders.push({ order_id: order.order_id, reason: value.reason });
+          } else if (value.success) {
+            acc.successful += 1;
+            acc.successOrders.push({ order_id: order.order_id, takeprofit_id: value.takeprofit_id, flow: value.flow || 'local' });
+          } else {
+            acc.failed += 1;
+            acc.failedOrders.push({ order_id: order.order_id, reason: value.reason || 'unknown_error' });
+          }
+        } else {
+          acc.failed += 1;
+          acc.failedOrders.push({ order_id: order.order_id, reason: result.reason?.message || 'takeprofit_failed' });
+        }
+        return acc;
+      }, {
+        total: childOrders.length,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        successOrders: [],
+        failedOrders: [],
+        skippedOrders: []
+      });
+
+      try {
+        const metadata = {
+          ...(mamOrder.metadata || {}),
+          take_profit: Number(take_profit),
+          last_takeprofit_update_at: new Date().toISOString(),
+          last_takeprofit_updated_by: `mam_manager:${managerId}`
+        };
+        await mamOrder.update({ metadata });
+      } catch (metaError) {
+        logger.warn('Failed to update MAM order metadata after takeprofit add', {
+          mam_order_id: mamOrderId,
+          error: metaError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
+          type: 'mam_order_takeprofit_update',
+          mam_order_id: mamOrderId,
+          take_profit: Number(take_profit),
+          summary
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit MAM order takeprofit update event', {
+          mam_account_id: mamAccountId,
+          mam_order_id: mamOrderId,
+          error: eventError.message
+        });
+      }
+
+      return summary;
+    } finally {
+      await releaseUserLock(mamLock);
+    }
+  }
+
+  async _applyTakeProfitToChild({ order, take_profit, mamAccountId, mamOrderId }) {
+    const orderId = order.order_id;
+    const userId = order.order_user_id;
+    const currentStatus = String(order.order_status || '').toUpperCase();
+    if (!OPEN_CHILD_STATUSES.includes(currentStatus)) {
+      return { skipped: true, reason: `status_${currentStatus}` };
+    }
+
+    let resolved;
+    try {
+      resolved = await resolveOpenOrder({
+        order_id: orderId,
+        user_id: userId,
+        user_type: 'live',
+        symbolReq: order.symbol,
+        orderTypeReq: order.order_type
+      });
+    } catch (e) {
+      if (['ORDER_NOT_OPEN', 'ORDER_NOT_FOUND'].includes(e?.code)) {
+        return { skipped: true, reason: e.code };
+      }
+      logger.warn('resolveOpenOrder failed for child MAM takeprofit', {
+        order_id: orderId,
+        user_id: userId,
+        error: e.message
+      });
+      return { success: false, reason: e.message };
+    }
+
+    const canonical = resolved.canonical;
+    const row = resolved.row || order;
+
+    let symbol = resolved.symbol;
+    let order_type = resolved.order_type;
+    let entry_price_num = Number(resolved.entry_price);
+    let order_quantity_num = Number(resolved.order_quantity);
+
+    if (!(entry_price_num > 0)) {
+      return { success: false, reason: 'invalid_entry_price' };
+    }
+
+    if (order_type === 'BUY' && !(take_profit > entry_price_num)) {
+      return { success: false, reason: 'invalid_price_for_buy' };
+    }
+    if (order_type === 'SELL' && !(take_profit < entry_price_num)) {
+      return { success: false, reason: 'invalid_price_for_sell' };
+    }
+
+    let hasExistingTP = false;
+    if (row && row.take_profit != null && Number(row.take_profit) > 0) {
+      hasExistingTP = true;
+    }
+    if (!hasExistingTP && canonical && canonical.take_profit != null && Number(canonical.take_profit) > 0) {
+      hasExistingTP = true;
+    }
+    if (hasExistingTP) {
+      return { skipped: true, reason: 'TAKEPROFIT_ALREADY_EXISTS' };
+    }
+
+    const takeprofit_id = await idGenerator.generateTakeProfitId();
+    try {
+      await order.update({ takeprofit_id, status: 'TAKEPROFIT' });
+      await orderLifecycleService.addLifecycleId(
+        orderId,
+        'takeprofit_id',
+        takeprofit_id,
+        `Takeprofit added via MAM - price: ${take_profit}`
+      );
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit_id for MAM child before send', { order_id: orderId, error: e.message });
+    }
+
+    const pyPayload = {
+      order_id: orderId,
+      symbol,
+      user_id: String(userId),
+      user_type: 'live',
+      order_type,
+      order_price: entry_price_num,
+      takeprofit_id,
+      take_profit,
+      status: 'TAKEPROFIT',
+      order_status: currentStatus,
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      order_source: 'mam'
+    };
+    if (order_quantity_num > 0) pyPayload.order_quantity = order_quantity_num;
+
+    let pyResp;
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      pyResp = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/takeprofit/add`,
+        pyPayload
+      );
+    } catch (err) {
+      logger.error('Python takeprofit call failed for MAM child order', {
+        order_id: orderId,
+        parent_mam_order_id: mamOrderId,
+        user_id: userId,
+        error: err.message
+      });
+      return { success: false, reason: err?.response?.data?.message || 'python_takeprofit_failed' };
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    const flow = result.flow || 'local';
+
+    if (String(flow).toLowerCase() === 'local') {
+      try {
+        await order.update({ take_profit: String(take_profit) });
+      } catch (e) {
+        logger.warn('Failed to update SQL row for MAM child takeprofit (local flow)', { order_id: orderId, error: e.message });
+      }
+      try {
+        portfolioEvents.emitUserUpdate('live', String(userId), {
+          type: 'order_update',
+          order_id: orderId,
+          update: { take_profit: String(take_profit), parent_mam_order_id: mamOrderId },
+          reason: 'mam_takeprofit_set'
+        });
+      } catch (e) {
+        logger.warn('Failed to emit WS event after MAM child takeprofit set', { order_id: orderId, error: e.message });
+      }
+    }
+
+    return { success: true, takeprofit_id, flow };
+  }
+ 
+  async cancelStopLoss({ mamAccountId, managerId, payload }) {
+    const { order_id: mamOrderIdRaw } = payload || {};
+
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      const error = new Error('order_id must be a valid MAM order id');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const mamOrder = await MAMOrder.findByPk(mamOrderId);
+    if (!mamOrder || mamOrder.mam_account_id !== mamAccountId) {
+      const error = new Error('MAM order not found for this account');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const status = String(mamOrder.order_status || '').toUpperCase();
+    if (status && !['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'].includes(status)) {
+      const error = new Error(`MAM order is not active (status=${status})`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);
+    if (!mamLock) {
+      const error = new Error('Another MAM order action is in progress. Please retry shortly.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    try {
+      const childOrders = await LiveUserOrder.findAll({
+        where: {
+          parent_mam_order_id: mamOrderId,
+          order_status: {
+            [Op.in]: OPEN_CHILD_STATUSES
+          }
+        }
+      });
+
+      if (!childOrders.length) {
+        const error = new Error('No active child orders to cancel stoploss for this MAM order');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const results = await Promise.allSettled(childOrders.map((order) => (
+        this._cancelStopLossForChild({
+          order,
+          mamAccountId,
+          mamOrderId
+        })
+      )));
+
+      const summary = results.reduce((acc, result, idx) => {
+        const order = childOrders[idx];
+        if (result.status === 'fulfilled') {
+          const value = result.value || {};
+          if (value.skipped) {
+            acc.skipped += 1;
+            acc.skippedOrders.push({ order_id: order.order_id, reason: value.reason });
+          } else if (value.success) {
+            acc.successful += 1;
+            acc.successOrders.push({ order_id: order.order_id, stoploss_cancel_id: value.stoploss_cancel_id, flow: value.flow || 'local' });
+          } else {
+            acc.failed += 1;
+            acc.failedOrders.push({ order_id: order.order_id, reason: value.reason || 'unknown_error' });
+          }
+        } else {
+          acc.failed += 1;
+          acc.failedOrders.push({ order_id: order.order_id, reason: result.reason?.message || 'stoploss_cancel_failed' });
+        }
+        return acc;
+      }, {
+        total: childOrders.length,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        successOrders: [],
+        failedOrders: [],
+        skippedOrders: []
+      });
+
+      try {
+        const metadata = {
+          ...(mamOrder.metadata || {}),
+          last_stoploss_cancel_at: new Date().toISOString(),
+          last_stoploss_cancelled_by: `mam_manager:${managerId}`
+        };
+        if (summary.failed === 0 && summary.skipped === 0) {
+          metadata.stop_loss = null;
+        }
+        await mamOrder.update({ metadata });
+      } catch (metaError) {
+        logger.warn('Failed to update MAM order metadata after stoploss cancel', {
+          mam_order_id: mamOrderId,
+          error: metaError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
+          type: 'mam_order_stoploss_cancel',
+          mam_order_id: mamOrderId,
+          summary
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit MAM order stoploss cancel event', {
+          mam_account_id: mamAccountId,
+          mam_order_id: mamOrderId,
+          error: eventError.message
+        });
+      }
+
+      return summary;
+    } finally {
+      await releaseUserLock(mamLock);
+    }
+  }
+
+  async _cancelStopLossForChild({ order, mamAccountId, mamOrderId }) {
+    const orderId = order.order_id;
+    const userId = order.order_user_id;
+    const currentStatus = String(order.order_status || '').toUpperCase();
+    if (!OPEN_CHILD_STATUSES.includes(currentStatus)) {
+      return { skipped: true, reason: `status_${currentStatus}` };
+    }
+
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({
+        order_id: orderId,
+        user_id: userId,
+        user_type: 'live',
+        symbolReq: order.symbol,
+        orderTypeReq: order.order_type
+      });
+    } catch (e) {
+      if (['ORDER_NOT_OPEN', 'ORDER_NOT_FOUND'].includes(e?.code)) {
+        return { skipped: true, reason: e.code };
+      }
+      logger.warn('resolveOpenOrder failed for child MAM stoploss cancel', {
+        order_id: orderId,
+        user_id: userId,
+        error: e.message
+      });
+      return { success: false, reason: e.message };
+    }
+
+    const canonical = ctx.canonical;
+    const row = ctx.row || order;
+
+    const symbol = ctx.symbol;
+    const order_type = ctx.order_type;
+
+    let hasSL = false;
+    if (row && row.stop_loss != null && Number(row.stop_loss) > 0) {
+      hasSL = true;
+    }
+    if (!hasSL && canonical && canonical.stop_loss != null && Number(canonical.stop_loss) > 0) {
+      hasSL = true;
+    }
+    if (!hasSL) {
+      return { skipped: true, reason: 'NO_ACTIVE_STOPLOSS' };
+    }
+
+    let resolvedStoplossId = (row && row.stoploss_id ? String(row.stoploss_id) : '').trim();
+    if (!resolvedStoplossId) {
+      try {
+        const fromRedis = await redisCluster.hget(`order_data:${orderId}`, 'stoploss_id');
+        if (fromRedis) resolvedStoplossId = String(fromRedis).trim();
+      } catch (e) {
+        logger.warn('Failed to fetch stoploss_id from redis for MAM child cancel', {
+          order_id: orderId,
+          error: e.message
+        });
+      }
+    }
+    if (!resolvedStoplossId) {
+      resolvedStoplossId = `SL-${orderId}`;
+    }
+
+    const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
+    try {
+      await order.update({ stoploss_cancel_id, status: 'STOPLOSS-CANCEL' });
+      await orderLifecycleService.addLifecycleId(
+        orderId,
+        'stoploss_cancel_id',
+        stoploss_cancel_id,
+        `Stoploss cancel requested via MAM - resolved_sl_id: ${resolvedStoplossId}`
+      );
+
+      if (resolvedStoplossId && resolvedStoplossId !== `SL-${orderId}`) {
+        await orderLifecycleService.updateLifecycleStatus(
+          resolvedStoplossId,
+          'cancelled',
+          'Cancelled by MAM manager'
+        );
+      }
+    } catch (e) {
+      logger.warn('Failed to persist stoploss_cancel_id for MAM child before send', { order_id: orderId, error: e.message });
+    }
+
+    const pyPayload = {
+      order_id: orderId,
+      symbol,
+      user_id: String(userId),
+      user_type: 'live',
+      order_type,
+      status: 'STOPLOSS-CANCEL',
+      order_status: currentStatus,
+      stoploss_id: resolvedStoplossId,
+      stoploss_cancel_id,
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      order_source: 'mam'
+    };
+
+    let pyResp;
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      pyResp = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/stoploss/cancel`,
+        pyPayload
+      );
+    } catch (err) {
+      logger.error('Python stoploss cancel call failed for MAM child order', {
+        order_id: orderId,
+        parent_mam_order_id: mamOrderId,
+        user_id: userId,
+        error: err.message
+      });
+      return { success: false, reason: err?.response?.data?.message || 'python_stoploss_cancel_failed' };
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    const flow = result.flow || 'local';
+
+    if (String(flow).toLowerCase() === 'local') {
+      try {
+        await order.update({ stop_loss: null });
+      } catch (e) {
+        logger.warn('Failed to update SQL row for MAM child stoploss cancel (local flow)', { order_id: orderId, error: e.message });
+      }
+      try {
+        portfolioEvents.emitUserUpdate('live', String(userId), {
+          type: 'order_update',
+          order_id: orderId,
+          update: { stop_loss: null, parent_mam_order_id: mamOrderId },
+          reason: 'mam_stoploss_cancel'
+        });
+      } catch (e) {
+        logger.warn('Failed to emit WS event after MAM child stoploss cancel', { order_id: orderId, error: e.message });
+      }
+    }
+
+    return { success: true, stoploss_cancel_id, flow };
+  }
+
+  async cancelTakeProfit({ mamAccountId, managerId, payload }) {
+    const { order_id: mamOrderIdRaw } = payload || {};
+
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      const error = new Error('order_id must be a valid MAM order id');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const mamOrder = await MAMOrder.findByPk(mamOrderId);
+    if (!mamOrder || mamOrder.mam_account_id !== mamAccountId) {
+      const error = new Error('MAM order not found for this account');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const status = String(mamOrder.order_status || '').toUpperCase();
+    if (status && !['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MODIFY'].includes(status)) {
+      const error = new Error(`MAM order is not active (status=${status})`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);
+    if (!mamLock) {
+      const error = new Error('Another MAM order action is in progress. Please retry shortly.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    try {
+      const childOrders = await LiveUserOrder.findAll({
+        where: {
+          parent_mam_order_id: mamOrderId,
+          order_status: {
+            [Op.in]: OPEN_CHILD_STATUSES
+          }
+        }
+      });
+
+      if (!childOrders.length) {
+        const error = new Error('No active child orders to cancel takeprofit for this MAM order');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const results = await Promise.allSettled(childOrders.map((order) => (
+        this._cancelTakeProfitForChild({
+          order,
+          mamAccountId,
+          mamOrderId
+        })
+      )));
+
+      const summary = results.reduce((acc, result, idx) => {
+        const order = childOrders[idx];
+        if (result.status === 'fulfilled') {
+          const value = result.value || {};
+          if (value.skipped) {
+            acc.skipped += 1;
+            acc.skippedOrders.push({ order_id: order.order_id, reason: value.reason });
+          } else if (value.success) {
+            acc.successful += 1;
+            acc.successOrders.push({ order_id: order.order_id, takeprofit_cancel_id: value.takeprofit_cancel_id, flow: value.flow || 'local' });
+          } else {
+            acc.failed += 1;
+            acc.failedOrders.push({ order_id: order.order_id, reason: value.reason || 'unknown_error' });
+          }
+        } else {
+          acc.failed += 1;
+          acc.failedOrders.push({ order_id: order.order_id, reason: result.reason?.message || 'takeprofit_cancel_failed' });
+        }
+        return acc;
+      }, {
+        total: childOrders.length,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        successOrders: [],
+        failedOrders: [],
+        skippedOrders: []
+      });
+
+      try {
+        const metadata = {
+          ...(mamOrder.metadata || {}),
+          last_takeprofit_cancel_at: new Date().toISOString(),
+          last_takeprofit_cancelled_by: `mam_manager:${managerId}`
+        };
+        if (summary.failed === 0 && summary.skipped === 0) {
+          metadata.take_profit = null;
+        }
+        await mamOrder.update({ metadata });
+      } catch (metaError) {
+        logger.warn('Failed to update MAM order metadata after takeprofit cancel', {
+          mam_order_id: mamOrderId,
+          error: metaError.message
+        });
+      }
+
+      try {
+        portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
+          type: 'mam_order_takeprofit_cancel',
+          mam_order_id: mamOrderId,
+          summary
+        });
+      } catch (eventError) {
+        logger.warn('Failed to emit MAM order takeprofit cancel event', {
+          mam_account_id: mamAccountId,
+          mam_order_id: mamOrderId,
+          error: eventError.message
+        });
+      }
+
+      return summary;
+    } finally {
+      await releaseUserLock(mamLock);
+    }
+  }
+
+  async _cancelTakeProfitForChild({ order, mamAccountId, mamOrderId }) {
+    const orderId = order.order_id;
+    const userId = order.order_user_id;
+    const currentStatus = String(order.order_status || '').toUpperCase();
+    if (!OPEN_CHILD_STATUSES.includes(currentStatus)) {
+      return { skipped: true, reason: `status_${currentStatus}` };
+    }
+
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({
+        order_id: orderId,
+        user_id: userId,
+        user_type: 'live',
+        symbolReq: order.symbol,
+        orderTypeReq: order.order_type
+      });
+    } catch (e) {
+      if (['ORDER_NOT_OPEN', 'ORDER_NOT_FOUND'].includes(e?.code)) {
+        return { skipped: true, reason: e.code };
+      }
+      logger.warn('resolveOpenOrder failed for child MAM takeprofit cancel', {
+        order_id: orderId,
+        user_id: userId,
+        error: e.message
+      });
+      return { success: false, reason: e.message };
+    }
+
+    const canonical = ctx.canonical;
+    const row = ctx.row || order;
+
+    const symbol = ctx.symbol;
+    const order_type = ctx.order_type;
+
+    let hasTP = false;
+    if (row && row.take_profit != null && Number(row.take_profit) > 0) {
+      hasTP = true;
+    }
+    if (!hasTP && canonical && canonical.take_profit != null && Number(canonical.take_profit) > 0) {
+      hasTP = true;
+    }
+    if (!hasTP) {
+      return { skipped: true, reason: 'NO_ACTIVE_TAKEPROFIT' };
+    }
+
+    let resolvedTakeprofitId = (row && row.takeprofit_id ? String(row.takeprofit_id) : '').trim();
+    if (!resolvedTakeprofitId) {
+      try {
+        const fromRedis = await redisCluster.hget(`order_data:${orderId}`, 'takeprofit_id');
+        if (fromRedis) resolvedTakeprofitId = String(fromRedis).trim();
+      } catch (e) {
+        logger.warn('Failed to fetch takeprofit_id from redis for MAM child cancel', {
+          order_id: orderId,
+          error: e.message
+        });
+      }
+    }
+    if (!resolvedTakeprofitId) {
+      resolvedTakeprofitId = `TP-${orderId}`;
+    }
+
+    const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
+    try {
+      await order.update({ takeprofit_cancel_id, status: 'TAKEPROFIT-CANCEL' });
+      await orderLifecycleService.addLifecycleId(
+        orderId,
+        'takeprofit_cancel_id',
+        takeprofit_cancel_id,
+        `Takeprofit cancel requested via MAM - resolved_tp_id: ${resolvedTakeprofitId}`
+      );
+
+      if (resolvedTakeprofitId && resolvedTakeprofitId !== `TP-${orderId}`) {
+        await orderLifecycleService.updateLifecycleStatus(
+          resolvedTakeprofitId,
+          'cancelled',
+          'Cancelled by MAM manager'
+        );
+      }
+    } catch (e) {
+      logger.warn('Failed to persist takeprofit_cancel_id for MAM child before send', { order_id: orderId, error: e.message });
+    }
+
+    const pyPayload = {
+      order_id: orderId,
+      symbol,
+      user_id: String(userId),
+      user_type: 'live',
+      order_type,
+      status: 'TAKEPROFIT-CANCEL',
+      order_status: currentStatus,
+      takeprofit_id: resolvedTakeprofitId,
+      takeprofit_cancel_id,
+      parent_mam_order_id: String(mamOrderId),
+      mam_account_id: String(mamAccountId),
+      order_source: 'mam'
+    };
+
+    let pyResp;
+    try {
+      const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+      pyResp = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/takeprofit/cancel`,
+        pyPayload
+      );
+    } catch (err) {
+      logger.error('Python takeprofit cancel call failed for MAM child order', {
+        order_id: orderId,
+        parent_mam_order_id: mamOrderId,
+        user_id: userId,
+        error: err.message
+      });
+      return { success: false, reason: err?.response?.data?.message || 'python_takeprofit_cancel_failed' };
+    }
+
+    const result = pyResp.data?.data || pyResp.data || {};
+    const flow = result.flow || 'local';
+
+    if (String(flow).toLowerCase() === 'local') {
+      try {
+        await order.update({ take_profit: null });
+      } catch (e) {
+        logger.warn('Failed to update SQL row for MAM child takeprofit cancel (local flow)', { order_id: orderId, error: e.message });
+      }
+      try {
+        portfolioEvents.emitUserUpdate('live', String(userId), {
+          type: 'order_update',
+          order_id: orderId,
+          update: { take_profit: null, parent_mam_order_id: mamOrderId },
+          reason: 'mam_takeprofit_cancel'
+        });
+      } catch (e) {
+        logger.warn('Failed to emit WS event after MAM child takeprofit cancel', { order_id: orderId, error: e.message });
+      }
+    }
+
+    return { success: true, takeprofit_cancel_id, flow };
+  }
 }
 
 module.exports = new MAMOrderService();

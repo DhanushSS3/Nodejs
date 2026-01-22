@@ -151,4 +151,62 @@ router.post(
   mamOrdersController.closeMamOrder
 );
 
+router.post(
+  '/stoploss/add',
+  authenticateJWT,
+  requireMamManager,
+  [
+    body('order_id')
+      .exists().withMessage('order_id is required')
+      .isInt({ gt: 0 }).withMessage('order_id must be a positive integer'),
+    body('stop_loss')
+      .exists().withMessage('stop_loss is required')
+      .isFloat({ gt: 0 }).withMessage('stop_loss must be greater than 0')
+  ],
+  validateRequest,
+  mamOrdersController.addStopLoss
+);
+
+router.post(
+  '/takeprofit/add',
+  authenticateJWT,
+  requireMamManager,
+  [
+    body('order_id')
+      .exists().withMessage('order_id is required')
+      .isInt({ gt: 0 }).withMessage('order_id must be a positive integer'),
+    body('take_profit')
+      .exists().withMessage('take_profit is required')
+      .isFloat({ gt: 0 }).withMessage('take_profit must be greater than 0')
+  ],
+  validateRequest,
+  mamOrdersController.addTakeProfit
+);
+
+router.post(
+  '/stoploss/cancel',
+  authenticateJWT,
+  requireMamManager,
+  [
+    body('order_id')
+      .exists().withMessage('order_id is required')
+      .isInt({ gt: 0 }).withMessage('order_id must be a positive integer')
+  ],
+  validateRequest,
+  mamOrdersController.cancelStopLoss
+);
+
+router.post(
+  '/takeprofit/cancel',
+  authenticateJWT,
+  requireMamManager,
+  [
+    body('order_id')
+      .exists().withMessage('order_id is required')
+      .isInt({ gt: 0 }).withMessage('order_id must be a positive integer')
+  ],
+  validateRequest,
+  mamOrdersController.cancelTakeProfit
+);
+
 module.exports = router;
