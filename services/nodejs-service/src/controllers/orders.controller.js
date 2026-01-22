@@ -2774,8 +2774,35 @@ async function getClosedOrders(req, res) {
     const pageSize = Math.min(Math.max(1, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 20), 100);
     const offset = (page - 1) * pageSize;
 
+    // Optional date filters (by updated_at, which reflects close time for CLOSED orders)
+    const startDateRaw = req.query.start_date || req.body?.start_date;
+    const endDateRaw = req.query.end_date || req.body?.end_date;
+
+    let updatedAtFilter = null;
+    if (startDateRaw || endDateRaw) {
+      const startDate = startDateRaw ? new Date(startDateRaw) : null;
+      const endDate = endDateRaw ? new Date(endDateRaw) : null;
+
+      if ((startDateRaw && Number.isNaN(startDate.getTime())) || (endDateRaw && Number.isNaN(endDate.getTime()))) {
+        return res.status(400).json({ success: false, message: 'Invalid start_date or end_date' });
+      }
+
+      updatedAtFilter = {};
+      if (startDate) {
+        updatedAtFilter[Op.gte] = startDate;
+      }
+      if (endDate) {
+        updatedAtFilter[Op.lte] = endDate;
+      }
+    }
+
+    const where = { order_user_id: queryUserId, order_status: 'CLOSED' };
+    if (updatedAtFilter) {
+      where.updated_at = updatedAtFilter;
+    }
+
     const { count, rows } = await OrderModel.findAndCountAll({
-      where: { order_user_id: queryUserId, order_status: 'CLOSED' },
+      where,
       order: [['updated_at', 'DESC']],
       offset,
       limit: pageSize,

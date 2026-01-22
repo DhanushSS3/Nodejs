@@ -192,15 +192,24 @@ async function fetchOrdersFromDB(userType, userId) {
   if (userType === 'strategy_provider') {
     // For strategy providers, get orders from StrategyProviderOrder model
     OrderModel = StrategyProviderOrder;
-    rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+    rows = await OrderModel.findAll({
+      where: { order_user_id: parseInt(userId, 10) },
+      order: [['created_at', 'DESC']]
+    });
   } else if (userType === 'copy_follower') {
     // For copy followers, get orders from CopyFollowerOrder model using copy_follower_account_id
     OrderModel = CopyFollowerOrder;
-    rows = await OrderModel.findAll({ where: { copy_follower_account_id: parseInt(userId, 10) } });
+    rows = await OrderModel.findAll({
+      where: { copy_follower_account_id: parseInt(userId, 10) },
+      order: [['created_at', 'DESC']]
+    });
   } else {
     // For live/demo users
     OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
-    rows = await OrderModel.findAll({ where: { order_user_id: parseInt(userId, 10) } });
+    rows = await OrderModel.findAll({
+      where: { order_user_id: parseInt(userId, 10) },
+      order: [['created_at', 'DESC']]
+    });
   }
 
   const open = [];

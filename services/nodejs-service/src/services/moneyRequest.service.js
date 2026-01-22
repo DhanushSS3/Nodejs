@@ -275,7 +275,15 @@ class MoneyRequestService {
       });
 
       return {
-        requests: rows,
+        requests: rows.map((row) => {
+          const data = row.toJSON ? row.toJSON() : row;
+          const user = data.user || row.user || null;
+          return {
+            ...data,
+            user_email: user && user.email ? user.email : null,
+            user_account_number: user && user.account_number ? user.account_number : null
+          };
+        }),
         total: count,
         limit: parseInt(limit),
         offset: parseInt(offset),
