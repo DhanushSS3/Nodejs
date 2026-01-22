@@ -109,6 +109,9 @@ class MAMOrderService {
         allocation_method: mamAccount.allocation_method || 'free_margin',
         total_balance_snapshot: freeMarginSnapshots.reduce((acc, snap) => acc + snap.balance, 0),
         total_free_margin_snapshot: totalFreeMargin,
+        // Persist initial SL/TP on the MAM order itself
+        stop_loss: stop_loss != null ? Number(stop_loss) : null,
+        take_profit: take_profit != null ? Number(take_profit) : null,
         metadata: {
           initiated_by: managerId,
           stop_loss,
@@ -170,11 +173,14 @@ class MAMOrderService {
     await this._updateMamAccountAggregates(mamAccount.id);
 
     try {
+      // Emit initial MAM order state including current SL/TP
       portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
         type: 'mam_order_update',
         mam_order_id: mamOrder.id,
         executed_volume: executionSummary.executedVolume,
-        rejected_investors: executionSummary.rejectedCount
+        rejected_investors: executionSummary.rejectedCount,
+        stop_loss: mamOrder.stop_loss != null ? Number(mamOrder.stop_loss) : null,
+        take_profit: mamOrder.take_profit != null ? Number(mamOrder.take_profit) : null,
       });
     } catch (error) {
       logger.warn('Failed to emit MAM order update event', {
@@ -838,7 +844,8 @@ class MAMOrderService {
       order_type,
       status = 'CLOSED',
       order_status = 'CLOSED',
-      close_price
+      close_price,
+      close_message
     } = payload || {};
 
     const mamOrderId = Number(mamOrderIdRaw);
@@ -941,11 +948,24 @@ class MAMOrderService {
 
       await this.syncMamAggregates({ mamOrderId, mamAccountId });
 
+      // Store a high-level close message on the MAM order if provided
+      if (close_message && String(close_message).trim()) {
+        try {
+          await mamOrder.update({ close_message: String(close_message).trim() });
+        } catch (e) {
+          logger.warn('Failed to update MAM order close_message', {
+            mam_order_id: mamOrderId,
+            error: e.message
+          });
+        }
+      }
+
       try {
         portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
           type: 'mam_order_close_progress',
           mam_order_id: mamOrderId,
-          summary
+          summary,
+          close_message: mamOrder.close_message || (close_message ? String(close_message).trim() : null)
         });
       } catch (eventError) {
         logger.warn('Failed to emit MAM order close progress event', {
@@ -2102,7 +2122,10 @@ class MAMOrderService {
           last_stoploss_update_at: new Date().toISOString(),
           last_stoploss_updated_by: `mam_manager:${managerId}`
         };
-        await mamOrder.update({ metadata });
+        await mamOrder.update({
+          metadata,
+          stop_loss: Number(stop_loss)
+        });
       } catch (metaError) {
         logger.warn('Failed to update MAM order metadata after stoploss add', {
           mam_order_id: mamOrderId,
@@ -2359,7 +2382,10 @@ class MAMOrderService {
           last_takeprofit_update_at: new Date().toISOString(),
           last_takeprofit_updated_by: `mam_manager:${managerId}`
         };
-        await mamOrder.update({ metadata });
+        await mamOrder.update({
+          metadata,
+          take_profit: Number(take_profit)
+        });
       } catch (metaError) {
         logger.warn('Failed to update MAM order metadata after takeprofit add', {
           mam_order_id: mamOrderId,
@@ -2608,10 +2634,12 @@ class MAMOrderService {
           last_stoploss_cancel_at: new Date().toISOString(),
           last_stoploss_cancelled_by: `mam_manager:${managerId}`
         };
+        const updates = { metadata };
         if (summary.failed === 0 && summary.skipped === 0) {
           metadata.stop_loss = null;
+          updates.stop_loss = null;
         }
-        await mamOrder.update({ metadata });
+        await mamOrder.update(updates);
       } catch (metaError) {
         logger.warn('Failed to update MAM order metadata after stoploss cancel', {
           mam_order_id: mamOrderId,
@@ -2623,6 +2651,8 @@ class MAMOrderService {
         portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
           type: 'mam_order_stoploss_cancel',
           mam_order_id: mamOrderId,
+          // For UI convenience, expose the updated stop_loss (likely null when fully cancelled)
+          stop_loss: mamOrder.stop_loss != null ? Number(mamOrder.stop_loss) : null,
           summary
         });
       } catch (eventError) {
@@ -2868,10 +2898,12 @@ class MAMOrderService {
           last_takeprofit_cancel_at: new Date().toISOString(),
           last_takeprofit_cancelled_by: `mam_manager:${managerId}`
         };
+        const updates = { metadata };
         if (summary.failed === 0 && summary.skipped === 0) {
           metadata.take_profit = null;
+          updates.take_profit = null;
         }
-        await mamOrder.update({ metadata });
+        await mamOrder.update(updates);
       } catch (metaError) {
         logger.warn('Failed to update MAM order metadata after takeprofit cancel', {
           mam_order_id: mamOrderId,
@@ -2883,6 +2915,8 @@ class MAMOrderService {
         portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
           type: 'mam_order_takeprofit_cancel',
           mam_order_id: mamOrderId,
+          // Expose the updated take_profit (likely null when fully cancelled)
+          take_profit: mamOrder.take_profit != null ? Number(mamOrder.take_profit) : null,
           summary
         });
       } catch (eventError) {

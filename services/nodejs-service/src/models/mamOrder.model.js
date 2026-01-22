@@ -56,6 +56,14 @@ const MAMOrder = sequelize.define('MAMOrder', {
     allowNull: false,
     defaultValue: 0
   },
+  stop_loss: {
+    type: DataTypes.DECIMAL(18, 8),
+    allowNull: true
+  },
+  take_profit: {
+    type: DataTypes.DECIMAL(18, 8),
+    allowNull: true
+  },
   average_entry_price: {
     type: DataTypes.DECIMAL(18, 8),
     allowNull: true
@@ -94,6 +102,10 @@ const MAMOrder = sequelize.define('MAMOrder', {
     type: DataTypes.DECIMAL(18, 8),
     allowNull: false,
     defaultValue: 0
+  },
+  close_message: {
+    type: DataTypes.STRING(255),
+    allowNull: true
   },
   metadata: {
     type: DataTypes.JSON,

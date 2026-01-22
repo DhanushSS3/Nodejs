@@ -110,7 +110,8 @@ class MAMOrdersController {
       order_type: String(req.body.order_type || '').trim().toUpperCase(),
       status: req.body.status ? String(req.body.status) : 'CLOSED',
       order_status: req.body.order_status ? String(req.body.order_status) : 'CLOSED',
-      close_price: req.body.close_price != null ? Number(req.body.close_price) : undefined
+      close_price: req.body.close_price != null ? Number(req.body.close_price) : undefined,
+      close_message: req.body.close_message ? String(req.body.close_message).trim() : undefined
     };
 
     try {
