@@ -995,6 +995,23 @@ class PortfolioCalculatorListener:
             chosen_used = (float(total_margin) if (has_queued and (total_margin is not None)) else (float(executed_margin) if executed_margin is not None else 0.0))
             portfolio['used_margin'] = str(round(chosen_used, 2))
 
+            equity_val = None
+            try:
+                if portfolio.get('equity') is not None:
+                    equity_val = float(portfolio.get('equity'))
+            except (TypeError, ValueError):
+                equity_val = None
+
+            if equity_val is not None:
+                used_for_view = float(total_margin) if (has_queued and (total_margin is not None)) else float(executed_margin)
+                try:
+                    free_margin_val = equity_val - used_for_view
+                    portfolio['free_margin'] = round(free_margin_val, 2)
+                    margin_level_val = (equity_val / used_for_view * 100.0) if used_for_view > 0 else 0.0
+                    portfolio['margin_level'] = round(margin_level_val, 2)
+                except (TypeError, ValueError):
+                    pass
+
             # Update portfolio with connection tracking
             update_operation_id = generate_operation_id()
             connection_tracker.start_operation(update_operation_id, "cluster", f"update_portfolio_{user_type}_{user_id}")

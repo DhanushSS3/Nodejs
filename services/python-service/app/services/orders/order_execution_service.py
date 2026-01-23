@@ -424,11 +424,6 @@ class OrderExecutor:
         portfolio_equity: Optional[float] = None
         try:
             if portfolio:
-                # Prefer explicit free_margin field if present
-                if portfolio.get("free_margin") is not None:
-                    current_free_margin = float(portfolio.get("free_margin"))
-
-                # Capture additional fields for debugging / fallback
                 if portfolio.get("used_margin_all") is not None:
                     portfolio_used_margin_all = float(portfolio.get("used_margin_all"))
                 elif portfolio.get("used_margin") is not None:
@@ -439,9 +434,10 @@ class OrderExecutor:
                 if portfolio.get("equity") is not None:
                     portfolio_equity = float(portfolio.get("equity"))
 
-                # If free_margin not present but we have equity and used margin, derive it
-                if current_free_margin is None and (portfolio_equity is not None):
-                    current_free_margin = float(portfolio_equity) - float(portfolio_used_margin_all or 0.0)
+                if (portfolio_equity is not None) and (portfolio_used_margin_all is not None):
+                    current_free_margin = float(portfolio_equity) - float(portfolio_used_margin_all)
+                elif portfolio.get("free_margin") is not None:
+                    current_free_margin = float(portfolio.get("free_margin"))
         except (TypeError, ValueError):
             current_free_margin = None
 
