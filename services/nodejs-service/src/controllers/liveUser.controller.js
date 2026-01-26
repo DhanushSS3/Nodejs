@@ -631,7 +631,8 @@ async function getUserInfo(req, res) {
       const [assignmentCountsRaw, pendingClientRequests, awaitingClientAcceptance, activeAssignments, activeInvestorBalance] = await Promise.all([
         MAMAssignment.findAll({
           where: { mam_account_id: mamAccountId },
-          attributes: ['status', [fn('COUNT', '*'), 'count']]
+          attributes: ['status', [fn('COUNT', '*'), 'count']],
+          group: ['status']
         }),
         MAMAssignment.findAll({
           where: {
