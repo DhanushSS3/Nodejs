@@ -1,6 +1,7 @@
 const groupsCacheService = require('../services/groups.cache.service');
 const startupCacheService = require('../services/startup.cache.service');
 const { Group } = require('../models');
+const MAMAccount = require('../models/mamAccount.model');
 const { createAuditLog } = require('../middlewares/audit.middleware');
 const logger = require('../utils/logger');
 const sequelize = require('../config/db');
@@ -469,26 +470,60 @@ class GroupsController {
         isUserAccess = true;
         // Extract group from JWT for users (supports live users, strategy providers, and copy followers)
         const user = req.user;
-        if (!user || !user.group) {
-          logger.warn('User group not found in JWT token', { 
-            userId: user?.sub || user?.user_id || user?.id,
-            userType: user?.user_type || user?.account_type,
+
+        let groupFromContext = user && user.group;
+        const userType = (user?.account_type || user?.user_type || 'live').toString().toLowerCase();
+        const userId = user?.sub || user?.user_id || user?.id;
+        const strategyProviderId = user?.strategy_provider_id;
+
+        // Special handling for MAM managers: resolve group from MAM account when not present in JWT
+        if (!groupFromContext && userType === 'mam_manager' && user?.mam_account_id) {
+          try {
+            logger.info('Resolving group for MAM manager from MAM account', {
+              userId,
+              userType,
+              mamAccountId: user.mam_account_id
+            });
+
+            const mamAccount = await MAMAccount.findByPk(user.mam_account_id, {
+              attributes: ['id', 'group', 'status']
+            });
+
+            if (mamAccount) {
+              groupFromContext = mamAccount.group;
+            } else {
+              logger.warn('MAM account not found while resolving group for MAM manager', {
+                userId,
+                mamAccountId: user.mam_account_id
+              });
+            }
+          } catch (mamError) {
+            logger.error('Failed to resolve group from MAM account for MAM manager', {
+              error: mamError.message,
+              stack: mamError.stack,
+              userId,
+              mamAccountId: user.mam_account_id
+            });
+          }
+        }
+
+        if (!user || !groupFromContext) {
+          logger.warn('User group not found in JWT token or related account', { 
+            userId,
+            userType,
             role: user?.role,
-            strategyProviderId: user?.strategy_provider_id
+            strategyProviderId
           });
           return res.status(400).json({
             success: false,
             message: 'User group information not available'
           });
         }
-        groupName = user.group;
+
+        groupName = groupFromContext;
         
         // Log user type for debugging
-        const userType = user.account_type || user.user_type || 'live';
-        const userId = user.sub || user.user_id || user.id;
-        const strategyProviderId = user.strategy_provider_id;
-        
-        logger.info(`User access: extracting group from JWT: "${groupName}"`, {
+        logger.info(`User access: extracting group from context: "${groupName}"`, {
           userId,
           userType,
           role: user.role,
