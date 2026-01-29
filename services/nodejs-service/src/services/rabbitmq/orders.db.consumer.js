@@ -1708,8 +1708,9 @@ async function applyDbUpdate(msg) {
               });
             }
 
+            let parentMamOrder = null;
             try {
-              const parentMamOrder = await MAMOrder.findByPk(parentMamOrderId, { attributes: ['id', 'mam_account_id'] });
+              parentMamOrder = await MAMOrder.findByPk(parentMamOrderId, { attributes: ['id', 'mam_account_id'] });
               await mamOrderService.syncMamAggregates({
                 mamOrderId: parentMamOrderId,
                 mamAccountId: parentMamOrder?.mam_account_id
@@ -1719,6 +1720,22 @@ async function applyDbUpdate(msg) {
                 order_id: orderIdStr,
                 parent_mam_order_id: parentMamOrderId,
                 error: aggregateError.message
+              });
+            }
+
+            try {
+              if (parentMamOrder && parentMamOrder.mam_account_id) {
+                portfolioEvents.emitUserUpdate('mam_account', String(parentMamOrder.mam_account_id), {
+                  type: 'mam_parent_child_close_confirmed',
+                  mam_order_id: parentMamOrderId,
+                  child_order_id: Number(orderIdStr)
+                });
+              }
+            } catch (mamEventError) {
+              logger.warn('Failed to emit mam account update after child close', {
+                order_id: orderIdStr,
+                parent_mam_order_id: parentMamOrderId,
+                error: mamEventError.message
               });
             }
 
