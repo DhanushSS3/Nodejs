@@ -529,6 +529,12 @@ async function logout(req, res) {
   const { refresh_token: refreshToken } = req.body;
 
   try {
+    if (!refreshToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Refresh token is required to logout'
+      });
+    }
     // Invalidate the session and refresh token in Redis
     const { deleteSession } = require('../utils/redisSession.util');
     await deleteSession(userId, sessionId, 'live', refreshToken);
