@@ -167,6 +167,7 @@ class MAMOrderService {
       rejected_investors_count: executionSummary.rejectedCount,
       rejected_volume: executionSummary.rejectedVolume,
       total_aggregated_margin: executionSummary.totalMargin,
+      average_entry_price: executionSummary.executedVolume > 0 ? executionPrice : null,
       order_status: executionSummary.executedVolume > 0 ? ORDER_STATUS.OPEN : ORDER_STATUS.QUEUED
     });
 
