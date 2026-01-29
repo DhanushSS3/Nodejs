@@ -122,9 +122,11 @@ async function fetchMamClientOrders(assignments) {
       }
     }
 
+    const mamOrderId = order.parent_mam_order_id;
+
     const base = {
-      order_id: order.order_id,
-      parent_mam_order_id: order.parent_mam_order_id,
+      order_id: mamOrderId || order.order_id,
+      parent_mam_order_id: mamOrderId,
       order_company_name: String(order.symbol || order.order_company_name || '').toUpperCase(),
       order_type: order.order_type,
       order_quantity: order.order_quantity?.toString?.() ?? String(order.order_quantity ?? ''),
