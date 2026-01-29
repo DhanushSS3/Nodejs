@@ -35,6 +35,43 @@ class MAMOrdersController {
     }
   }
 
+  async getClosedMamOrders(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    const rawPage = Number(req.query.page || 1);
+    const rawPageSize = Number(req.query.page_size || req.query.limit || 50);
+    const pageSize = Math.min(Number.isFinite(rawPageSize) && rawPageSize > 0 ? rawPageSize : 50, 200);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const offset = (page - 1) * pageSize;
+
+    try {
+      const result = await mamOrderService.getClosedOrders({
+        mamAccountId,
+        limit: pageSize,
+        offset
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM closed orders fetched',
+        data: {
+          total: result.total,
+          page,
+          page_size: pageSize,
+          items: result.items
+        }
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to fetch MAM closed orders'
+      });
+    }
+  }
+
   async placePendingOrder(req, res) {
     const mamAccountId = req.user?.mam_account_id || req.user?.sub;
     if (!mamAccountId) {
@@ -132,6 +169,32 @@ class MAMOrdersController {
       return res.status(error.statusCode || 500).json({
         success: false,
         message: error.message || 'Failed to close MAM order'
+      });
+    }
+  }
+
+  async closeAllMamOrders(req, res) {
+    const mamAccountId = req.user?.mam_account_id || req.user?.sub;
+    if (!mamAccountId) {
+      return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+    }
+
+    try {
+      const result = await mamOrderService.closeAllMamOrders({
+        mamAccountId,
+        managerId: req.user?.sub || req.user?.id
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'MAM close all accepted',
+        data: result
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || 'Failed to close all MAM orders',
+        details: error.details || undefined
       });
     }
   }

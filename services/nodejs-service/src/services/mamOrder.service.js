@@ -416,6 +416,122 @@ class MAMOrderService {
     }
   }
 
+  async closeAllMamOrders({ mamAccountId, managerId }) {
+    const mamAccount = await MAMAccount.findByPk(mamAccountId);
+    if (!mamAccount || mamAccount.status !== 'active') {
+      const error = new Error('MAM account is not active or not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const openMamOrders = await MAMOrder.findAll({
+      where: {
+        mam_account_id: mamAccountId,
+        order_status: {
+          [Op.notIn]: ['CLOSED', 'REJECTED']
+        }
+      },
+      order: [['created_at', 'ASC']]
+    });
+
+    const summary = {
+      total_orders: openMamOrders.length,
+      successful: 0,
+      failed: 0,
+      results: []
+    };
+
+    if (!openMamOrders.length) {
+      return summary;
+    }
+
+    for (const mamOrder of openMamOrders) {
+      try {
+        const result = await this.closeMamOrder({
+          mamAccountId,
+          managerId,
+          payload: {
+            order_id: mamOrder.id,
+            symbol: mamOrder.symbol,
+            order_type: mamOrder.order_type,
+            status: 'CLOSED',
+            order_status: 'CLOSED'
+          }
+        });
+
+        summary.successful += 1;
+        summary.results.push({ mam_order_id: mamOrder.id, summary: result });
+      } catch (error) {
+        summary.failed += 1;
+        summary.results.push({
+          mam_order_id: mamOrder.id,
+          error: error.message || 'close_failed',
+          statusCode: error.statusCode
+        });
+      }
+    }
+
+    return summary;
+  }
+
+  async getClosedOrders({ mamAccountId, limit = 50, offset = 0 }) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+    const safeOffset = Math.max(Number(offset) || 0, 0);
+
+    const { rows, count } = await MAMOrder.findAndCountAll({
+      where: {
+        mam_account_id: mamAccountId,
+        order_status: 'CLOSED'
+      },
+      order: [['created_at', 'DESC']],
+      limit: safeLimit,
+      offset: safeOffset
+    });
+
+    const items = rows.map((order) => {
+      let createdAtIso = null;
+      const rawCreatedAt = order.created_at;
+      if (rawCreatedAt) {
+        try {
+          const dateObj = rawCreatedAt instanceof Date ? rawCreatedAt : new Date(rawCreatedAt);
+          if (!Number.isNaN(dateObj.getTime())) {
+            createdAtIso = dateObj.toISOString();
+          }
+        } catch (_) {
+          createdAtIso = null;
+        }
+      }
+
+      return {
+        order_id: order.id,
+        mam_account_id: order.mam_account_id,
+        symbol: order.symbol,
+        order_type: order.order_type,
+        order_status: order.order_status,
+        requested_volume: order.requested_volume?.toString?.() ?? String(order.requested_volume ?? ''),
+        executed_volume: order.executed_volume?.toString?.() ?? String(order.executed_volume ?? ''),
+        stop_loss: order.stop_loss?.toString?.() ?? null,
+        take_profit: order.take_profit?.toString?.() ?? null,
+        average_entry_price: order.average_entry_price?.toString?.() ?? null,
+        average_exit_price: order.average_exit_price?.toString?.() ?? null,
+        gross_profit: order.gross_profit?.toString?.() ?? null,
+        net_profit_after_fees: order.net_profit_after_fees?.toString?.() ?? null,
+        slippage_bps: order.slippage_bps?.toString?.() ?? null,
+        rejected_investors_count: order.rejected_investors_count,
+        rejected_volume: order.rejected_volume?.toString?.() ?? null,
+        close_message: order.close_message || null,
+        created_at: createdAtIso
+      };
+    });
+
+    return {
+      total: count,
+      limit: safeLimit,
+      offset: safeOffset,
+      items
+    };
+  }
+
   async cancelPendingOrder({ mamAccountId, managerId, payload }) {
     const {
       order_id: mamOrderIdRaw,

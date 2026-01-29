@@ -11,6 +11,7 @@ const MAMAccount = require('../../models/mamAccount.model');
 const MAMAssignment = require('../../models/mamAssignment.model');
 const LiveUser = require('../../models/liveUser.model');
 const LiveUserOrder = require('../../models/liveUserOrder.model');
+const MAMOrder = require('../../models/mamOrder.model');
 
 const { ASSIGNMENT_STATUS } = require('../../constants/mamAssignment.constants');
 
@@ -60,34 +61,12 @@ async function fetchActiveAssignments(mamAccountId) {
   }));
 }
 
-async function fetchMamClientOrders(assignments) {
-  if (!assignments.length) {
-    return { open: [], pending: [], rejected: [] };
-  }
-
-  const clientIds = assignments.map((a) => a.client_live_user_id);
-  const clientMeta = new Map(assignments.map((a) => [
-    String(a.client_live_user_id),
-    {
-      client_name: a.client_name,
-      client_account_number: a.client_account_number,
-      client_email: a.client_email
-    }
-  ]));
-
-  const orders = await LiveUserOrder.findAll({
+async function fetchMamOrders(mamAccountId) {
+  const orders = await MAMOrder.findAll({
     where: {
-      order_user_id: {
-        [Op.in]: clientIds
-      }
+      mam_account_id: mamAccountId
     },
-    include: [
-      {
-        model: LiveUser,
-        as: 'user',
-        attributes: ['id', 'name', 'account_number', 'email']
-      }
-    ]
+    order: [['created_at', 'DESC']]
   });
 
   const open = [];
@@ -96,18 +75,17 @@ async function fetchMamClientOrders(assignments) {
 
   for (const order of orders) {
     const status = String(order.order_status || '').toUpperCase();
-    const bucket = status === 'OPEN'
-      ? open
-      : status === 'PENDING'
-        ? pending
-        : status === 'REJECTED'
-          ? rejected
-          : null;
+    let bucket = null;
+
+    if (status === 'OPEN') {
+      bucket = open;
+    } else if (['PENDING', 'PENDING-QUEUED', 'QUEUED', 'MODIFY'].includes(status)) {
+      bucket = pending;
+    } else if (['REJECTED'].includes(status)) {
+      bucket = rejected;
+    }
 
     if (!bucket) continue;
-
-    const liveMeta = clientMeta.get(String(order.order_user_id)) || {};
-    const orderUser = order.user || {};
 
     let createdAtIso = null;
     const rawCreatedAt = order.created_at;
@@ -122,29 +100,25 @@ async function fetchMamClientOrders(assignments) {
       }
     }
 
-    const mamOrderId = order.parent_mam_order_id;
-
     const base = {
-      order_id: mamOrderId || order.order_id,
-      parent_mam_order_id: mamOrderId,
-      order_company_name: String(order.symbol || order.order_company_name || '').toUpperCase(),
+      order_id: order.id,
+      mam_account_id: order.mam_account_id,
+      symbol: order.symbol,
       order_type: order.order_type,
-      order_quantity: order.order_quantity?.toString?.() ?? String(order.order_quantity ?? ''),
-      order_price: order.order_price?.toString?.() ?? String(order.order_price ?? ''),
-      margin: order.margin?.toString?.() ?? undefined,
-      contract_value: order.contract_value?.toString?.() ?? undefined,
+      order_status: order.order_status,
+      requested_volume: order.requested_volume?.toString?.() ?? String(order.requested_volume ?? ''),
+      executed_volume: order.executed_volume?.toString?.() ?? String(order.executed_volume ?? ''),
       stop_loss: order.stop_loss?.toString?.() ?? null,
       take_profit: order.take_profit?.toString?.() ?? null,
-      order_user_id: order.order_user_id,
-      order_status: order.order_status,
-      commission: order.commission?.toString?.() ?? null,
-      swap: order.swap?.toString?.() ?? null,
-      order_source: order.order_source,
-      created_at: createdAtIso,
-      client_live_user_id: order.order_user_id,
-      client_name: liveMeta.client_name || orderUser.name || null,
-      client_account_number: liveMeta.client_account_number || orderUser.account_number || null,
-      client_email: liveMeta.client_email || orderUser.email || null
+      average_entry_price: order.average_entry_price?.toString?.() ?? null,
+      average_exit_price: order.average_exit_price?.toString?.() ?? null,
+      gross_profit: order.gross_profit?.toString?.() ?? null,
+      net_profit_after_fees: order.net_profit_after_fees?.toString?.() ?? null,
+      slippage_bps: order.slippage_bps?.toString?.() ?? null,
+      rejected_investors_count: order.rejected_investors_count,
+      rejected_volume: order.rejected_volume?.toString?.() ?? null,
+      close_message: order.close_message || null,
+      created_at: createdAtIso
     };
 
     bucket.push(base);
@@ -229,7 +203,7 @@ async function sendSnapshot(ws, mamAccountId, reason = 'snapshot') {
 
     const [summary, orders] = await Promise.all([
       fetchMamAccountSummary(mamAccountId),
-      fetchMamClientOrders(assignments)
+      fetchMamOrders(mamAccountId)
     ]);
 
     const payload = buildPayload(summary, orders);

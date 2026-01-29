@@ -188,6 +188,20 @@ router.post(
 );
 
 router.post(
+  '/close-all',
+  authenticateJWT,
+  requireMamManager,
+  mamOrdersController.closeAllMamOrders
+);
+
+router.get(
+  '/closed',
+  authenticateJWT,
+  requireMamManager,
+  mamOrdersController.getClosedMamOrders
+);
+
+router.post(
   '/stoploss/add',
   authenticateJWT,
   requireMamManager,

@@ -130,7 +130,7 @@ async function signup(req, res) {
         leverage: 100,
         ...optionalFields,
         // Force group to 'Group B' for all demo users (override any request value)
-        group: 'Group B'
+        group: 'demo'
       }, { transaction });
 
       logger.financial('demo_user_created', {
