@@ -101,24 +101,35 @@ async function fetchMamOrders(mamAccountId) {
     }
 
     const base = {
+      // Core fields aligned with live /ws/portfolio order schema
       order_id: order.id,
-      mam_account_id: order.mam_account_id,
-      symbol: order.symbol,
+      order_company_name: String(order.symbol || '').toUpperCase(),
       order_type: order.order_type,
-      order_status: order.order_status,
-      requested_volume: order.requested_volume?.toString?.() ?? String(order.requested_volume ?? ''),
-      executed_volume: order.executed_volume?.toString?.() ?? String(order.executed_volume ?? ''),
+      order_quantity: order.executed_volume?.toString?.() ?? order.requested_volume?.toString?.() ?? '',
+      order_price: order.average_entry_price?.toString?.() ?? null,
+      margin: order.total_aggregated_margin?.toString?.() ?? undefined,
+      contract_value: undefined,
       stop_loss: order.stop_loss?.toString?.() ?? null,
       take_profit: order.take_profit?.toString?.() ?? null,
+      order_user_id: order.mam_account_id,
+      order_status: order.order_status,
+      commission: null,
+      swap: null,
+      close_message: order.close_message || null,
+      created_at: createdAtIso,
+
+      // MAM-specific extras kept for richer UI
+      mam_account_id: order.mam_account_id,
+      symbol: order.symbol,
+      requested_volume: order.requested_volume?.toString?.() ?? String(order.requested_volume ?? ''),
+      executed_volume: order.executed_volume?.toString?.() ?? String(order.executed_volume ?? ''),
       average_entry_price: order.average_entry_price?.toString?.() ?? null,
       average_exit_price: order.average_exit_price?.toString?.() ?? null,
       gross_profit: order.gross_profit?.toString?.() ?? null,
       net_profit_after_fees: order.net_profit_after_fees?.toString?.() ?? null,
       slippage_bps: order.slippage_bps?.toString?.() ?? null,
       rejected_investors_count: order.rejected_investors_count,
-      rejected_volume: order.rejected_volume?.toString?.() ?? null,
-      close_message: order.close_message || null,
-      created_at: createdAtIso
+      rejected_volume: order.rejected_volume?.toString?.() ?? null
     };
 
     bucket.push(base);
