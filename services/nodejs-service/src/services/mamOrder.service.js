@@ -1027,22 +1027,46 @@ class MAMOrderService {
     const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + snap.free_margin, 0);
     const precisionValue = Number.isFinite(precision) && precision > 0 ? precision : 0.01;
 
-    if (!(totalFreeMargin > 0)) {
+    if (!(totalFreeMargin > 0) || !(totalVolume > 0)) {
       return [];
     }
 
-    return assignments.map((assignment) => {
+    const rawEntries = assignments.map((assignment) => {
       const snap = snapshotMap.get(assignment.client_live_user_id) || { free_margin: 0, balance: 0 };
       const ratio = snap.free_margin / totalFreeMargin;
       const rawLots = totalVolume * ratio;
-      const roundedLots = this._roundTo(rawLots, precisionValue);
+      const baseLots = this._roundDown(rawLots, precisionValue);
       return {
         assignment,
         snapshot: snap,
         ratio,
-        allocated_volume: roundedLots
+        raw_lots: rawLots,
+        allocated_volume: baseLots,
+        remainder: rawLots - baseLots
       };
     });
+
+    let allocatedSum = rawEntries.reduce((sum, entry) => sum + entry.allocated_volume, 0);
+    let remaining = this._roundTo(Math.max(totalVolume - allocatedSum, 0), precisionValue);
+
+    if (remaining > 0 && precisionValue > 0) {
+      const remainderSorted = rawEntries.slice().sort((a, b) => b.remainder - a.remainder);
+      for (const entry of remainderSorted) {
+        if (remaining < precisionValue - 1e-9) break;
+        entry.allocated_volume += precisionValue;
+        remaining = this._roundTo(Math.max(remaining - precisionValue, 0), precisionValue);
+        if (remaining <= 0) {
+          remaining = 0;
+          break;
+        }
+      }
+    }
+
+    if (!rawEntries.some((entry) => entry.allocated_volume > 0) && rawEntries.length) {
+      rawEntries[rawEntries.length - 1].allocated_volume = totalVolume;
+    }
+
+    return rawEntries;
   }
 
   async _placeClientPendingOrder({
@@ -1756,6 +1780,11 @@ class MAMOrderService {
   _roundTo(value, precision) {
     if (!(precision > 0)) return value;
     return Math.round(value / precision) * precision;
+  }
+
+  _roundDown(value, precision) {
+    if (!(precision > 0)) return value;
+    return Math.floor(value / precision) * precision;
   }
 
   _toNumber(value) {

@@ -8,11 +8,12 @@ class MAMOrdersController {
     }
 
     try {
+      const normalizedSymbol = String(req.body.symbol || req.body.order_company_name || '').toUpperCase();
       const result = await mamOrderService.placeInstantOrder({
         mamAccountId,
         managerId: req.user?.sub || req.user?.id,
         payload: {
-          symbol: String(req.body.symbol || '').toUpperCase(),
+          symbol: normalizedSymbol,
           order_type: String(req.body.order_type || '').toUpperCase(),
           order_price: Number(req.body.order_price),
           volume: Number(req.body.volume || req.body.order_quantity),
@@ -41,11 +42,12 @@ class MAMOrdersController {
     }
 
     try {
+      const normalizedSymbol = String(req.body.symbol || req.body.order_company_name || '').toUpperCase();
       const result = await mamOrderService.placePendingOrder({
         mamAccountId,
         managerId: req.user?.sub || req.user?.id,
         payload: {
-          symbol: String(req.body.symbol || '').toUpperCase(),
+          symbol: normalizedSymbol,
           order_type: String(req.body.order_type || '').toUpperCase(),
           order_price: Number(req.body.order_price),
           volume: Number(req.body.volume || req.body.order_quantity)
@@ -106,7 +108,7 @@ class MAMOrdersController {
 
     const payload = {
       order_id: String(req.body.order_id || '').trim(),
-      symbol: String(req.body.symbol || '').trim().toUpperCase(),
+      symbol: String(req.body.symbol || req.body.order_company_name || '').trim().toUpperCase(),
       order_type: String(req.body.order_type || '').trim().toUpperCase(),
       status: req.body.status ? String(req.body.status) : 'CLOSED',
       order_status: req.body.order_status ? String(req.body.order_status) : 'CLOSED',

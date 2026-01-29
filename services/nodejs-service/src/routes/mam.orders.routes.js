@@ -25,9 +25,21 @@ router.post(
   requireMamManager,
   [
     body('symbol')
+      .optional()
       .trim()
-      .notEmpty().withMessage('symbol is required')
       .isLength({ max: 20 }).withMessage('symbol must be <= 20 characters'),
+    body('order_company_name')
+      .optional()
+      .trim()
+      .isLength({ max: 50 }).withMessage('order_company_name must be <= 50 characters'),
+    body()
+      .custom((value) => {
+        const rawSymbol = value.symbol || value.order_company_name;
+        if (!rawSymbol || !String(rawSymbol).trim()) {
+          throw new Error('symbol is required');
+        }
+        return true;
+      }),
     body('order_type')
       .trim()
       .notEmpty().withMessage('order_type is required')
@@ -67,9 +79,21 @@ router.post(
   requireMamManager,
   [
     body('symbol')
+      .optional()
       .trim()
-      .notEmpty().withMessage('symbol is required')
       .isLength({ max: 20 }).withMessage('symbol must be <= 20 characters'),
+    body('order_company_name')
+      .optional()
+      .trim()
+      .isLength({ max: 50 }).withMessage('order_company_name must be <= 50 characters'),
+    body()
+      .custom((value) => {
+        const rawSymbol = value.symbol || value.order_company_name;
+        if (!rawSymbol || !String(rawSymbol).trim()) {
+          throw new Error('symbol is required');
+        }
+        return true;
+      }),
     body('order_type')
       .trim()
       .notEmpty().withMessage('order_type is required')
@@ -128,9 +152,21 @@ router.post(
       .trim()
       .notEmpty().withMessage('order_id is required'),
     body('symbol')
+      .optional()
       .trim()
-      .notEmpty().withMessage('symbol is required')
       .isLength({ max: 50 }).withMessage('symbol must be <= 50 characters'),
+    body('order_company_name')
+      .optional()
+      .trim()
+      .isLength({ max: 50 }).withMessage('order_company_name must be <= 50 characters'),
+    body()
+      .custom((value) => {
+        const rawSymbol = value.symbol || value.order_company_name;
+        if (!rawSymbol || !String(rawSymbol).trim()) {
+          throw new Error('symbol is required');
+        }
+        return true;
+      }),
     body('order_type')
       .trim()
       .notEmpty().withMessage('order_type is required')

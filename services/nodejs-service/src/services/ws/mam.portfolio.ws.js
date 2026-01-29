@@ -124,6 +124,7 @@ async function fetchMamClientOrders(assignments) {
 
     const base = {
       order_id: order.order_id,
+      parent_mam_order_id: order.parent_mam_order_id,
       order_company_name: String(order.symbol || order.order_company_name || '').toUpperCase(),
       order_type: order.order_type,
       order_quantity: order.order_quantity?.toString?.() ?? String(order.order_quantity ?? ''),
@@ -136,7 +137,6 @@ async function fetchMamClientOrders(assignments) {
       order_status: order.order_status,
       commission: order.commission?.toString?.() ?? null,
       swap: order.swap?.toString?.() ?? null,
-      parent_mam_order_id: order.parent_mam_order_id,
       order_source: order.order_source,
       created_at: createdAtIso,
       client_live_user_id: order.order_user_id,
