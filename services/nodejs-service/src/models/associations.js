@@ -5,6 +5,8 @@ const DemoUserOrder = require('./demoUserOrder.model');
 const MoneyRequest = require('./moneyRequest.model');
 const Admin = require('./admin.model');
 const UserTransaction = require('./userTransaction.model');
+const GatewayPayment = require('./gatewayPayment.model');
+const GatewayPaymentEvent = require('./gatewayPaymentEvent.model');
 const MAMAccount = require('./mamAccount.model');
 const MAMOrder = require('./mamOrder.model');
 const MAMAssignment = require('./mamAssignment.model');
@@ -54,6 +56,28 @@ function defineAssociations() {
 
   // Soft reference by transaction_id string to UserTransaction.transaction_id
   MoneyRequest.belongsTo(UserTransaction, {
+    foreignKey: 'transaction_id',
+    targetKey: 'transaction_id',
+    as: 'transaction',
+    constraints: false
+  });
+
+  GatewayPayment.hasMany(GatewayPaymentEvent, {
+    foreignKey: 'gateway_payment_id',
+    as: 'events',
+    onDelete: 'CASCADE',
+    onUpdate: 'CASCADE',
+    constraints: false
+  });
+
+  GatewayPaymentEvent.belongsTo(GatewayPayment, {
+    foreignKey: 'gateway_payment_id',
+    as: 'payment',
+    constraints: false
+  });
+
+  // Soft reference by transaction_id string to UserTransaction.transaction_id
+  GatewayPayment.belongsTo(UserTransaction, {
     foreignKey: 'transaction_id',
     targetKey: 'transaction_id',
     as: 'transaction',

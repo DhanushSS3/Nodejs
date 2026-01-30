@@ -9,6 +9,8 @@ const RolePermission = require('./rolePermission.model');
 const AdminAuditLog = require('./adminAuditLog.model');
 const Country = require('./country.model');
 const CryptoPayment = require('./cryptoPayment.model');
+const GatewayPayment = require('./gatewayPayment.model');
+const GatewayPaymentEvent = require('./gatewayPaymentEvent.model');
 const UserTransaction = require('./userTransaction.model');
 const Group = require('./group.model');
 const MoneyRequest = require('./moneyRequest.model');
@@ -42,6 +44,8 @@ module.exports = {
   AdminAuditLog,
   Country,
   CryptoPayment,
+  GatewayPayment,
+  GatewayPaymentEvent,
   UserTransaction,
   Group,
   MoneyRequest,
