@@ -6,6 +6,7 @@ const router = express.Router();
 
 router.post('/deposit', authenticateJWT, stripePaymentController.createDeposit);
 router.get('/methods', stripePaymentController.getMethods);
+router.post('/webhook', stripePaymentController.handleWebhook);
 router.get('/:merchantReferenceId', stripePaymentController.getPaymentByMerchantReferenceId);
 
 module.exports = router;

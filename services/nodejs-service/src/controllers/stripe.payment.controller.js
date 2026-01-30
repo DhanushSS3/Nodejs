@@ -1,6 +1,7 @@
 const stripePaymentService = require('../services/stripe.payment.service');
 const logger = require('../utils/logger');
 const { IdempotencyService } = require('../services/idempotency.service');
+const { stripePaymentLogger, stripeWebhookRawLogger } = require('../services/logging');
 const { LiveUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
 
 const SUPPORTED_DEPOSIT_USER_TYPES = ['live', 'strategy_provider', 'copy_follower'];
@@ -154,13 +155,22 @@ class StripePaymentController {
     const operationId = `stripe_deposit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     try {
+      const body = req.body || {};
+
+      if (!req.body || Object.keys(body).length === 0) {
+        return res.status(400).json({
+          status: false,
+          message: 'Request body is required and must be valid JSON',
+        });
+      }
+
       const {
         amount,
         currency,
         user_id,
         user_type,
         description,
-      } = req.body;
+      } = body;
 
       if (!amount || !currency) {
         return res.status(400).json({
@@ -210,6 +220,13 @@ class StripePaymentController {
         initiatorUserId: ownership.initiatorUserId,
         initiatorUserType: ownership.initiatorUserType,
       });
+
+      stripePaymentLogger.logDepositRequest(
+        ownership.targetUserId,
+        { amount, currency, user_type: ownership.targetUserType, description },
+        req.ip,
+        req.get('User-Agent'),
+      );
 
       const result = await stripePaymentService.createDepositIntent({
         userId: ownership.targetUserId,
@@ -311,6 +328,83 @@ class StripePaymentController {
         status: false,
         message: 'Failed to retrieve payment',
       });
+    }
+  }
+
+  async handleWebhook(req, res) {
+    try {
+      const rawBody = req.rawBody || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
+      const signature = req.headers['stripe-signature'];
+
+      logger.info('Received Stripe webhook', {
+        hasRawBody: !!req.rawBody,
+        bodyType: typeof req.body,
+        signatureHeaderPresent: !!signature,
+      });
+
+      if (!rawBody) {
+        return res.status(400).send('Missing raw body for Stripe webhook');
+      }
+
+      if (!signature) {
+        logger.warn('Stripe webhook received without signature', {
+          headers: req.headers,
+        });
+        return res.status(400).send('Missing Stripe-Signature header');
+      }
+
+      if (req.rawBody) {
+        stripeWebhookRawLogger.logRawPayload(req.rawBody);
+      }
+
+      let event;
+      try {
+        event = stripePaymentService.constructEventFromWebhook(rawBody, signature);
+      } catch (error) {
+        stripePaymentLogger.logSignatureValidationFailure(
+          signature,
+          error.message,
+          rawBody.length,
+          req.ip,
+          req.get('User-Agent')
+        );
+        logger.error('Invalid Stripe webhook signature', {
+          error: error.message,
+        });
+        return res.status(400).send('Invalid Stripe signature');
+      }
+
+      stripePaymentLogger.logWebhookEvent(event, {
+        ip: req.ip,
+        userAgent: req.get('User-Agent'),
+      });
+
+      const result = await stripePaymentService.processWebhookEvent(event, rawBody, {
+        ip: req.ip,
+        userAgent: req.get('User-Agent'),
+        signature,
+      });
+
+      if (result && result.duplicate) {
+        return res.status(200).send('ok');
+      }
+
+      if (result && result.ignored && result.reason === 'payment_not_found') {
+        return res.status(200).json({ status: true, message: 'Webhook ignored - payment not found' });
+      }
+
+      return res.status(200).send('ok');
+    } catch (error) {
+      logger.error('Error processing Stripe webhook', {
+        error: error.message,
+        stack: error.stack,
+      });
+
+      if (error.message && error.message.includes('Stripe webhook is not configured')) {
+        return res.status(503).send('Stripe webhook is not configured');
+      }
+
+      return res.status(500).send('Failed to process Stripe webhook');
     }
   }
 }

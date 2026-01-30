@@ -55,7 +55,14 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({
+  limit: '25mb',
+  verify: (req, res, buf) => {
+    if (req.originalUrl && req.originalUrl.startsWith('/api/stripe-payments/webhook')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Enable CORS for all origins
