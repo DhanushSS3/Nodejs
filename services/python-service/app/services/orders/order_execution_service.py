@@ -539,10 +539,14 @@ class OrderExecutor:
             # We already validated sufficient margin with single-order check + portfolio free margin above
             timings_ms["orders_fetch_ms"] = 0  # Skipped for performance
             timings_ms["total_margin_ms"] = 0   # Skipped for performance
-            
+
             # For provider flow: Don't change executed margin until confirmation, but reserve in total margin
             executed_margin = None  # Don't update used_margin_executed until provider confirms
-            total_margin_with_queued = current_used_margin_all + float(margin_usd)  # Add reserved margin
+
+            # Use portfolio_used_margin_all from the portfolio snapshot as the current used margin baseline.
+            # If it's missing, treat it as 0.0 (no existing used margin) and add the new order's margin.
+            base_used_margin_all = float(portfolio_used_margin_all) if portfolio_used_margin_all is not None else 0.0
+            total_margin_with_queued = base_used_margin_all + float(margin_usd)  # Add reserved margin
 
         # 10) Compute notional contract value (instrument-dependent; generic formula)
         try:
