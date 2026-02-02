@@ -688,18 +688,25 @@ async function placeStrategyProviderOrder(req, res) {
         connectionError: err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT'
       });
 
-      // Update order status to REJECTED
+      // Resolve Python reason (including insufficient_margin) and persist it consistently
+      const reason = detail?.detail?.reason || detail?.reason || 'execution_failed';
+
+      // Update order status to REJECTED with the resolved reason
       await masterOrder.update({
         order_status: 'REJECTED',
-        close_message: detail?.reason || 'execution_failed',
+        close_message: reason,
         copy_distribution_status: 'failed'
       });
+
+      // Surface Python insufficient_margin (and other specific reasons) correctly in strategy provider order placement responses
+      const message = reason === 'insufficient_margin' ? 'Insufficient margin' : 'Order execution failed';
 
       return res.status(statusCode >= 400 && statusCode < 500 ? statusCode : 500).json({
         success: false,
         order_id,
-        message: 'Order execution failed',
-        reason: detail?.reason || 'execution_failed',
+        message,
+        reason,
+        detail: detail,
         operationId
       });
     }
