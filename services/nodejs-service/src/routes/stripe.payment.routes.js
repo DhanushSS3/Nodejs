@@ -4,7 +4,20 @@ const { authenticateJWT } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
-router.post('/deposit', authenticateJWT, stripePaymentController.createDeposit);
+const allowAllOrigins = (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+};
+
+router.options('/deposit', allowAllOrigins);
+router.post('/deposit', allowAllOrigins, authenticateJWT, stripePaymentController.createDeposit);
 router.get('/methods', stripePaymentController.getMethods);
 router.post('/webhook', stripePaymentController.handleWebhook);
 router.get('/:merchantReferenceId', stripePaymentController.getPaymentByMerchantReferenceId);
