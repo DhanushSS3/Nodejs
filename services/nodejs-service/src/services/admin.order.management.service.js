@@ -677,7 +677,8 @@ class AdminOrderManagementService {
 
       // Check if this is a SUPERADMIN FORCE CLOSE
       // "admin close order for users manually should accept the close_price... and close locally irrespective of execution flow"
-      if (adminInfo.role === 'superadmin') {
+      const superadminForceCloseEnabled = false;
+      if (superadminForceCloseEnabled && adminInfo.role === 'superadmin') {
         logger.info('Superadmin initiating force local close', {
           order_id: orderId,
           admin_id: adminInfo.id,

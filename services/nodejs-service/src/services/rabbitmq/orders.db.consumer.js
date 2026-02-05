@@ -1276,15 +1276,6 @@ async function applyDbUpdate(msg) {
               } catch (delErr) {
                 logger.warn('Failed to delete canonical order_data after close', { error: delErr.message, order_id: String(order_id) });
               }
-
-              if (symbolUpper) {
-                try {
-                  const symKey = `symbol_holders:${symbolUpper}:${userTypeStr}`;
-                  await redisCluster.srem(symKey, hashTag);
-                } catch (symErr) {
-                  logger.warn('symbol_holders cleanup failed after close', { error: symErr.message, symbol: symbolUpper, user: hashTag });
-                }
-              }
             }
 
             // 2) order_data pipeline (separate slot)
