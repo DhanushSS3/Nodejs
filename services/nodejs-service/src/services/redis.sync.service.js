@@ -20,7 +20,7 @@ class RedisSyncService {
    */
   async syncUserAfterBalanceChange(userId, userType, updatedFields, options = {}) {
     const operationId = `redis_sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     try {
       logger.info(`[${operationId}] Starting Redis sync for ${userType} user ${userId}`, {
         updatedFields,
@@ -58,7 +58,7 @@ class RedisSyncService {
         stack: error.stack,
         updatedFields
       });
-      
+
       // Don't throw error - Redis sync failures shouldn't break the main operation
       // The database transaction has already been committed
       logger.warn(`[${operationId}] Continuing despite Redis sync failure - database is authoritative`);
@@ -72,20 +72,20 @@ class RedisSyncService {
   async _updateUserConfigCache(userId, userType, updatedFields, operationId) {
     try {
       const userConfigKey = `user:{${userType}:${userId}}:config`;
-      
+
       // Prepare fields for Redis hash update
       const redisFields = {};
-      
+
       if (updatedFields.wallet_balance !== undefined) {
         const balanceValue = String(updatedFields.wallet_balance);
         redisFields.wallet_balance = balanceValue;
         redisFields.balance = balanceValue;
       }
-      
+
       if (updatedFields.margin !== undefined) {
         redisFields.margin = String(updatedFields.margin);
       }
-      
+
       if (updatedFields.net_profit !== undefined) {
         redisFields.net_profit = String(updatedFields.net_profit);
       }
@@ -138,17 +138,33 @@ class RedisSyncService {
       // 1. Short-term balance cache (1 hour TTL)
       const balanceCacheKey = `user_balance:${userType}:${userId}`;
       await redisCluster.setex(balanceCacheKey, 3600, String(newBalance));
-      
-      // 2. Portfolio balance cache (if exists)
-      const portfolioKey = `user:{${userType}:${userId}}:portfolio`;
-      const portfolioExists = await redisCluster.exists(portfolioKey);
-      
-      if (portfolioExists) {
-        await redisCluster.hset(portfolioKey, {
+
+      // 2. Legacy portfolio balance cache (if exists) - user:{userType:userId}:portfolio
+      const legacyPortfolioKey = `user:{${userType}:${userId}}:portfolio`;
+      const legacyPortfolioExists = await redisCluster.exists(legacyPortfolioKey);
+
+      if (legacyPortfolioExists) {
+        await redisCluster.hset(legacyPortfolioKey, {
           wallet_balance: String(newBalance),
           balance_updated_at: new Date().toISOString()
         });
-        logger.info(`[${operationId}] Updated portfolio balance cache: ${portfolioKey}`);
+        logger.info(`[${operationId}] Updated legacy portfolio balance cache: ${legacyPortfolioKey}`);
+      }
+
+      // 3. CRITICAL: Update the actual user_portfolio key used by portfolio calculator and order validation
+      // This is the key that's checked during order placement for margin calculations
+      const userPortfolioKey = `user_portfolio:{${userType}:${userId}}`;
+      const userPortfolioExists = await redisCluster.exists(userPortfolioKey);
+
+      if (userPortfolioExists) {
+        // Only update the balance field, preserve other portfolio metrics
+        // The portfolio calculator will recalculate equity, free_margin, etc. based on the new balance
+        await redisCluster.hset(userPortfolioKey, {
+          balance: String(newBalance),
+          wallet_balance: String(newBalance),
+          balance_updated_at: new Date().toISOString()
+        });
+        logger.info(`[${operationId}] Updated user_portfolio balance: ${userPortfolioKey}`);
       }
 
       logger.info(`[${operationId}] Updated balance caches for ${userType} user ${userId}: ${newBalance}`);
@@ -192,7 +208,7 @@ class RedisSyncService {
 
       // Publish to user updates channel
       await redisCluster.publish('user_updates', JSON.stringify(updateEvent));
-      
+
       // Also publish to balance updates channel for Python services
       await redisCluster.publish('balance_updates', JSON.stringify(updateEvent));
 
@@ -246,14 +262,14 @@ class RedisSyncService {
   async _clearCachePattern(pattern) {
     try {
       const masters = redisCluster.nodes('master');
-      
+
       for (const node of masters) {
         let cursor = '0';
         do {
           const result = await node.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
           cursor = result[0];
           const keys = result[1] || [];
-          
+
           if (keys.length > 0) {
             await node.del(...keys);
           }
@@ -271,7 +287,7 @@ class RedisSyncService {
    */
   async syncAfterTransaction(transaction, operationId = null) {
     const syncId = operationId || `transaction_sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     try {
       logger.info(`[${syncId}] Syncing Redis after transaction: ${transaction.transaction_id}`);
 
@@ -308,15 +324,15 @@ class RedisSyncService {
    */
   async forceRefreshUser(userId, userType) {
     const operationId = `force_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     try {
       logger.info(`[${operationId}] Force refreshing ${userType} user ${userId} from database`);
 
       // Get fresh data from database
-      const UserModel = userType === 'live' ? 
-        require('../models/liveUser.model') : 
+      const UserModel = userType === 'live' ?
+        require('../models/liveUser.model') :
         require('../models/demoUser.model');
-      
+
       const user = await UserModel.findByPk(userId);
       if (!user) {
         throw new Error(`${userType} user ${userId} not found in database`);
@@ -360,7 +376,7 @@ class RedisSyncService {
    */
   async syncUserAfterAdminUpdate(userId, userType, updatedFields, options = {}) {
     const operationId = `admin_user_sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     try {
       logger.info(`[${operationId}] Starting Redis sync after admin user update for ${userType} user ${userId}`, {
         updatedFields: Object.keys(updatedFields),
@@ -402,7 +418,7 @@ class RedisSyncService {
         stack: error.stack,
         updatedFields
       });
-      
+
       // Don't throw error - Redis sync failures shouldn't break admin operations
       logger.warn(`[${operationId}] Continuing despite Redis sync failure - database is authoritative`);
     }
@@ -415,19 +431,19 @@ class RedisSyncService {
   async _updateUserConfigAfterAdminUpdate(userId, userType, updatedFields, operationId) {
     try {
       const userConfigKey = `user:{${userType}:${userId}}:config`;
-      
+
       // Prepare fields for Redis hash update
       const redisFields = {};
-      
+
       // Financial fields
       if (updatedFields.wallet_balance !== undefined) {
         redisFields.wallet_balance = String(updatedFields.wallet_balance);
       }
-      
+
       if (updatedFields.margin !== undefined) {
         redisFields.margin = String(updatedFields.margin);
       }
-      
+
       if (updatedFields.net_profit !== undefined) {
         redisFields.net_profit = String(updatedFields.net_profit);
       }
@@ -465,7 +481,7 @@ class RedisSyncService {
         if (updatedFields.mam_id !== undefined) {
           redisFields.mam_id = String(updatedFields.mam_id || '');
         }
-        
+
         if (updatedFields.mam_status !== undefined) {
           redisFields.mam_status = String(updatedFields.mam_status);
         }
@@ -535,16 +551,28 @@ class RedisSyncService {
         }
       }
 
-      // Update portfolio cache with new group if it exists
-      const portfolioKey = `user:{${userType}:${userId}}:portfolio`;
-      const portfolioExists = await redisCluster.exists(portfolioKey);
-      
-      if (portfolioExists) {
-        await redisCluster.hset(portfolioKey, {
+      // Update legacy portfolio cache with new group if it exists
+      const legacyPortfolioKey = `user:{${userType}:${userId}}:portfolio`;
+      const legacyPortfolioExists = await redisCluster.exists(legacyPortfolioKey);
+
+      if (legacyPortfolioExists) {
+        await redisCluster.hset(legacyPortfolioKey, {
           group: String(newGroup),
           group_updated_at: new Date().toISOString()
         });
-        logger.info(`[${operationId}] Updated portfolio cache with new group: ${portfolioKey}`);
+        logger.info(`[${operationId}] Updated legacy portfolio cache with new group: ${legacyPortfolioKey}`);
+      }
+
+      // Update user_portfolio cache with new group if it exists
+      const userPortfolioKey = `user_portfolio:{${userType}:${userId}}`;
+      const userPortfolioExists = await redisCluster.exists(userPortfolioKey);
+
+      if (userPortfolioExists) {
+        await redisCluster.hset(userPortfolioKey, {
+          group: String(newGroup),
+          group_updated_at: new Date().toISOString()
+        });
+        logger.info(`[${operationId}] Updated user_portfolio cache with new group: ${userPortfolioKey}`);
       }
 
       logger.info(`[${operationId}] Group change handling completed - future operations will use new group: ${newGroup}`);
@@ -616,7 +644,7 @@ class RedisSyncService {
 
       // Publish to general user updates channel
       await redisCluster.publish('user_updates', JSON.stringify(updateEvent));
-      
+
       // Publish to admin-specific updates channel
       await redisCluster.publish('admin_user_updates', JSON.stringify(updateEvent));
 
@@ -648,13 +676,13 @@ class RedisSyncService {
     try {
       // Test Redis connectivity
       await redisCluster.ping();
-      
+
       // Test cache operations
       const testKey = `redis_sync_health_${Date.now()}`;
       await redisCluster.setex(testKey, 10, 'test');
       const testValue = await redisCluster.get(testKey);
       await redisCluster.del(testKey);
-      
+
       if (testValue !== 'test') {
         throw new Error('Redis cache test failed');
       }
