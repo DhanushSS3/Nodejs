@@ -929,6 +929,40 @@ class OrderCloser:
                                 "error": str(e)
                             })
 
+                # CRITICAL: Trigger portfolio force recalc to update balance, equity, free_margin, margin_level
+                # This ensures the user_portfolio key is fully updated after order close, not just margin fields
+                try:
+                    from app.config.redis_config import redis_pubsub_client
+                    import json
+                    
+                    force_recalc_payload = {
+                        "type": "FORCE_PORTFOLIO_RECALC",
+                        "users": [
+                            {
+                                "user_type": user_type,
+                                "user_id": str(user_id)
+                            }
+                        ],
+                        "reason": "order_close",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    
+                    await redis_pubsub_client.publish(
+                        'portfolio_force_recalc',
+                        json.dumps(force_recalc_payload)
+                    )
+                    
+                    logger.info(
+                        "[CLOSE:PORTFOLIO_RECALC_TRIGGERED] order_id=%s user=%s:%s reason=order_close",
+                        order_id, user_type, user_id
+                    )
+                except Exception as recalc_error:
+                    # Don't fail the close if recalc trigger fails - portfolio will update on next market tick
+                    logger.warning(
+                        "[CLOSE:PORTFOLIO_RECALC_FAILED] order_id=%s user=%s:%s error=%s",
+                        order_id, user_type, user_id, str(recalc_error)
+                    )
+
                 return {
                     "ok": True,
                     "used_margin_executed": float(executed_margin or 0.0) if executed_margin is not None else None,
