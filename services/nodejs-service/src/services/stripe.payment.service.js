@@ -6,6 +6,8 @@ const logger = require('./logger.service');
 const idGenerator = require('./idGenerator.service');
 const redisUserCache = require('./redis.user.cache.service');
 const { stripePaymentLogger } = require('./logging');
+const currencyConfigService = require('./currencyConfig.service');
+const { toMinorUnits } = require('../utils/currency.util');
 const sequelize = require('../config/db');
 const {
   GatewayPayment,
@@ -15,12 +17,6 @@ const {
   StrategyProviderAccount,
   CopyFollowerAccount,
 } = require('../models');
-
-// Currencies that do not use minor units (no decimals) in Stripe
-const ZERO_DECIMAL_CURRENCIES = new Set([
-  'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg',
-  'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
-]);
 
 const DEFAULT_SETTLEMENT_RETRY_ATTEMPTS = Number.isFinite(parseInt(process.env.STRIPE_SETTLEMENT_RETRY_ATTEMPTS || '5', 10))
   ? parseInt(process.env.STRIPE_SETTLEMENT_RETRY_ATTEMPTS || '5', 10)
@@ -36,8 +32,6 @@ class StripePaymentService {
   constructor() {
     this.gatewayName = 'stripe';
     this.defaultCurrency = (process.env.STRIPE_DEPOSIT_CURRENCY || 'USD').toLowerCase();
-    this.minAmount = parseFloat(process.env.STRIPE_DEPOSIT_MIN_AMOUNT || '1');
-    this.maxAmount = parseFloat(process.env.STRIPE_DEPOSIT_MAX_AMOUNT || '100000');
 
     const secretKey = process.env.STRIPE_SECRET_KEY;
     if (!secretKey) {
@@ -64,17 +58,17 @@ class StripePaymentService {
    * Convert human amount to Stripe minor units (integer)
    * @param {string|number} amount
    * @param {string} currency
+   * @param {number} [minorUnit]
    * @returns {{ amountMinor: number, normalizedCurrency: string }}
    */
-  toMinorUnits(amount, currency) {
+  toMinorUnits(amount, currency, minorUnit = 2) {
     const numericAmount = parseFloat(amount);
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
       throw new Error('amount must be a positive number');
     }
 
     const normalizedCurrency = this.normalizeCurrency(currency);
-    const factor = ZERO_DECIMAL_CURRENCIES.has(normalizedCurrency) ? 1 : 100;
-    const amountMinor = Math.round(numericAmount * factor);
+    const amountMinor = toMinorUnits(numericAmount, minorUnit);
 
     if (amountMinor <= 0) {
       throw new Error('amount is too small for the selected currency');
@@ -83,14 +77,18 @@ class StripePaymentService {
     return { amountMinor, normalizedCurrency };
   }
 
-  fromMinorUnits(amountMinor, currency) {
+  fromMinorUnits(amountMinor, currency, minorUnit = 2) {
     const numericMinor = parseInt(amountMinor, 10);
     if (!Number.isFinite(numericMinor) || numericMinor < 0) {
       return 0;
     }
 
     const normalizedCurrency = this.normalizeCurrency(currency);
-    const factor = ZERO_DECIMAL_CURRENCIES.has(normalizedCurrency) ? 1 : 100;
+    if (!normalizedCurrency) {
+      return 0;
+    }
+
+    const factor = Math.pow(10, Math.max(0, parseInt(minorUnit, 10) || 0));
     return numericMinor / factor;
   }
 
@@ -102,14 +100,6 @@ class StripePaymentService {
     const numericAmount = parseFloat(amount);
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
       throw new Error('amount must be a positive number');
-    }
-
-    if (Number.isFinite(this.minAmount) && numericAmount < this.minAmount) {
-      throw new Error(`amount must be at least ${this.minAmount}`);
-    }
-
-    if (Number.isFinite(this.maxAmount) && numericAmount > this.maxAmount) {
-      throw new Error(`amount must not exceed ${this.maxAmount}`);
     }
   }
 
@@ -148,9 +138,12 @@ class StripePaymentService {
       throw new Error('userId and userType are required');
     }
 
-    this.validateAmountBounds(amount);
+    const normalizedCurrency = this.normalizeCurrency(currency);
+    const currencyConfig = await currencyConfigService.getCurrencyConfig(normalizedCurrency, { requireEnabled: true });
+    currencyConfigService.validateAmountBounds(amount, currencyConfig);
 
-    const { amountMinor, normalizedCurrency } = this.toMinorUnits(amount, currency);
+    const amountMinor = toMinorUnits(amount, currencyConfig.minor_unit);
+    const settlementCurrency = (currencyConfig.settlement_currency || 'USD').toString().toUpperCase();
 
     // Generate merchant reference ID upfront for logging + metadata
     const merchantReferenceId = GatewayPayment.generateMerchantReferenceId();
@@ -219,7 +212,7 @@ class StripePaymentService {
       initiator_user_type: initiatorUserType || null,
       requested_amount: parseFloat(amount),
       requested_currency: normalizedCurrency.toUpperCase(),
-      settled_currency: 'USD',
+      settled_currency: settlementCurrency,
       provider_reference_id: paymentIntent.id,
       idempotency_key: idempotencyKey || null,
       provider_payload: {
@@ -284,8 +277,8 @@ class StripePaymentService {
 
     return {
       currency,
-      min_amount: this.minAmount,
-      max_amount: this.maxAmount,
+      min_amount: null,
+      max_amount: null,
       methods: [
         {
           type: 'card',
@@ -364,8 +357,17 @@ class StripePaymentService {
       throw new Error('Stripe charge could not be retrieved for settlement details');
     }
 
-    const chargedAmount = this.fromMinorUnits(charge.amount || 0, charge.currency);
-    const chargedCurrency = (charge.currency || paymentIntent.currency || this.defaultCurrency || 'usd').toString().toUpperCase();
+    const chargedCurrencyRaw = (charge.currency || paymentIntent.currency || this.defaultCurrency || 'usd').toString();
+    let chargedMinorUnit = 2;
+    try {
+      const chargedConfig = await currencyConfigService.getCurrencyConfig(chargedCurrencyRaw, { requireEnabled: false });
+      chargedMinorUnit = chargedConfig && chargedConfig.minor_unit != null ? chargedConfig.minor_unit : 2;
+    } catch (e) {
+      chargedMinorUnit = 2;
+    }
+
+    const chargedAmount = this.fromMinorUnits(charge.amount || 0, chargedCurrencyRaw, chargedMinorUnit);
+    const chargedCurrency = chargedCurrencyRaw.toUpperCase();
 
     let balanceTransaction = null;
     let balanceTransactionId = null;
@@ -383,10 +385,19 @@ class StripePaymentService {
       throw new Error('Stripe balance transaction not yet available for settlement');
     }
 
-    const settledAmount = this.fromMinorUnits(balanceTransaction.amount || 0, balanceTransaction.currency);
-    const feeAmount = this.fromMinorUnits(balanceTransaction.fee || 0, balanceTransaction.currency);
-    const netAmount = this.fromMinorUnits(balanceTransaction.net || 0, balanceTransaction.currency);
-    const settledCurrency = (balanceTransaction.currency || 'usd').toString().toUpperCase();
+    const settledCurrencyRaw = (balanceTransaction.currency || 'usd').toString();
+    let settledMinorUnit = 2;
+    try {
+      const settledConfig = await currencyConfigService.getCurrencyConfig(settledCurrencyRaw, { requireEnabled: false });
+      settledMinorUnit = settledConfig && settledConfig.minor_unit != null ? settledConfig.minor_unit : 2;
+    } catch (e) {
+      settledMinorUnit = 2;
+    }
+
+    const settledAmount = this.fromMinorUnits(balanceTransaction.amount || 0, settledCurrencyRaw, settledMinorUnit);
+    const feeAmount = this.fromMinorUnits(balanceTransaction.fee || 0, settledCurrencyRaw, settledMinorUnit);
+    const netAmount = this.fromMinorUnits(balanceTransaction.net || 0, settledCurrencyRaw, settledMinorUnit);
+    const settledCurrency = settledCurrencyRaw.toUpperCase();
 
     return {
       chargeId,
@@ -462,12 +473,21 @@ class StripePaymentService {
     return 'PENDING';
   }
 
-  extractPaidAmount(paymentIntent) {
-    const currency = paymentIntent.currency;
+  async extractPaidAmount(paymentIntent) {
+    const currency = (paymentIntent && paymentIntent.currency) ? paymentIntent.currency : this.defaultCurrency;
     const minor = paymentIntent.amount_received != null
       ? paymentIntent.amount_received
       : paymentIntent.amount;
-    const amount = this.fromMinorUnits(minor || 0, currency);
+
+    let minorUnit = 2;
+    try {
+      const config = await currencyConfigService.getCurrencyConfig(currency, { requireEnabled: false });
+      minorUnit = config && config.minor_unit != null ? config.minor_unit : 2;
+    } catch (e) {
+      minorUnit = 2;
+    }
+
+    const amount = this.fromMinorUnits(minor || 0, currency, minorUnit);
     const normalizedCurrency = (currency || this.defaultCurrency || 'usd').toString().toUpperCase();
     return { amount, currency: normalizedCurrency };
   }
@@ -699,7 +719,7 @@ class StripePaymentService {
       }
 
       const statusBefore = payment.status;
-      const { amount: fallbackPaidAmount, currency: fallbackPaidCurrency } = this.extractPaidAmount(paymentIntent);
+      const { amount: fallbackPaidAmount, currency: fallbackPaidCurrency } = await this.extractPaidAmount(paymentIntent);
 
       const paidAmount = settlementDetails && settlementDetails.chargedAmount != null
         ? settlementDetails.chargedAmount

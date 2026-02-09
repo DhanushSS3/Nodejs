@@ -1,5 +1,6 @@
 const express = require('express');
 const stripePaymentController = require('../controllers/stripe.payment.controller');
+const currencyConfigController = require('../controllers/currencyConfig.controller');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
@@ -19,6 +20,7 @@ const allowAllOrigins = (req, res, next) => {
 router.options('/deposit', allowAllOrigins);
 router.post('/deposit', allowAllOrigins, authenticateJWT, stripePaymentController.createDeposit);
 router.get('/methods', stripePaymentController.getMethods);
+router.get('/currencies', currencyConfigController.getSupportedCurrencies);
 router.post('/webhook', stripePaymentController.handleWebhook);
 router.get('/:merchantReferenceId', stripePaymentController.getPaymentByMerchantReferenceId);
 
