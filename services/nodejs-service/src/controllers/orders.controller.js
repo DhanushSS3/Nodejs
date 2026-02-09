@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { Op } = require('sequelize');
 const logger = require('../services/logger.service');
 const orderReqLogger = require('../services/order.request.logger');
 const timingLogger = require('../services/perf.timing.logger');
