@@ -58,7 +58,13 @@ app.use((req, res, next) => {
 app.use(express.json({
   limit: '25mb',
   verify: (req, res, buf) => {
-    if (req.originalUrl && req.originalUrl.startsWith('/api/stripe-payments/webhook')) {
+    if (
+      req.originalUrl
+      && (
+        req.originalUrl.startsWith('/api/stripe-payments/webhook')
+        || req.originalUrl.startsWith('/api/stripe/webhook')
+      )
+    ) {
       req.rawBody = buf.toString('utf8');
     }
   }
@@ -129,6 +135,7 @@ app.use('/api/admin-secret', adminUsersSecretRoutes);
 app.use('/api/cache', cacheRoutes);
 app.use('/api/crypto-payments', cryptoPaymentRoutes);
 app.use('/api/stripe-payments', stripePaymentRoutes);
+app.use('/api/stripe', stripePaymentRoutes);
 app.use('/api/groups', groupsRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/withdrawals', withdrawalsRoutes);

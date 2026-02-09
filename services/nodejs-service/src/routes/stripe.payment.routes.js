@@ -20,7 +20,7 @@ const allowAllOrigins = (req, res, next) => {
 router.options('/deposit', allowAllOrigins);
 router.post('/deposit', allowAllOrigins, authenticateJWT, stripePaymentController.createDeposit);
 router.get('/methods', stripePaymentController.getMethods);
-router.get('/currencies', currencyConfigController.getSupportedCurrencies);
+router.get('/currencies', authenticateJWT, currencyConfigController.getSupportedCurrencies);
 router.post('/webhook', stripePaymentController.handleWebhook);
 router.get('/:merchantReferenceId', stripePaymentController.getPaymentByMerchantReferenceId);
 
