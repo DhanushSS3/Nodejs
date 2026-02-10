@@ -272,6 +272,42 @@ router.post('/ensure/symbol-holder', ctrl.ensureSymbolHolder);
  */
 router.get('/portfolio', ctrl.getUserPortfolio);
 
+router.post('/place-instant', ctrl.placeInstantOrder);
+
+router.post('/sl/add', ctrl.addStopLoss);
+
+router.post('/sl/remove', ctrl.removeStopLoss);
+
+router.post('/tp/add', ctrl.addTakeProfit);
+
+router.post('/tp/remove', ctrl.removeTakeProfit);
+
+router.post('/pending/place', ctrl.placePendingOrder);
+
+router.post('/pending/cancel', ctrl.cancelPendingOrder);
+
+router.post('/pending/modify', ctrl.modifyPendingOrder);
+
+router.post('/close', ctrl.closeOrder);
+
+router.post('/mam/place-instant', ctrl.placeMamInstantOrder);
+
+router.post('/mam/pending/place', ctrl.placeMamPendingOrder);
+
+router.post('/mam/pending/cancel', ctrl.cancelMamPendingOrder);
+
+router.post('/mam/sl/add', ctrl.addMamStopLoss);
+
+router.post('/mam/sl/cancel', ctrl.cancelMamStopLoss);
+
+router.post('/mam/tp/add', ctrl.addMamTakeProfit);
+
+router.post('/mam/tp/cancel', ctrl.cancelMamTakeProfit);
+
+router.post('/mam/close-all', ctrl.closeAllMamOrders);
+
+router.post('/mam/close', ctrl.closeMamOrder);
+
 /**
  * @swagger
  * /api/superadmin/orders/reject-queued:

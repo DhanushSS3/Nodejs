@@ -4,6 +4,10 @@ const https = require('https');
 const logger = require('./logger.service');
 const { redisCluster } = require('../../config/redis');
 const { LiveUserOrder, DemoUserOrder, LiveUser, DemoUser } = require('../models');
+const StrategyProviderOrder = require('../models/strategyProviderOrder.model');
+const CopyFollowerOrder = require('../models/copyFollowerOrder.model');
+const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
+const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const idGenerator = require('./idGenerator.service');
 const orderLifecycleService = require('./orderLifecycle.service');
 
@@ -63,7 +67,7 @@ function validateInstantOrderPayload(body) {
   if (!(order_price > 0)) errors.push('order_price');
   if (!(order_quantity > 0)) errors.push('order_quantity');
   if (!user_id) errors.push('user_id');
-  if (!['live', 'demo'].includes(user_type)) errors.push('user_type');
+  if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(user_type)) errors.push('user_type');
 
   return { errors, parsed: { symbol, order_type, user_type, order_price, order_quantity, user_id } };
 }
@@ -82,12 +86,42 @@ function validatePendingOrderPayload(body) {
   if (!(order_price > 0)) errors.push('order_price');
   if (!(order_quantity > 0)) errors.push('order_quantity');
   if (!user_id) errors.push('user_id');
-  if (!['live', 'demo'].includes(user_type)) errors.push('user_type');
+  if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(user_type)) errors.push('user_type');
 
   return { errors, parsed: { symbol, order_type, order_price, order_quantity, user_id, user_type } };
 }
 
 class AdminOrderManagementService {
+  _getUserModelByType(userType) {
+    switch (String(userType).toLowerCase()) {
+      case 'live':
+        return LiveUser;
+      case 'demo':
+        return DemoUser;
+      case 'strategy_provider':
+        return StrategyProviderAccount;
+      case 'copy_follower':
+        return CopyFollowerAccount;
+      default:
+        return null;
+    }
+  }
+
+  _getOrderModelByType(userType) {
+    switch (String(userType).toLowerCase()) {
+      case 'live':
+        return LiveUserOrder;
+      case 'demo':
+        return DemoUserOrder;
+      case 'strategy_provider':
+        return StrategyProviderOrder;
+      case 'copy_follower':
+        return CopyFollowerOrder;
+      default:
+        return null;
+    }
+  }
+
   /**
    * Determines user's execution flow (provider vs local)
    * @param {string} userType - 'live' or 'demo'
@@ -151,12 +185,17 @@ class AdminOrderManagementService {
 
       // Superadmins can access any user regardless of country scoping
       if (adminInfo.role === 'superadmin') {
-        const { LiveUser, DemoUser } = require('../models');
-        const UserModel = userType === 'live' ? LiveUser : DemoUser;
+        const UserModel = this._getUserModelByType(userType);
 
-        user = await UserModel.findByPk(userId, {
-          attributes: ['id', 'name', 'email', 'account_number', 'group', 'status', 'is_active', 'sending_orders']
-        });
+        if (!UserModel) {
+          throw new Error(`Unsupported user type: ${userType}`);
+        }
+
+        const attrs = String(userType).toLowerCase() === 'live' || String(userType).toLowerCase() === 'demo'
+          ? ['id', 'name', 'email', 'account_number', 'group', 'status', 'is_active', 'sending_orders']
+          : ['id', 'user_id', 'account_number', 'group', 'status', 'is_active', 'sending_orders'];
+
+        user = await UserModel.findByPk(userId, { attributes: attrs });
 
         logger.info('Superadmin access - bypassing country scoping', {
           operationId,
@@ -167,9 +206,11 @@ class AdminOrderManagementService {
         });
       } else {
         // Regular admins use scoped model (country restrictions apply)
-        user = await ScopedUserModel.findByPk(userId, {
-          attributes: ['id', 'name', 'email', 'account_number', 'group', 'status', 'is_active', 'sending_orders']
-        });
+        const attrs = String(userType).toLowerCase() === 'live' || String(userType).toLowerCase() === 'demo'
+          ? ['id', 'name', 'email', 'account_number', 'group', 'status', 'is_active', 'sending_orders']
+          : ['id', 'user_id', 'account_number', 'group', 'status', 'is_active', 'sending_orders'];
+
+        user = await ScopedUserModel.findByPk(userId, { attributes: attrs });
       }
 
       if (!user) {
@@ -218,7 +259,10 @@ class AdminOrderManagementService {
     const operationId = `validate_order_access_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     try {
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
 
       const order = await OrderModel.findOne({
         where: {
@@ -271,6 +315,14 @@ class AdminOrderManagementService {
     const operationId = `admin_place_instant_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     try {
+      if (String(userType).toLowerCase() === 'copy_follower') {
+        throw new AdminOrderError(
+          'copy_follower orders cannot be placed directly. They must be created by copy distribution from a strategy_provider master order.',
+          400,
+          'copy_follower_direct_place_not_supported'
+        );
+      }
+
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
 
@@ -315,7 +367,10 @@ class AdminOrderManagementService {
       }
 
       // 6. Persist initial order (QUEUED) - same as user orders
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       let initialOrder;
       const hasIdempotency = !!userPayload.idempotency_key;
 
@@ -724,8 +779,8 @@ class AdminOrderManagementService {
       if (!userPayload.order_id) {
         throw new Error('order_id is required');
       }
-      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
+      if (!userPayload.user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live, demo, strategy_provider, or copy_follower');
       }
       if (!userPayload.user_id) {
         throw new Error('user_id is required');
@@ -740,7 +795,10 @@ class AdminOrderManagementService {
 
       if (!canonical) {
         // Fallback to SQL
-        const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+        const OrderModel = this._getOrderModelByType(userType);
+        if (!OrderModel) {
+          throw new Error(`Unsupported user type: ${userType}`);
+        }
         sqlRow = await OrderModel.findOne({ where: { order_id: orderId } });
         if (!sqlRow) {
           throw new Error('Order not found');
@@ -792,7 +850,10 @@ class AdminOrderManagementService {
 
       // 7. Persist lifecycle ids into SQL row (EXACT same as user orders)
       try {
-        const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+        const OrderModel = this._getOrderModelByType(userType);
+        if (!OrderModel) {
+          throw new Error(`Unsupported user type: ${userType}`);
+        }
         const rowToUpdate = sqlRow || await OrderModel.findOne({ where: { order_id: orderId } });
         if (rowToUpdate) {
           const idUpdates = { close_id };
@@ -904,7 +965,10 @@ class AdminOrderManagementService {
       // If local flow, finalize DB immediately (EXACT same as user orders)
       if (flow === 'local') {
         try {
-          const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+          const OrderModel = this._getOrderModelByType(userType);
+          if (!OrderModel) {
+            throw new Error(`Unsupported user type: ${userType}`);
+          }
           const row = await OrderModel.findOne({ where: { order_id: orderId } });
           if (row) {
             const updateFields = {
@@ -971,8 +1035,10 @@ class AdminOrderManagementService {
         // Increment user's aggregate net_profit with this close P/L (EXACT same as user orders)
         try {
           if (typeof result.net_profit === 'number') {
-            const UserModel = userType === 'live' ? LiveUser : DemoUser;
-            await UserModel.increment({ net_profit: result.net_profit }, { where: { id: parseInt(userId, 10) } });
+            const UserModel = this._getUserModelByType(userType);
+            if (UserModel) {
+              await UserModel.increment({ net_profit: result.net_profit }, { where: { id: parseInt(userId, 10) } });
+            }
           }
         } catch (e) {
           logger.error('Failed to increment user net_profit after admin local close', { user_id: userId, error: e.message });
@@ -1050,6 +1116,14 @@ class AdminOrderManagementService {
     const operationId = `admin_place_pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     try {
+      if (String(userType).toLowerCase() === 'copy_follower') {
+        throw new AdminOrderError(
+          'copy_follower pending orders cannot be placed directly. Pending copy orders must be created by copy distribution from a strategy_provider master order.',
+          400,
+          'copy_follower_direct_pending_place_not_supported'
+        );
+      }
+
       // 1. Validate admin access
       const { user } = await this.validateAdminAccess(adminInfo, userType, userId, ScopedUserModel);
 
@@ -1143,7 +1217,10 @@ class AdminOrderManagementService {
       }
 
       // 9. Generate order_id and persist SQL row (EXACT same as user orders)
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       const order_id = await idGenerator.generateOrderId();
       try {
         await OrderModel.create({
@@ -1441,7 +1518,10 @@ class AdminOrderManagementService {
 
       // 2. First get the existing order to extract symbol and order_type
       const canonical = await this._getCanonicalOrder(orderId);
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       let row = null;
 
       if (!canonical) {
@@ -1494,8 +1574,8 @@ class AdminOrderManagementService {
       if (!userPayload.order_id || !userPayload.user_id || !userPayload.user_type || !userPayload.symbol || !['BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'].includes(userPayload.order_type)) {
         throw new Error('Missing/invalid fields');
       }
-      if (!['live', 'demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
+      if (!['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live, demo, strategy_provider, or copy_follower');
       }
 
       // 6. Flow determination (EXACT same logic as user orders)
@@ -1721,8 +1801,8 @@ class AdminOrderManagementService {
       if (!userPayload.user_id) {
         throw new Error('user_id is required');
       }
-      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
+      if (!userPayload.user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live, demo, strategy_provider, or copy_follower');
       }
       if (!userPayload.stop_loss || !(Number(userPayload.stop_loss) > 0)) {
         throw new Error('stop_loss must be a positive number');
@@ -1730,7 +1810,10 @@ class AdminOrderManagementService {
 
       // 4. Load canonical order and validate (EXACT same logic as user orders)
       const canonical = await this._getCanonicalOrder(orderId);
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       let row = null;
 
       if (!canonical) {
@@ -1758,7 +1841,9 @@ class AdminOrderManagementService {
       // 5. Extract order details (EXACT same logic as user orders)
       const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
       const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
-      const entry_price_num = canonical ? Number(canonical.order_price) : Number(row.order_price);
+      const entry_price_num = canonical
+        ? Number(canonical.execution_price || canonical.order_price)
+        : Number(row.execution_price || row.order_price);
 
       if (!(entry_price_num > 0)) {
         throw new Error('Invalid entry price for stop loss calculation');
@@ -1942,13 +2027,16 @@ class AdminOrderManagementService {
       if (!userPayload.user_id) {
         throw new Error('user_id is required');
       }
-      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
+      if (!userPayload.user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live, demo, strategy_provider, or copy_follower');
       }
 
       // 4. Load canonical order and validate (EXACT same logic as user orders)
       const canonical = await this._getCanonicalOrder(orderId);
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       let row = null;
 
       if (!canonical) {
@@ -2206,8 +2294,8 @@ class AdminOrderManagementService {
       if (!userPayload.user_id) {
         throw new Error('user_id is required');
       }
-      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
+      if (!userPayload.user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live, demo, strategy_provider, or copy_follower');
       }
       if (!userPayload.take_profit || !(Number(userPayload.take_profit) > 0)) {
         throw new Error('take_profit must be a positive number');
@@ -2215,7 +2303,10 @@ class AdminOrderManagementService {
 
       // 4. Load canonical order and validate (EXACT same logic as user orders)
       const canonical = await this._getCanonicalOrder(orderId);
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       let row = null;
 
       if (!canonical) {
@@ -2243,7 +2334,9 @@ class AdminOrderManagementService {
       // 5. Extract order details (EXACT same logic as user orders)
       const symbol = canonical ? normalizeStr(canonical.symbol).toUpperCase() : normalizeStr(row.symbol || row.order_company_name).toUpperCase();
       const order_type = canonical ? normalizeStr(canonical.order_type).toUpperCase() : normalizeStr(row.order_type).toUpperCase();
-      const entry_price_num = canonical ? Number(canonical.order_price) : Number(row.order_price);
+      const entry_price_num = canonical
+        ? Number(canonical.execution_price || canonical.order_price)
+        : Number(row.execution_price || row.order_price);
 
       if (!(entry_price_num > 0)) {
         throw new Error('Invalid entry price for take profit calculation');
@@ -2427,13 +2520,16 @@ class AdminOrderManagementService {
       if (!userPayload.user_id) {
         throw new Error('user_id is required');
       }
-      if (!userPayload.user_type || !['live', 'demo'].includes(userPayload.user_type)) {
-        throw new Error('user_type must be live or demo');
+      if (!userPayload.user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(userPayload.user_type)) {
+        throw new Error('user_type must be live, demo, strategy_provider, or copy_follower');
       }
 
       // 4. Load canonical order and validate (EXACT same logic as user orders)
       const canonical = await this._getCanonicalOrder(orderId);
-      const OrderModel = userType === 'live' ? LiveUserOrder : DemoUserOrder;
+      const OrderModel = this._getOrderModelByType(userType);
+      if (!OrderModel) {
+        throw new Error(`Unsupported user type: ${userType}`);
+      }
       let row = null;
 
       if (!canonical) {

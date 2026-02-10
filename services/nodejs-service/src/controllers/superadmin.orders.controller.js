@@ -6,8 +6,12 @@ const LiveUserOrder = require('../models/liveUserOrder.model');
 const DemoUserOrder = require('../models/demoUserOrder.model');
 const StrategyProviderAccount = require('../models/strategyProviderAccount.model');
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
+const MAMAccount = require('../models/mamAccount.model');
+const MAMOrder = require('../models/mamOrder.model');
 const logger = require('../services/logger.service');
 const adminAuditService = require('../services/admin.audit.service');
+const adminOrderManagementService = require('../services/admin.order.management.service');
+const mamOrderService = require('../services/mamOrder.service');
 
 function ok(res, data, message = 'OK') {
   return res.status(200).json({ success: true, message, data });
@@ -18,6 +22,1004 @@ function bad(res, message, code = 400) {
 
 const SUPPORTED_USER_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
 const BACKFILL_SUPPORTED_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
+
+// POST /api/superadmin/orders/place-instant
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, symbol: string, order_type: string, order_price: number, order_quantity: number, idempotency_key?: string }
+async function placeInstantOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+
+    const orderData = { ...(req.body || {}) };
+
+    const result = await adminOrderManagementService.placeInstantOrder(
+      req.admin,
+      user_type,
+      userIdInt,
+      orderData,
+      null
+    );
+
+    const response = ok(res, result?.data || result, 'Instant order accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_PLACE_INSTANT',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_PLACE_INSTANT',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to place instant order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/sl/add
+// body: { mam_account_id: string|number, mam_order_id: string|number, stop_loss: number }
+async function addMamStopLoss(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountId = Number(req.body.mam_account_id);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const mamOrderIdRaw = req.body.mam_order_id ?? req.body.order_id;
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      return bad(res, 'mam_order_id must be a positive integer', 400);
+    }
+
+    const stopLossRaw = req.body.stop_loss;
+    const stopLoss = stopLossRaw != null ? Number(stopLossRaw) : NaN;
+    if (!(stopLoss > 0)) {
+      return bad(res, 'stop_loss must be > 0', 400);
+    }
+
+    const result = await mamOrderService.addStopLoss({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: { order_id: String(mamOrderId), stop_loss: stopLoss }
+    });
+
+    const response = ok(res, result, 'MAM stoploss accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_STOPLOSS_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_STOPLOSS_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || 500;
+    return bad(res, `Failed to add MAM stoploss: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/sl/cancel
+// body: { mam_account_id: string|number, mam_order_id: string|number }
+async function cancelMamStopLoss(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountId = Number(req.body.mam_account_id);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const mamOrderIdRaw = req.body.mam_order_id ?? req.body.order_id;
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      return bad(res, 'mam_order_id must be a positive integer', 400);
+    }
+
+    const result = await mamOrderService.cancelStopLoss({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: { order_id: String(mamOrderId) }
+    });
+
+    const response = ok(res, result, 'MAM stoploss cancel accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_STOPLOSS_CANCEL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_STOPLOSS_CANCEL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || 500;
+    return bad(res, `Failed to cancel MAM stoploss: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/tp/add
+// body: { mam_account_id: string|number, mam_order_id: string|number, take_profit: number }
+async function addMamTakeProfit(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountId = Number(req.body.mam_account_id);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const mamOrderIdRaw = req.body.mam_order_id ?? req.body.order_id;
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      return bad(res, 'mam_order_id must be a positive integer', 400);
+    }
+
+    const takeProfitRaw = req.body.take_profit;
+    const takeProfit = takeProfitRaw != null ? Number(takeProfitRaw) : NaN;
+    if (!(takeProfit > 0)) {
+      return bad(res, 'take_profit must be > 0', 400);
+    }
+
+    const result = await mamOrderService.addTakeProfit({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: { order_id: String(mamOrderId), take_profit: takeProfit }
+    });
+
+    const response = ok(res, result, 'MAM takeprofit accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_TAKEPROFIT_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_TAKEPROFIT_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || 500;
+    return bad(res, `Failed to add MAM takeprofit: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/tp/cancel
+// body: { mam_account_id: string|number, mam_order_id: string|number }
+async function cancelMamTakeProfit(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountId = Number(req.body.mam_account_id);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const mamOrderIdRaw = req.body.mam_order_id ?? req.body.order_id;
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      return bad(res, 'mam_order_id must be a positive integer', 400);
+    }
+
+    const result = await mamOrderService.cancelTakeProfit({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: { order_id: String(mamOrderId) }
+    });
+
+    const response = ok(res, result, 'MAM takeprofit cancel accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_TAKEPROFIT_CANCEL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_TAKEPROFIT_CANCEL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || 500;
+    return bad(res, `Failed to cancel MAM takeprofit: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/close-all
+// body: { mam_account_id: string|number }
+async function closeAllMamOrders(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountId = Number(req.body.mam_account_id);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const result = await mamOrderService.closeAllMamOrders({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+    });
+
+    const response = ok(res, result, 'MAM close-all accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_CLOSE_ALL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_CLOSE_ALL',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || 500;
+    return bad(res, `Failed to close all MAM orders: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/pending/place
+// body: { mam_account_id: string|number, symbol: string, order_type: string, order_price?: number, price?: number, volume?: number, order_quantity?: number }
+async function placeMamPendingOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountIdRaw = req.body.mam_account_id;
+    const mamAccountId = Number(mamAccountIdRaw);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const symbol = String(req.body.symbol || req.body.order_company_name || '').trim().toUpperCase();
+    const order_type = String(req.body.order_type || '').trim().toUpperCase();
+    const order_price = req.body.order_price != null ? Number(req.body.order_price) : (req.body.price != null ? Number(req.body.price) : NaN);
+    const volume = req.body.volume != null ? Number(req.body.volume) : (req.body.order_quantity != null ? Number(req.body.order_quantity) : NaN);
+
+    if (!symbol) return bad(res, 'symbol is required', 400);
+    if (!order_type) return bad(res, 'order_type is required', 400);
+    if (!(order_price > 0)) return bad(res, 'order_price (or price) must be > 0', 400);
+    if (!(volume > 0)) return bad(res, 'volume (or order_quantity) must be > 0', 400);
+
+    const result = await mamOrderService.placePendingOrder({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: {
+        symbol,
+        order_type,
+        order_price,
+        volume,
+      }
+    });
+
+    const response = ok(res, result, 'MAM pending order accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_PLACE_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_PLACE_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to place MAM pending order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/pending/cancel
+// body: { mam_account_id: string|number, mam_order_id: string|number, cancel_message?: string, status?: string }
+async function cancelMamPendingOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountIdRaw = req.body.mam_account_id;
+    const mamAccountId = Number(mamAccountIdRaw);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const mamOrderIdRaw = req.body.mam_order_id ?? req.body.order_id;
+    const mamOrderId = Number(mamOrderIdRaw);
+    if (!Number.isInteger(mamOrderId) || mamOrderId <= 0) {
+      return bad(res, 'mam_order_id must be a positive integer', 400);
+    }
+
+    const cancel_message = req.body.cancel_message ? String(req.body.cancel_message).trim() : undefined;
+    const status = req.body.status ? String(req.body.status).trim().toUpperCase() : undefined;
+
+    const result = await mamOrderService.cancelPendingOrder({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: {
+        order_id: String(mamOrderId),
+        cancel_message,
+        status,
+      }
+    });
+
+    const response = ok(res, result, 'MAM pending cancel accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_CANCEL_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_CANCEL_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to cancel MAM pending order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/place-instant
+// body: { mam_account_id: string|number, symbol: string, order_type: string, order_price: number, volume: number, stop_loss?: number, take_profit?: number }
+async function placeMamInstantOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountIdRaw = req.body.mam_account_id;
+    const mamAccountId = Number(mamAccountIdRaw);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const symbol = String(req.body.symbol || req.body.order_company_name || '').trim().toUpperCase();
+    const order_type = String(req.body.order_type || '').trim().toUpperCase();
+    const order_price = req.body.order_price != null ? Number(req.body.order_price) : NaN;
+    const volume = req.body.volume != null ? Number(req.body.volume) : (req.body.order_quantity != null ? Number(req.body.order_quantity) : NaN);
+    const stop_loss = req.body.stop_loss != null ? Number(req.body.stop_loss) : null;
+    const take_profit = req.body.take_profit != null ? Number(req.body.take_profit) : null;
+
+    if (!symbol) return bad(res, 'symbol is required', 400);
+    if (!order_type) return bad(res, 'order_type is required', 400);
+    if (!(order_price > 0)) return bad(res, 'order_price must be > 0', 400);
+    if (!(volume > 0)) return bad(res, 'volume must be > 0', 400);
+
+    const result = await mamOrderService.placeInstantOrder({
+      mamAccountId,
+      managerId: req.admin?.id || 0,
+      payload: {
+        symbol,
+        order_type,
+        order_price,
+        volume,
+        stop_loss: (stop_loss != null && Number.isFinite(stop_loss) && stop_loss > 0) ? stop_loss : null,
+        take_profit: (take_profit != null && Number.isFinite(take_profit) && take_profit > 0) ? take_profit : null,
+      }
+    });
+
+    const response = ok(res, result, 'MAM instant order accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_PLACE_INSTANT',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_PLACE_INSTANT',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to place MAM instant order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/sl/add
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string, stop_loss?: number, stop_loss_price?: number }
+async function addStopLoss(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const sl = req.body.stop_loss_price ?? req.body.stop_loss;
+    const slNum = sl != null ? Number(sl) : NaN;
+    if (!(slNum > 0)) {
+      return bad(res, 'stop_loss must be > 0', 400);
+    }
+
+    const slData = { ...(req.body || {}), stop_loss: slNum };
+    const result = await adminOrderManagementService.setStopLoss(req.admin, user_type, userIdInt, order_id, slData, null);
+
+    const response = ok(res, result?.data || result, 'Stop loss accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_STOPLOSS_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_STOPLOSS_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to add stop loss: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/sl/remove
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string }
+async function removeStopLoss(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const result = await adminOrderManagementService.removeStopLoss(req.admin, user_type, userIdInt, order_id, req.body || {}, null);
+    const response = ok(res, result?.data || result, 'Stop loss removal accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_STOPLOSS_REMOVE',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_STOPLOSS_REMOVE',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to remove stop loss: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/tp/add
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string, take_profit?: number, take_profit_price?: number }
+async function addTakeProfit(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const tp = req.body.take_profit_price ?? req.body.take_profit;
+    const tpNum = tp != null ? Number(tp) : NaN;
+    if (!(tpNum > 0)) {
+      return bad(res, 'take_profit must be > 0', 400);
+    }
+
+    const tpData = { ...(req.body || {}), take_profit: tpNum };
+    const result = await adminOrderManagementService.setTakeProfit(req.admin, user_type, userIdInt, order_id, tpData, null);
+
+    const response = ok(res, result?.data || result, 'Take profit accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_TAKEPROFIT_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_TAKEPROFIT_ADD',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to add take profit: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/tp/remove
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string }
+async function removeTakeProfit(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const result = await adminOrderManagementService.removeTakeProfit(req.admin, user_type, userIdInt, order_id, req.body || {}, null);
+    const response = ok(res, result?.data || result, 'Take profit removal accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_TAKEPROFIT_REMOVE',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_TAKEPROFIT_REMOVE',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to remove take profit: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/pending/place
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, symbol: string, order_type: string, price?: number, order_price?: number, quantity?: number, order_quantity?: number }
+async function placePendingOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+
+    const orderData = { ...(req.body || {}) };
+    if (orderData.order_price == null && orderData.price != null) orderData.order_price = orderData.price;
+    if (orderData.order_quantity == null && orderData.quantity != null) orderData.order_quantity = orderData.quantity;
+
+    const result = await adminOrderManagementService.placePendingOrder(
+      req.admin,
+      user_type,
+      userIdInt,
+      orderData,
+      null
+    );
+
+    const response = ok(res, result?.data || result, 'Pending order accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_PLACE_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_PLACE_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to place pending order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/pending/cancel
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string, cancel_message?: string, status?: string }
+async function cancelPendingOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const cancelData = { ...(req.body || {}) };
+    const result = await adminOrderManagementService.cancelPendingOrder(
+      req.admin,
+      user_type,
+      userIdInt,
+      order_id,
+      cancelData,
+      null
+    );
+
+    const response = ok(res, result?.data || result, 'Pending cancel accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_CANCEL_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_CANCEL_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to cancel pending order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/pending/modify
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string, new_price?: number, price?: number, order_price?: number }
+async function modifyPendingOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const rawNewPrice = req.body.new_price ?? req.body.price ?? req.body.order_price;
+    const newPrice = rawNewPrice != null ? Number(rawNewPrice) : NaN;
+    if (!(newPrice > 0)) {
+      return bad(res, 'new_price (or price/order_price) must be > 0', 400);
+    }
+
+    const updateData = { ...(req.body || {}), price: newPrice };
+
+    const result = await adminOrderManagementService.modifyPendingOrder(
+      req.admin,
+      user_type,
+      userIdInt,
+      order_id,
+      updateData,
+      null
+    );
+
+    const response = ok(res, result?.data || result, 'Pending modify accepted');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MODIFY_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MODIFY_PENDING',
+        ipAddress: req.ip,
+        requestBody: { request: req.body },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to modify pending order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/close
+// body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, order_id: string, close_price?: number, reason?: string, status?: string, order_status?: string }
+async function closeOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const user_type = String(req.body.user_type || '').toLowerCase();
+    const user_id_raw = req.body.user_id;
+    const order_id = String(req.body.order_id || '').trim();
+    const reason = req.body.reason ? String(req.body.reason).trim() : undefined;
+
+    if (!SUPPORTED_USER_TYPES.has(user_type)) {
+      return bad(res, 'user_type must be one of live|demo|strategy_provider|copy_follower', 400);
+    }
+
+    const userIdInt = parseInt(String(user_id_raw), 10);
+    if (!Number.isInteger(userIdInt) || userIdInt <= 0) {
+      return bad(res, 'user_id must be a positive integer', 400);
+    }
+
+    if (!order_id) {
+      return bad(res, 'order_id is required', 400);
+    }
+
+    const closeData = { ...(req.body || {}) };
+    closeData.close_message = 'Admin-Closed';
+
+    const result = await adminOrderManagementService.closeOrder(
+      req.admin,
+      user_type,
+      userIdInt,
+      order_id,
+      closeData,
+      null
+    );
+
+    const response = ok(res, result?.data || result, 'Order close dispatched');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_CLOSE_ORDER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, reason, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_CLOSE_ORDER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, reason },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || err?.response?.status || 500;
+    return bad(res, `Failed to close order: ${err.message}`, status);
+  }
+}
+
+// POST /api/superadmin/orders/mam/close
+// body: { mam_account_id: string|number, mam_order_id: string|number, close_price?: number, close_message?: string }
+async function closeMamOrder(req, res) {
+  const adminId = req.admin?.id;
+  try {
+    const mam_account_id = Number(req.body.mam_account_id);
+    const mam_order_id = Number(req.body.mam_order_id);
+    const close_message = req.body.close_message ? String(req.body.close_message).trim() : undefined;
+    const close_price = req.body.close_price != null ? Number(req.body.close_price) : undefined;
+
+    if (!Number.isInteger(mam_account_id) || mam_account_id <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+    if (!Number.isInteger(mam_order_id) || mam_order_id <= 0) {
+      return bad(res, 'mam_order_id must be a positive integer', 400);
+    }
+
+    const mamAccount = await MAMAccount.findByPk(mam_account_id);
+    if (!mamAccount || mamAccount.status !== 'active') {
+      return bad(res, 'MAM account not found or inactive', 404);
+    }
+
+    const mamOrder = await MAMOrder.findByPk(mam_order_id);
+    if (!mamOrder || Number(mamOrder.mam_account_id) !== Number(mam_account_id)) {
+      return bad(res, 'MAM order not found for this account', 404);
+    }
+
+    const result = await mamOrderService.closeMamOrder({
+      mamAccountId: mam_account_id,
+      managerId: req.admin?.id || 0,
+      payload: {
+        order_id: String(mam_order_id),
+        symbol: String(mamOrder.symbol).toUpperCase(),
+        order_type: String(mamOrder.order_type).toUpperCase(),
+        status: 'CLOSED',
+        order_status: 'CLOSED',
+        close_price: Number.isFinite(close_price) && close_price > 0 ? close_price : undefined,
+        close_message: 'Admin-Closed'
+      }
+    });
+
+    const response = ok(res, result, 'MAM order close dispatched');
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_CLOSE_MAM_ORDER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, close_message, response: result },
+        status: 'SUCCESS',
+      });
+    }
+    return response;
+  } catch (err) {
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_CLOSE_MAM_ORDER',
+        ipAddress: req.ip,
+        requestBody: { request: req.body, close_message },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    const status = err?.statusCode || 500;
+    return bad(res, `Failed to close MAM order: ${err.message}`, status);
+  }
+}
 
 // POST /api/superadmin/orders/reject-queued
 // body: { order_id: string, user_type: 'live'|'demo', user_id: string|number, reason?: string }
@@ -559,8 +1561,26 @@ module.exports = {
   ensureHolding,
   ensureSymbolHolder,
   getUserPortfolio,
+  placeInstantOrder,
+  placePendingOrder,
+  cancelPendingOrder,
+  modifyPendingOrder,
+  addStopLoss,
+  removeStopLoss,
+  addTakeProfit,
+  removeTakeProfit,
+  placeMamInstantOrder,
+  placeMamPendingOrder,
+  cancelMamPendingOrder,
+  addMamStopLoss,
+  cancelMamStopLoss,
+  addMamTakeProfit,
+  cancelMamTakeProfit,
+  closeAllMamOrders,
   rejectQueued,
   getQueuedOrders,
   getMarginStatus,
   pruneUser,
+  closeOrder,
+  closeMamOrder,
 };
