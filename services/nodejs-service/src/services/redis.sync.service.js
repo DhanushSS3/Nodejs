@@ -165,6 +165,33 @@ class RedisSyncService {
           balance_updated_at: new Date().toISOString()
         });
         logger.info(`[${operationId}] Updated user_portfolio balance: ${userPortfolioKey}`);
+
+        // If there are no open orders, normalize portfolio fields immediately.
+        // This prevents stale negative equity/free_margin from blocking order placement
+        // before the Python portfolio calculator processes portfolio_force_recalc.
+        try {
+          const userOrdersIndexKey = `user_orders_index:{${userType}:${userId}}`;
+          const openOrderIds = await redisCluster.smembers(userOrdersIndexKey);
+
+          if (!openOrderIds || openOrderIds.length === 0) {
+            await redisCluster.hset(userPortfolioKey, {
+              used_margin_executed: '0.0',
+              used_margin_all: '0.0',
+              used_margin: '0.0',
+              equity: String(newBalance),
+              free_margin: String(newBalance),
+              margin_level: '0.0',
+              open_pnl: '0.0',
+              total_pl: '0.0',
+              ts: String(Date.now()),
+              calc_status: 'ok',
+              degraded_fields: ''
+            });
+            logger.info(`[${operationId}] Normalized user_portfolio fields (no open orders): ${userPortfolioKey}`);
+          }
+        } catch (normalizeError) {
+          logger.warn(`[${operationId}] Failed to normalize user_portfolio fields for ${userType} user ${userId}: ${normalizeError.message}`);
+        }
       }
 
       logger.info(`[${operationId}] Updated balance caches for ${userType} user ${userId}: ${newBalance}`);
