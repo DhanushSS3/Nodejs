@@ -1,4 +1,4 @@
-const { redisCluster } = require('../../config/redis');
+const { redisCluster, redisPubSubPublisher } = require('../../config/redis');
 const redisUserCacheService = require('./redis.user.cache.service');
 const logger = require('./logger.service');
 
@@ -122,10 +122,54 @@ class RedisSyncService {
     };
 
     try {
-      await redisCluster.publish('portfolio_force_recalc', JSON.stringify(payload));
-      logger.info(`[${operationId}] Published portfolio_force_recalc for ${userType} user ${userId}`, payload);
+      const publishStartMs = Date.now();
+      logger.info(`[${operationId}] Publishing portfolio_force_recalc for ${userType} user ${userId}`, {
+        reason,
+        channel: 'portfolio_force_recalc',
+        operation_id: operationId,
+        users_count: payload.users.length
+      });
+
+      const msg = JSON.stringify(payload);
+      let receiversPubSub = null;
+      let receiversCluster = null;
+
+      // Primary: dedicated non-cluster pubsub publisher (deterministic in Redis Cluster)
+      try {
+        if (redisPubSubPublisher) {
+          receiversPubSub = await redisPubSubPublisher.publish('portfolio_force_recalc', msg);
+        }
+      } catch (pubErr) {
+        logger.warn(`[${operationId}] PubSub publisher publish failed for ${userType} user ${userId}`, {
+          error: pubErr.message,
+          stack: pubErr.stack
+        });
+      }
+
+      // Secondary: cluster publish (best-effort)
+      try {
+        receiversCluster = await redisCluster.publish('portfolio_force_recalc', msg);
+      } catch (clusterErr) {
+        logger.warn(`[${operationId}] Cluster publish failed for ${userType} user ${userId}`, {
+          error: clusterErr.message,
+          stack: clusterErr.stack
+        });
+      }
+
+      const publishDurationMs = Date.now() - publishStartMs;
+
+      logger.info(`[${operationId}] Published portfolio_force_recalc for ${userType} user ${userId}`, {
+        receivers_pubsub: receiversPubSub,
+        receivers_cluster: receiversCluster,
+        publishDurationMs,
+        payload
+      });
     } catch (error) {
-      logger.warn(`[${operationId}] Failed to publish portfolio_force_recalc for ${userType} user ${userId}: ${error.message}`);
+      logger.warn(`[${operationId}] Failed to publish portfolio_force_recalc for ${userType} user ${userId}`, {
+        error: error.message,
+        stack: error.stack,
+        payload
+      });
     }
   }
 
@@ -172,6 +216,11 @@ class RedisSyncService {
         try {
           const userOrdersIndexKey = `user_orders_index:{${userType}:${userId}}`;
           const openOrderIds = await redisCluster.smembers(userOrdersIndexKey);
+
+          logger.info(`[${operationId}] user_orders_index size check for ${userType} user ${userId}`, {
+            userOrdersIndexKey,
+            count: Array.isArray(openOrderIds) ? openOrderIds.length : 0,
+          });
 
           if (!openOrderIds || openOrderIds.length === 0) {
             await redisCluster.hset(userPortfolioKey, {

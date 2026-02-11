@@ -9,6 +9,24 @@ const nodes = hosts.map(h => {
   return { host, port: parseInt(port) };
 });
 
+// Dedicated non-cluster client for Pub/Sub publishing.
+// Redis Cluster Pub/Sub is node-local; pinning to a single node (same one Python subscribes to)
+// makes delivery deterministic.
+const pubsubHost = nodes[0]?.host || '127.0.0.1';
+const pubsubPort = nodes[0]?.port || 7001;
+const redisPubSubPublisher = new Redis({
+  host: pubsubHost,
+  port: pubsubPort,
+  password: process.env.REDIS_PASSWORD || 'admin@livefxhub@123',
+  connectTimeout: 10000,
+  enableReadyCheck: true,
+  maxRetriesPerRequest: null,
+});
+
+redisPubSubPublisher.on('error', (err) => {
+  console.error('❌ Redis PubSub Publisher error:', err);
+});
+
 const redisCluster = new Redis.Cluster(nodes, {
   // Redis options applied to each node connection
   redisOptions: {
@@ -87,4 +105,5 @@ const redisReadyPromise = new Promise((resolve, reject) => {
 module.exports = {
   redisCluster,
   redisReadyPromise,
+  redisPubSubPublisher,
 };
