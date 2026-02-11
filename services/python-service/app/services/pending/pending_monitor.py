@@ -286,7 +286,7 @@ class PendingMonitor:
             )
 
     async def _execute_pending(self, order_id: str, user_type: str, user_id: str, symbol: str,
-                               order_type: str, order_qty: float, exec_px: float, group: str):
+                               order_type: str, order_qty: float, exec_px: float, group: str) -> bool:
         # Send to OPEN worker as executed
         side = _side_from_type(order_type)
         try:
@@ -308,6 +308,7 @@ class PendingMonitor:
                 },
                 "group": group,
             }
+            # If this publish fails, we must NOT remove the pending order from Redis.
             await self._publish(OPEN_QUEUE, payload)
             
             # Immediately update DB to change order status from PENDING to OPEN
@@ -329,9 +330,13 @@ class PendingMonitor:
                 logger.info(f"Sent immediate DB update for pending order trigger: {order_id}")
             except Exception as e:
                 logger.exception("Failed to send immediate DB update for pending trigger %s: %s", order_id, e)
-                
+
+            # OPEN publish succeeded => consider execution accepted. DB update is best-effort.
+            return True
+
         except Exception:
             logger.exception("execute_pending publish failed for %s", order_id)
+            return False
 
     async def process_symbol(self, symbol: str, limit_per_type: int = 200):
         symbol = str(symbol).upper()
@@ -453,8 +458,20 @@ class PendingMonitor:
                     except Exception:
                         hs_val = 0.0
                     exec_px = (float(ask or 0.0) + hs_val)
-                    await self._execute_pending(oid, user_type, user_id, symbol, order_type, order_qty, exec_px, group)
-                    await self.remove_pending(symbol, order_type, oid)
+                    executed_ok = await self._execute_pending(oid, user_type, user_id, symbol, order_type, order_qty, exec_px, group)
+                    if executed_ok:
+                        await self.remove_pending(symbol, order_type, oid)
+                    else:
+                        logger.warning(
+                            "Pending trigger publish failed; keeping pending order in Redis for retry",
+                            extra={
+                                "order_id": str(oid),
+                                "user_type": str(user_type),
+                                "user_id": str(user_id),
+                                "symbol": str(symbol).upper(),
+                                "order_type": str(order_type).upper(),
+                            },
+                        )
                 finally:
                     # Best-effort unlock
                     try:
