@@ -28,12 +28,13 @@ const fileFilter = (req, file, cb) => {
       'image/gif',
       'image/webp',
       'image/bmp',
-      'image/tiff'
+      'image/tiff',
+      'application/pdf'
     ];
     const fallbackMimes = ['application/octet-stream'];
 
     // Allowed file extensions (case-insensitive)
-    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'];
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.pdf'];
     
     // Get file extension from original filename
     const fileExtension = path.extname(file.originalname).toLowerCase();
@@ -48,7 +49,7 @@ const fileFilter = (req, file, cb) => {
           mimetype: file.mimetype
         });
       } else {
-        const error = new Error(`Invalid file type: ${file.mimetype}. Only image files (JPEG, PNG, GIF, WebP, BMP, TIFF) are allowed.`);
+        const error = new Error(`Invalid file type: ${file.mimetype}. Only image files (JPEG, PNG, GIF, WebP, BMP, TIFF) and PDF are allowed.`);
         error.code = 'INVALID_FILE_TYPE';
         error.field = file.fieldname;
         error.filename = file.originalname;
@@ -58,7 +59,7 @@ const fileFilter = (req, file, cb) => {
     
     // Validate file extension
     if (!allowedExtensions.includes(fileExtension)) {
-      const error = new Error(`Invalid file extension: ${fileExtension}. Only image files (.jpg, .jpeg, .png, .gif, .webp, .bmp, .tiff) are allowed.`);
+      const error = new Error(`Invalid file extension: ${fileExtension}. Only image files (.jpg, .jpeg, .png, .gif, .webp, .bmp, .tiff) and PDF (.pdf) are allowed.`);
       error.code = 'INVALID_FILE_EXTENSION';
       error.field = file.fieldname;
       error.filename = file.originalname;
