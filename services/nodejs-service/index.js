@@ -13,6 +13,7 @@ const copyFollowerEquityMonitorWorker = require('./src/services/copyFollowerEqui
 const PORT = process.env.PORT || 3000;
 const { createPortfolioWSServer } = require('./src/services/ws/portfolio.ws');
 const { createMamPortfolioWSServer } = require('./src/services/ws/mam.portfolio.ws');
+const { createAdminMamPortfolioWSServer } = require('./src/services/ws/admin.mam.portfolio.ws');
 const {
   createAdminOrdersWSServer,
   createAdminSecretDemoOrdersWSServer
@@ -25,6 +26,7 @@ let wssPortfolio = null;
 let wssMamPortfolio = null;
 let wssAdmin = null;
 let wssAdminSecretDemo = null;
+let wssAdminMamPortfolio = null;
 
 (async () => {
   try {
@@ -85,6 +87,7 @@ let wssAdminSecretDemo = null;
       wssMamPortfolio = createMamPortfolioWSServer();
       wssAdmin = createAdminOrdersWSServer();
       wssAdminSecretDemo = createAdminSecretDemoOrdersWSServer();
+      wssAdminMamPortfolio = createAdminMamPortfolioWSServer();
 
       console.log('✅ WebSocket servers created (Headless Mode)');
 
@@ -103,6 +106,10 @@ let wssAdminSecretDemo = null;
         } else if (pathname === '/ws/admin/orders') {
           wssAdmin.handleUpgrade(request, socket, head, (ws) => {
             wssAdmin.emit('connection', ws, request);
+          });
+        } else if (pathname === '/ws/admin/mam/portfolio') {
+          wssAdminMamPortfolio.handleUpgrade(request, socket, head, (ws) => {
+            wssAdminMamPortfolio.emit('connection', ws, request);
           });
         } else if (pathname === '/ws/admin-secret/demo-orders') {
           wssAdminSecretDemo.handleUpgrade(request, socket, head, (ws) => {

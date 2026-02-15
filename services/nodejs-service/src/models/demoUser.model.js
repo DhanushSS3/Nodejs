@@ -14,7 +14,7 @@ const DemoUser = sequelize.define('DemoUser', {
   margin: { type: DataTypes.DECIMAL(18, 6), defaultValue: 0 },
   net_profit: { type: DataTypes.DECIMAL(18, 6), defaultValue: 0 },
   account_number: { type: DataTypes.STRING, unique: true },
-  group: { type:  DataTypes.STRING, defaultValue: 'demo' },
+  group: { type:  DataTypes.STRING, defaultValue: 'Demo' },
   security_question: DataTypes.STRING,
   security_answer: DataTypes.STRING,
   city: DataTypes.STRING,
