@@ -84,10 +84,6 @@ async function fetchMamOrders(mamAccountId) {
 
     if (!bucket) continue;
 
-    const metadataOrderPrice = (order && order.metadata && order.metadata.order_price != null)
-      ? order.metadata.order_price
-      : null;
-
     let createdAtIso = null;
     const rawCreatedAt = order.created_at;
     if (rawCreatedAt) {
@@ -106,7 +102,7 @@ async function fetchMamOrders(mamAccountId) {
       order_company_name: String(order.symbol || '').toUpperCase(),
       order_type: order.order_type,
       order_quantity: order.executed_volume?.toString?.() ?? order.requested_volume?.toString?.() ?? '',
-      order_price: order.average_entry_price?.toString?.() ?? (metadataOrderPrice != null ? String(metadataOrderPrice) : null),
+      order_price: order.average_entry_price?.toString?.() ?? null,
       margin: order.total_aggregated_margin?.toString?.() ?? undefined,
       contract_value: undefined,
       stop_loss: order.stop_loss?.toString?.() ?? null,
