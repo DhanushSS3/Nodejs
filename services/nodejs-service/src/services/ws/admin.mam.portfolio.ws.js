@@ -76,7 +76,7 @@ async function fetchMamOrders(mamAccountId) {
 
     if (status === 'OPEN') {
       bucket = open;
-    } else if (['PENDING', 'PENDING-QUEUED', 'QUEUED', 'MODIFY'].includes(status)) {
+    } else if (['PENDING', 'MODIFY'].includes(status)) {
       bucket = pending;
     } else if (['REJECTED'].includes(status)) {
       bucket = rejected;
