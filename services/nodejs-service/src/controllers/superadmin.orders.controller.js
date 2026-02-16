@@ -957,10 +957,11 @@ async function closeOrder(req, res) {
 // body: { mam_account_id: string|number, mam_order_id: string|number, close_price?: number, close_message?: string }
 async function closeMamOrder(req, res) {
   const adminId = req.admin?.id;
+  let close_message;
   try {
     const mam_account_id = Number(req.body.mam_account_id);
     const mam_order_id = Number(req.body.mam_order_id);
-    const close_message = req.body.close_message ? String(req.body.close_message).trim() : undefined;
+    close_message = req.body.close_message ? String(req.body.close_message).trim() : undefined;
     const close_price = req.body.close_price != null ? Number(req.body.close_price) : undefined;
 
     if (!Number.isInteger(mam_account_id) || mam_account_id <= 0) {
