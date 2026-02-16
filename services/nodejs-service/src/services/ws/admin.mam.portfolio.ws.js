@@ -84,6 +84,10 @@ async function fetchMamOrders(mamAccountId) {
 
     if (!bucket) continue;
 
+    const metadataOrderPrice = (order && order.metadata && order.metadata.order_price != null)
+      ? order.metadata.order_price
+      : null;
+
     let createdAtIso = null;
     const rawCreatedAt = order.created_at;
     if (rawCreatedAt) {
@@ -102,7 +106,7 @@ async function fetchMamOrders(mamAccountId) {
       order_company_name: String(order.symbol || '').toUpperCase(),
       order_type: order.order_type,
       order_quantity: order.executed_volume?.toString?.() ?? order.requested_volume?.toString?.() ?? '',
-      order_price: order.average_entry_price?.toString?.() ?? null,
+      order_price: order.average_entry_price?.toString?.() ?? (metadataOrderPrice != null ? String(metadataOrderPrice) : null),
       margin: order.total_aggregated_margin?.toString?.() ?? undefined,
       contract_value: undefined,
       stop_loss: order.stop_loss?.toString?.() ?? null,
@@ -144,7 +148,8 @@ function buildPayload(summary, orders) {
   };
 
   return {
-    type: 'market_update',
+    type: 'admin_mam_portfolio_update',
+    timestamp: new Date().toISOString(),
     data: {
       account_summary: {
         balance: safeSummary.balance ?? '0',
@@ -240,6 +245,14 @@ function cleanupClientListeners(ws) {
     ws._mamAccountListener = null;
   }
 
+  if (ws._resyncInterval) {
+    try {
+      clearInterval(ws._resyncInterval);
+    } catch (_) {
+    }
+    ws._resyncInterval = null;
+  }
+
   if (!ws._clientListeners) return;
   for (const unsubscribe of ws._clientListeners.values()) {
     try {
@@ -327,13 +340,6 @@ function createAdminMamPortfolioWSServer() {
     const subscriptions = new Map();
 
     const unsubscribeAll = () => {
-      if (ws._resyncInterval) {
-        try {
-          clearInterval(ws._resyncInterval);
-        } catch (_) {
-        }
-        ws._resyncInterval = null;
-      }
       for (const unsub of subscriptions.values()) {
         try {
           unsub && unsub();
@@ -376,6 +382,7 @@ function createAdminMamPortfolioWSServer() {
         await queueSnapshot(ws, parsedId, 'mam_event');
       });
       subscriptions.set(`mam_account:${parsedId}`, mamUnsub);
+      ws._mamAccountListener = mamUnsub;
 
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: 'subscribed', mam_account_id: parsedId }));
