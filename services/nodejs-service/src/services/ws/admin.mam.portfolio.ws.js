@@ -144,8 +144,7 @@ function buildPayload(summary, orders) {
   };
 
   return {
-    type: 'admin_mam_portfolio_update',
-    timestamp: new Date().toISOString(),
+    type: 'market_update',
     data: {
       account_summary: {
         balance: safeSummary.balance ?? '0',
@@ -328,6 +327,13 @@ function createAdminMamPortfolioWSServer() {
     const subscriptions = new Map();
 
     const unsubscribeAll = () => {
+      if (ws._resyncInterval) {
+        try {
+          clearInterval(ws._resyncInterval);
+        } catch (_) {
+        }
+        ws._resyncInterval = null;
+      }
       for (const unsub of subscriptions.values()) {
         try {
           unsub && unsub();
