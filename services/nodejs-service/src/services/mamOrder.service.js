@@ -114,6 +114,7 @@ class MAMOrderService {
         take_profit: take_profit != null ? Number(take_profit) : null,
         metadata: {
           initiated_by: managerId,
+          ...(order_price != null ? { order_price } : {}),
           stop_loss,
           take_profit
         }
@@ -1753,7 +1754,7 @@ class MAMOrderService {
     const data = {
       symbol: String(payload.symbol || '').trim().toUpperCase(),
       order_type: String(payload.order_type || '').trim().toUpperCase(),
-      order_price: Number(payload.order_price),
+      order_price: payload.order_price != null ? Number(payload.order_price) : null,
       volume: Number(payload.volume ?? payload.order_quantity),
       stop_loss: payload.stop_loss != null ? Number(payload.stop_loss) : null,
       take_profit: payload.take_profit != null ? Number(payload.take_profit) : null
@@ -1765,7 +1766,7 @@ class MAMOrderService {
     if (!VALID_ORDER_TYPES.includes(data.order_type)) {
       return { valid: false, message: 'order_type must be BUY or SELL' };
     }
-    if (!Number.isFinite(data.order_price) || !(data.order_price > 0)) {
+    if (data.order_price != null && (!Number.isFinite(data.order_price) || !(data.order_price > 0))) {
       return { valid: false, message: 'order_price must be greater than 0' };
     }
     if (!Number.isFinite(data.volume) || !(data.volume > 0)) {

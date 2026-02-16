@@ -456,14 +456,14 @@ async function placeMamInstantOrder(req, res) {
 
     const symbol = String(req.body.symbol || req.body.order_company_name || '').trim().toUpperCase();
     const order_type = String(req.body.order_type || '').trim().toUpperCase();
-    const order_price = req.body.order_price != null ? Number(req.body.order_price) : NaN;
+    const order_price = req.body.order_price != null ? Number(req.body.order_price) : null;
     const volume = req.body.volume != null ? Number(req.body.volume) : (req.body.order_quantity != null ? Number(req.body.order_quantity) : NaN);
     const stop_loss = req.body.stop_loss != null ? Number(req.body.stop_loss) : null;
     const take_profit = req.body.take_profit != null ? Number(req.body.take_profit) : null;
 
     if (!symbol) return bad(res, 'symbol is required', 400);
     if (!order_type) return bad(res, 'order_type is required', 400);
-    if (!(order_price > 0)) return bad(res, 'order_price must be > 0', 400);
+    if (order_price != null && !(order_price > 0)) return bad(res, 'order_price must be > 0', 400);
     if (!(volume > 0)) return bad(res, 'volume must be > 0', 400);
 
     const result = await mamOrderService.placeInstantOrder({
@@ -472,7 +472,7 @@ async function placeMamInstantOrder(req, res) {
       payload: {
         symbol,
         order_type,
-        order_price,
+        ...(order_price != null ? { order_price } : {}),
         volume,
         stop_loss: (stop_loss != null && Number.isFinite(stop_loss) && stop_loss > 0) ? stop_loss : null,
         take_profit: (take_profit != null && Number.isFinite(take_profit) && take_profit > 0) ? take_profit : null,
