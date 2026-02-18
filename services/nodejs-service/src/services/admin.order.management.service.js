@@ -10,6 +10,9 @@ const StrategyProviderAccount = require('../models/strategyProviderAccount.model
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const idGenerator = require('./idGenerator.service');
 const orderLifecycleService = require('./orderLifecycle.service');
+const lotValidationService = require('./lot.validation.service');
+const { acquireUserLock, releaseUserLock } = require('./user.lock.service');
+const copyTradingService = require('./copyTrading.service');
 
 // Create reusable axios instance for Python service calls
 const pythonServiceAxios = axios.create({
@@ -399,6 +402,46 @@ class AdminOrderManagementService {
         }
       }
 
+      // 12. Strategy provider master orders: create Redis entries + replicate to followers (admin path)
+      if (String(userType).toLowerCase() === 'strategy_provider') {
+        try {
+          const masterOrderRow = await StrategyProviderOrder.findOne({ where: { order_id: order_id } });
+          if (masterOrderRow) {
+            const dist = String(masterOrderRow.copy_distribution_status || '').toLowerCase();
+            if (dist !== 'completed' && dist !== 'distributing') {
+              try {
+                await copyTradingService.createRedisOrderEntries(masterOrderRow, 'strategy_provider');
+              } catch (redisErr) {
+                logger.warn('Failed to create Redis entries for admin-placed strategy provider master order', {
+                  order_id: order_id,
+                  userType,
+                  userId,
+                  error: redisErr.message
+                });
+              }
+
+              try {
+                await copyTradingService.processStrategyProviderOrder(masterOrderRow);
+              } catch (copyErr) {
+                logger.error('Failed to replicate admin-placed strategy provider master order to followers', {
+                  order_id: order_id,
+                  userType,
+                  userId,
+                  error: copyErr.message
+                });
+              }
+            }
+          }
+        } catch (copyOuterErr) {
+          logger.error('Failed to process copy trading for admin-placed strategy provider order', {
+            order_id: order_id,
+            userType,
+            userId,
+            error: copyOuterErr.message
+          });
+        }
+      }
+
       // 7. Build payload to Python (EXACT same structure as user orders)
       const pyPayload = {
         symbol: parsed.symbol,
@@ -647,7 +690,68 @@ class AdminOrderManagementService {
         }
       }
 
-      // 12. Log successful admin action
+      // 12. Strategy provider master orders: create Redis entries + replicate to followers (admin path)
+      if (flow === 'local' && String(userType).toLowerCase() === 'strategy_provider') {
+        logger.info('Admin local strategy_provider order: entering copy trading replication hook', {
+          order_id: finalOrderId,
+          userType,
+          userId,
+          flow,
+          order_status: updateFields?.order_status
+        });
+        try {
+          const masterOrderRow = await StrategyProviderOrder.findOne({ where: { order_id: finalOrderId } });
+          if (!masterOrderRow) {
+            logger.warn('Admin local strategy_provider order: master order row not found for copy trading', {
+              order_id: finalOrderId,
+              userType,
+              userId
+            });
+          }
+          if (masterOrderRow) {
+            const dist = String(masterOrderRow.copy_distribution_status || '').toLowerCase();
+            if (dist !== 'completed' && dist !== 'distributing') {
+              try {
+                await copyTradingService.createRedisOrderEntries(masterOrderRow, 'strategy_provider');
+              } catch (redisErr) {
+                logger.warn('Failed to create Redis entries for admin-placed strategy provider master order', {
+                  order_id: finalOrderId,
+                  userType,
+                  userId,
+                  error: redisErr.message
+                });
+              }
+
+              try {
+                await copyTradingService.processStrategyProviderOrder(masterOrderRow);
+              } catch (copyErr) {
+                logger.error('Failed to replicate admin-placed strategy provider master order to followers', {
+                  order_id: finalOrderId,
+                  userType,
+                  userId,
+                  error: copyErr.message
+                });
+              }
+            } else {
+              logger.info('Admin local strategy_provider order: copy distribution already in progress/completed; skipping replication', {
+                order_id: finalOrderId,
+                userType,
+                userId,
+                copy_distribution_status: masterOrderRow.copy_distribution_status
+              });
+            }
+          }
+        } catch (copyOuterErr) {
+          logger.error('Failed to process copy trading for admin-placed strategy provider order', {
+            order_id: finalOrderId,
+            userType,
+            userId,
+            error: copyOuterErr.message
+          });
+        }
+      }
+
+      // 13. Log successful admin action
       logger.info('Admin instant order placed successfully', {
         operationId,
         adminId: adminInfo.id,
@@ -662,7 +766,7 @@ class AdminOrderManagementService {
         result: result
       });
 
-      // 13. Return EXACT same response structure as user orders
+      // 14. Return EXACT same response structure as user orders
       return {
         success: true,
         order_id: finalOrderId,
