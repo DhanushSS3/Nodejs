@@ -556,6 +556,7 @@ async function placeInstantOrder(req, res) {
 // Place a pending order: validate constraints, compute compare_price, persist SQL+Redis
 async function placePendingOrder(req, res) {
   const operationId = `pending_place_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let userLock = null;
   try {
     // Structured request log (fire-and-forget)
     orderReqLogger.logOrderRequest({

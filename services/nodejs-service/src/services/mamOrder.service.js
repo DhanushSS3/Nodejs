@@ -2109,7 +2109,7 @@ class MAMOrderService {
           parent_mam_order_id: mamOrderId,
           order_status: 'OPEN'
         },
-        attributes: ['order_quantity']
+        attributes: ['order_quantity', 'order_price']
       })
     ]);
 
@@ -2141,12 +2141,35 @@ class MAMOrderService {
       } catch (_) {
         // noop
       }
+
+      // Update average_entry_price as weighted average of OPEN child prices
+      try {
+        const agg = (openChildRows || []).reduce((acc, row) => {
+          const qty = Number(row?.order_quantity || 0);
+          const px = Number(row?.order_price || 0);
+          if (!Number.isFinite(qty) || qty <= 0) return acc;
+          if (!Number.isFinite(px) || px <= 0) return acc;
+          acc.qty += qty;
+          acc.pxQty += (px * qty);
+          return acc;
+        }, { qty: 0, pxQty: 0 });
+
+        if (agg.qty > 0 && Number.isFinite(agg.pxQty)) {
+          const avg = agg.pxQty / agg.qty;
+          if (Number.isFinite(avg) && avg > 0) {
+            updates.average_entry_price = Number(avg.toFixed(8));
+          }
+        }
+      } catch (_) {
+        // noop
+      }
     }
     if (newStatus === 'CLOSED') {
       updates.metadata = {
         ...(mamOrder.metadata || {}),
         closed_at: new Date().toISOString()
       };
+      updates.average_entry_price = null;
     }
 
     try {
