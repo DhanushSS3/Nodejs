@@ -1785,6 +1785,57 @@ async function applyDbUpdate(msg) {
       });
     }
 
+    // Post-commit async tasks for strategy provider OPEN -> copy follower replication
+    if (String(type) === 'ORDER_OPEN_CONFIRMED') {
+      setImmediate(async () => {
+        try {
+          const effectiveUserType = String(resolvedUserType || user_type || '').toLowerCase();
+          if (effectiveUserType !== 'strategy_provider') {
+            return;
+          }
+
+          const masterRow = row;
+          if (!masterRow) {
+            return;
+          }
+
+          // Only replicate master orders that have transitioned to OPEN
+          const status = String(masterRow.order_status || '').toUpperCase();
+          if (status !== 'OPEN') {
+            return;
+          }
+
+          // StrategyProviderOrder model defaults is_master_order=true; still guard defensively
+          if (masterRow.is_master_order === false) {
+            return;
+          }
+
+          const dist = String(masterRow.copy_distribution_status || '').toLowerCase();
+          if (dist === 'completed' || dist === 'distributing') {
+            return;
+          }
+
+          try {
+            await copyTradingService.processStrategyProviderOrder(masterRow);
+          } catch (copyErr) {
+            logger.error('Failed to replicate strategy provider master order to followers after OPEN', {
+              order_id: String(masterRow.order_id || order_id),
+              user_type: effectiveUserType,
+              user_id: String(resolvedUserId || user_id),
+              error: copyErr.message
+            });
+          }
+        } catch (postOpenCopyError) {
+          logger.error('Failed to process post-open copy trading tasks', {
+            order_id: String(order_id),
+            user_type: String(resolvedUserType || user_type),
+            user_id: String(resolvedUserId || user_id),
+            error: postOpenCopyError.message
+          });
+        }
+      });
+    }
+
     // Post-commit async tasks for MAM pending -> open transitions
     if (String(type) === 'ORDER_OPEN_CONFIRMED' || String(type) === 'ORDER_PENDING_TRIGGERED') {
       setImmediate(async () => {
