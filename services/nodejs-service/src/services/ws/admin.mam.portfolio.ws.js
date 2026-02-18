@@ -84,6 +84,28 @@ async function fetchMamOrders(mamAccountId) {
 
     if (!bucket) continue;
 
+    const pendingRequestedPrice = (() => {
+      try {
+        const raw = order?.metadata?.order_price;
+        const n = Number(raw);
+        return Number.isFinite(n) ? String(raw) : null;
+      } catch (_) {
+        return null;
+      }
+    })();
+
+    const pendingAllocatedQty = (() => {
+      try {
+        const snap = Array.isArray(order.allocation_snapshot) ? order.allocation_snapshot : [];
+        const sum = snap
+          .filter((e) => String(e?.status || '').toLowerCase() === 'pending_submitted')
+          .reduce((acc, e) => acc + (Number(e?.allocated_volume || 0) || 0), 0);
+        return Number.isFinite(sum) && sum > 0 ? String(Number(sum.toFixed(8))) : null;
+      } catch (_) {
+        return null;
+      }
+    })();
+
     let createdAtIso = null;
     const rawCreatedAt = order.created_at;
     if (rawCreatedAt) {
@@ -101,8 +123,12 @@ async function fetchMamOrders(mamAccountId) {
       order_id: order.id,
       order_company_name: String(order.symbol || '').toUpperCase(),
       order_type: order.order_type,
-      order_quantity: order.executed_volume?.toString?.() ?? order.requested_volume?.toString?.() ?? '',
-      order_price: order.average_entry_price?.toString?.() ?? null,
+      order_quantity: status === 'OPEN'
+        ? (order.executed_volume?.toString?.() ?? order.requested_volume?.toString?.() ?? '')
+        : (pendingAllocatedQty ?? order.requested_volume?.toString?.() ?? ''),
+      order_price: status === 'OPEN'
+        ? (order.average_entry_price?.toString?.() ?? null)
+        : (pendingRequestedPrice ?? null),
       margin: order.total_aggregated_margin?.toString?.() ?? undefined,
       contract_value: undefined,
       stop_loss: order.stop_loss?.toString?.() ?? null,

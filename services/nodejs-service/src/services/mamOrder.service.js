@@ -2102,20 +2102,46 @@ class MAMOrderService {
   }
 
   async _refreshMamOrderState(mamOrderId) {
-    const [mamOrder, openChildren] = await Promise.all([
+    const [mamOrder, openChildRows] = await Promise.all([
       MAMOrder.findByPk(mamOrderId),
-      LiveUserOrder.count({
+      LiveUserOrder.findAll({
         where: {
           parent_mam_order_id: mamOrderId,
-          order_status: { [Op.in]: OPEN_CHILD_STATUSES }
-        }
+          order_status: 'OPEN'
+        },
+        attributes: ['order_quantity']
       })
     ]);
 
     if (!mamOrder) return;
 
+    const openChildren = Array.isArray(openChildRows) ? openChildRows.length : 0;
     const newStatus = openChildren > 0 ? 'OPEN' : 'CLOSED';
     const updates = { order_status: newStatus };
+
+    if (newStatus === 'OPEN') {
+      // Normalize parent order_type (e.g., BUY_LIMIT -> BUY) once the first child becomes OPEN
+      try {
+        const currentType = String(mamOrder.order_type || '').toUpperCase();
+        if (currentType.endsWith('_LIMIT') || currentType.endsWith('_STOP')) {
+          const baseSide = currentType.startsWith('SELL') ? 'SELL' : 'BUY';
+          updates.order_type = baseSide;
+        }
+      } catch (_) {
+        // noop
+      }
+
+      // Update executed_volume to reflect actual opened child volume
+      try {
+        const executedVolume = (openChildRows || []).reduce((sum, row) => {
+          const qty = Number(row?.order_quantity || 0);
+          return sum + (Number.isFinite(qty) ? qty : 0);
+        }, 0);
+        updates.executed_volume = Number(executedVolume.toFixed(8));
+      } catch (_) {
+        // noop
+      }
+    }
     if (newStatus === 'CLOSED') {
       updates.metadata = {
         ...(mamOrder.metadata || {}),
