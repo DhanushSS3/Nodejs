@@ -1046,6 +1046,23 @@ class AdminOrderManagementService {
             updateFields.status = userPayload.status;
             await row.update(updateFields);
 
+            // Strategy provider master close: mirror to follower orders
+            if (String(userType).toLowerCase() === 'strategy_provider') {
+              try {
+                const masterRow = await StrategyProviderOrder.findOne({ where: { order_id: orderId } });
+                if (masterRow) {
+                  await copyTradingService.processStrategyProviderOrderUpdate(masterRow);
+                }
+              } catch (eCopy) {
+                logger.error('Failed to process copy trading update after admin local close', {
+                  order_id: orderId,
+                  userType,
+                  userId,
+                  error: eCopy.message
+                });
+              }
+            }
+
             // Apply wallet payout + user transactions (idempotent) - EXACT same as user orders
             try {
               const { redisCluster } = require('../../config/redis');
@@ -1756,6 +1773,23 @@ class AdminOrderManagementService {
           logger.warn('SQL update failed for admin pending cancel', { error: e3.message, order_id: orderId });
         }
 
+        // Strategy provider master pending cancel: mirror to follower orders
+        if (String(userType).toLowerCase() === 'strategy_provider') {
+          try {
+            const masterRow = await StrategyProviderOrder.findOne({ where: { order_id: orderId } });
+            if (masterRow) {
+              await copyTradingService.processStrategyProviderOrderUpdate(masterRow);
+            }
+          } catch (eCopy) {
+            logger.error('Failed to process copy trading update after admin local pending cancel', {
+              order_id: orderId,
+              userType,
+              userId,
+              error: eCopy.message
+            });
+          }
+        }
+
         // Small delay to ensure database transaction is committed before WebSocket update
         await new Promise(resolve => setTimeout(resolve, 10));
 
@@ -1807,6 +1841,23 @@ class AdminOrderManagementService {
         if (rowNow) await rowNow.update({ cancel_id, status: statusReq });
       } catch (e) {
         logger.warn('Failed to persist cancel_id', { error: e.message, order_id: orderId });
+      }
+
+      // Strategy provider master pending cancel (provider flow initiation): mirror to follower orders
+      if (String(userType).toLowerCase() === 'strategy_provider') {
+        try {
+          const masterRow = await StrategyProviderOrder.findOne({ where: { order_id: orderId } });
+          if (masterRow) {
+            await copyTradingService.processStrategyProviderOrderUpdate(masterRow);
+          }
+        } catch (eCopy) {
+          logger.error('Failed to process copy trading update after admin provider pending cancel initiation', {
+            order_id: orderId,
+            userType,
+            userId,
+            error: eCopy.message
+          });
+        }
       }
 
       try {
