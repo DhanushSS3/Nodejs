@@ -286,7 +286,8 @@ class PendingMonitor:
             )
 
     async def _execute_pending(self, order_id: str, user_type: str, user_id: str, symbol: str,
-                               order_type: str, order_qty: float, exec_px: float, group: str) -> bool:
+                               order_type: str, order_qty: float, exec_px: float, group: str,
+                               margin_required: Optional[float] = None) -> bool:
         # Send to OPEN worker as executed
         side = _side_from_type(order_type)
         try:
@@ -326,6 +327,11 @@ class PendingMonitor:
                     "symbol": str(symbol).upper(),
                     "order_quantity": str(order_qty),
                 }
+                if margin_required is not None:
+                    try:
+                        db_update_payload["margin"] = float(margin_required)
+                    except Exception:
+                        pass
                 await self._publish(DB_UPDATE_QUEUE, db_update_payload)
                 logger.info(f"Sent immediate DB update for pending order trigger: {order_id}")
             except Exception as e:
@@ -458,7 +464,17 @@ class PendingMonitor:
                     except Exception:
                         hs_val = 0.0
                     exec_px = (float(ask or 0.0) + hs_val)
-                    executed_ok = await self._execute_pending(oid, user_type, user_id, symbol, order_type, order_qty, exec_px, group)
+                    executed_ok = await self._execute_pending(
+                        oid,
+                        user_type,
+                        user_id,
+                        symbol,
+                        order_type,
+                        order_qty,
+                        exec_px,
+                        group,
+                        margin_required=needed,
+                    )
                     if executed_ok:
                         await self.remove_pending(symbol, order_type, oid)
                     else:
