@@ -11,7 +11,7 @@ const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const idGenerator = require('./idGenerator.service');
 const orderLifecycleService = require('./orderLifecycle.service');
 const lotValidationService = require('./lot.validation.service');
-const { acquireUserLock, releaseUserLock } = require('./user.lock.service');
+const { acquireUserLock, releaseUserLock } = require('./userLock.service');
 const copyTradingService = require('./copyTrading.service');
 
 // Create reusable axios instance for Python service calls
