@@ -567,6 +567,14 @@ async function applyDbUpdate(msg) {
     close_origin,
   } = msg || {};
 
+  const normalizedMargin = (
+    margin != null ? margin
+      : (msg?.single_margin_usd != null ? msg.single_margin_usd
+        : (msg?.margin_usd != null ? msg.margin_usd
+          : (msg?.margin_required != null ? msg.margin_required
+            : (msg?.required_margin != null ? msg.required_margin : null))))
+  );
+
   // Enhanced logging for DB update processing
   logger.info('DB update processing started', {
     messageType: type,
@@ -785,7 +793,7 @@ async function applyDbUpdate(msg) {
     order_status,
     order_price,
     order_quantity,
-    margin,
+    margin: normalizedMargin,
     commission,
     used_margin_usd,
     close_price,
@@ -830,8 +838,8 @@ async function applyDbUpdate(msg) {
           const price = order_price != null ? String(order_price) : (canonical.order_price ?? '0');
           const status = String(order_status || canonical.order_status || 'OPEN');
           // Round to 8 decimals to match DECIMAL(18,8)
-          const marginStr = margin != null && Number.isFinite(Number(margin))
-            ? Number(margin).toFixed(8)
+          const marginStr = normalizedMargin != null && Number.isFinite(Number(normalizedMargin))
+            ? Number(normalizedMargin).toFixed(8)
             : (canonical.margin ?? null);
           const contractValueStr = contract_value != null && Number.isFinite(Number(contract_value))
             ? Number(contract_value).toFixed(8)
@@ -948,8 +956,8 @@ async function applyDbUpdate(msg) {
       if (symbol && String(type) === 'ORDER_PENDING_TRIGGERED') {
         updateFields.symbol = String(symbol).toUpperCase();
       }
-      if (margin != null && Number.isFinite(Number(margin))) {
-        updateFields.margin = Number(margin).toFixed(8);
+      if (normalizedMargin != null && Number.isFinite(Number(normalizedMargin))) {
+        updateFields.margin = Number(normalizedMargin).toFixed(8);
       }
       if (contract_value != null && Number.isFinite(Number(contract_value))) {
         updateFields.contract_value = Number(contract_value).toFixed(8);
