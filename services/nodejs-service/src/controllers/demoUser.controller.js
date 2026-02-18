@@ -153,7 +153,8 @@ async function signup(req, res) {
           group: user.group,
           status: user.status,
           is_active: user.is_active,
-          country_id: user.country_id
+          country_id: user.country_id,
+          sending_orders: 'rock'
         };
         await redisUserCache.updateUser('demo', user.id, userData);
         logger.info(`Added new demo user ${user.id} to Redis cache`);

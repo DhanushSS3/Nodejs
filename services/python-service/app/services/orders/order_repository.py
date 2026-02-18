@@ -175,12 +175,16 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
             return leverage_val <= 0
         except (TypeError, ValueError):
             return True
+
+    if user_type == "demo" and _is_invalid_string_field((data or {}).get("sending_orders")):
+        data = data or {}
+        data["sending_orders"] = "rock"
     
     needs_db = (
-        (not data) or 
-        _is_invalid_string_field(data.get("group")) or 
-        _is_invalid_leverage(data.get("leverage")) or 
-        _is_invalid_string_field(data.get("sending_orders"))
+        (not data) or
+        _is_invalid_string_field(data.get("group")) or
+        _is_invalid_leverage(data.get("leverage")) or
+        (user_type != "demo" and _is_invalid_string_field(data.get("sending_orders")))
     )
     db_cfg: Dict[str, Any] = {}
     if needs_db:
@@ -218,6 +222,8 @@ async def fetch_user_config(user_type: str, user_id: str) -> Dict[str, Any]:
                 mapping["wallet_balance"] = str(db_cfg["wallet_balance"])
             if db_cfg.get("sending_orders") is not None:
                 mapping["sending_orders"] = str(db_cfg["sending_orders"])
+            elif user_type == "demo":
+                mapping["sending_orders"] = "rock"
             if db_cfg.get("account_number") is not None:
                 mapping["account_number"] = str(db_cfg["account_number"])
             if mapping:

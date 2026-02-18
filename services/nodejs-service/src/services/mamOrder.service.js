@@ -2346,13 +2346,6 @@ class MAMOrderService {
       return { success: false, reason: 'invalid_entry_price' };
     }
 
-    if (order_type === 'BUY' && !(stop_loss < entry_price_num)) {
-      return { success: false, reason: 'invalid_price_for_buy' };
-    }
-    if (order_type === 'SELL' && !(stop_loss > entry_price_num)) {
-      return { success: false, reason: 'invalid_price_for_sell' };
-    }
-
     let hasExistingSL = false;
     if (row && row.stop_loss != null && Number(row.stop_loss) > 0) {
       hasExistingSL = true;
