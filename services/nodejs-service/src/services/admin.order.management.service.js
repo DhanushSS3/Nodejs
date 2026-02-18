@@ -402,46 +402,6 @@ class AdminOrderManagementService {
         }
       }
 
-      // 12. Strategy provider master orders: create Redis entries + replicate to followers (admin path)
-      if (String(userType).toLowerCase() === 'strategy_provider') {
-        try {
-          const masterOrderRow = await StrategyProviderOrder.findOne({ where: { order_id: order_id } });
-          if (masterOrderRow) {
-            const dist = String(masterOrderRow.copy_distribution_status || '').toLowerCase();
-            if (dist !== 'completed' && dist !== 'distributing') {
-              try {
-                await copyTradingService.createRedisOrderEntries(masterOrderRow, 'strategy_provider');
-              } catch (redisErr) {
-                logger.warn('Failed to create Redis entries for admin-placed strategy provider master order', {
-                  order_id: order_id,
-                  userType,
-                  userId,
-                  error: redisErr.message
-                });
-              }
-
-              try {
-                await copyTradingService.processStrategyProviderOrder(masterOrderRow);
-              } catch (copyErr) {
-                logger.error('Failed to replicate admin-placed strategy provider master order to followers', {
-                  order_id: order_id,
-                  userType,
-                  userId,
-                  error: copyErr.message
-                });
-              }
-            }
-          }
-        } catch (copyOuterErr) {
-          logger.error('Failed to process copy trading for admin-placed strategy provider order', {
-            order_id: order_id,
-            userType,
-            userId,
-            error: copyOuterErr.message
-          });
-        }
-      }
-
       // 7. Build payload to Python (EXACT same structure as user orders)
       const pyPayload = {
         symbol: parsed.symbol,
