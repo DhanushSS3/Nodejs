@@ -3450,7 +3450,7 @@ class AdminOrderManagementService {
 
           await redisCluster.zrem(`pending_index:{${symbol}}:${order_type}`, orderId);
 
-          await redisCluster.delete(`pending_orders:${orderId}`);
+          await redisCluster.del(`pending_orders:${orderId}`);
 
         } catch (e) {
 
@@ -3476,7 +3476,7 @@ class AdminOrderManagementService {
 
           p1.srem(idx, orderId);
 
-          p1.delete(h);
+          p1.del(h);
 
           await p1.exec();
 
@@ -3484,7 +3484,7 @@ class AdminOrderManagementService {
 
           try {
 
-            await redisCluster.delete(`order_data:${orderId}`);
+            await redisCluster.del(`order_data:${orderId}`);
 
           } catch (eDel) {
 
@@ -3510,6 +3510,40 @@ class AdminOrderManagementService {
 
           logger.warn('SQL update failed for admin pending cancel', { error: e3.message, order_id: orderId });
 
+        }
+
+        // Strategy provider master pending cancel: mirror to follower orders
+        if (String(userType).toLowerCase() === 'strategy_provider') {
+          try {
+            const masterRow = await StrategyProviderOrder.findOne({ where: { order_id: orderId } });
+            if (masterRow) {
+              logger.info('Admin pending cancel: syncing copy followers via master order update hook', {
+                order_id: orderId,
+                userType,
+                userId,
+                masterOrderStatus: masterRow.order_status
+              });
+              await copyTradingService.processStrategyProviderOrderUpdate(masterRow);
+              logger.info('Admin pending cancel: copy follower sync completed', {
+                order_id: orderId,
+                userType,
+                userId
+              });
+            } else {
+              logger.warn('Admin pending cancel: strategy provider master order row not found for follower sync', {
+                order_id: orderId,
+                userType,
+                userId
+              });
+            }
+          } catch (eCopy) {
+            logger.error('Failed to process copy trading update after admin local pending cancel', {
+              order_id: orderId,
+              userType,
+              userId,
+              error: eCopy.message
+            });
+          }
         }
 
 
