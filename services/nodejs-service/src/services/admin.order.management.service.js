@@ -1395,6 +1395,69 @@ class AdminOrderManagementService {
         logger.warn('Failed to publish market_price_updates after admin pending placement', { error: e.message, symbol, order_id });
       }
 
+      // 11.1 Strategy provider master pending orders: create Redis entries + replicate pending to followers (admin path)
+      if (String(userType).toLowerCase() === 'strategy_provider') {
+        try {
+          logger.info('Admin strategy_provider pending order: entering copy trading pending replication hook', {
+            order_id,
+            userType,
+            userId,
+            isProviderFlow,
+            order_status: isProviderFlow ? 'PENDING-QUEUED' : 'PENDING'
+          });
+
+          const masterOrderRow = await StrategyProviderOrder.findOne({ where: { order_id } });
+          if (!masterOrderRow) {
+            logger.warn('Admin strategy_provider pending order: master order row not found for copy trading', {
+              order_id,
+              userType,
+              userId
+            });
+          }
+
+          if (masterOrderRow) {
+            const dist = String(masterOrderRow.copy_distribution_status || '').toLowerCase();
+            if (dist !== 'completed' && dist !== 'distributing') {
+              try {
+                await copyTradingService.createRedisOrderEntries(masterOrderRow, 'strategy_provider');
+              } catch (redisErr) {
+                logger.warn('Failed to create Redis entries for admin-placed strategy provider pending master order', {
+                  order_id,
+                  userType,
+                  userId,
+                  error: redisErr.message
+                });
+              }
+
+              try {
+                await copyTradingService.processStrategyProviderPendingOrder(masterOrderRow);
+              } catch (copyErr) {
+                logger.error('Failed to replicate admin-placed strategy provider pending master order to followers', {
+                  order_id,
+                  userType,
+                  userId,
+                  error: copyErr.message
+                });
+              }
+            } else {
+              logger.info('Admin strategy_provider pending order: copy distribution already in progress/completed; skipping replication', {
+                order_id,
+                userType,
+                userId,
+                copy_distribution_status: masterOrderRow.copy_distribution_status
+              });
+            }
+          }
+        } catch (copyOuterErr) {
+          logger.error('Failed to process copy trading for admin-placed strategy provider pending order', {
+            order_id,
+            userType,
+            userId,
+            error: copyOuterErr.message
+          });
+        }
+      }
+
       // 12. Notify WS layer (EXACT same as user orders)
       try {
         const portfolioEvents = require('./events/portfolio.events');
