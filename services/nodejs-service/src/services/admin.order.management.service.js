@@ -2538,6 +2538,60 @@ class AdminOrderManagementService {
 
 
 
+      // 7.1 If the pending order would trigger immediately at current market (ask-based rules),
+      // do not reject it. Convert it to an instant order so it executes immediately.
+      // Pending monitor rules (ask-only):
+      // - BUY_LIMIT / SELL_STOP trigger when ask <= compare (compare >= ask)
+      // - BUY_STOP / SELL_LIMIT trigger when ask >= compare (compare <= ask)
+      try {
+        const ot = String(parsed.order_type).toUpperCase();
+        const wouldTriggerNow = (
+          ((ot === 'BUY_LIMIT' || ot === 'SELL_STOP') && compare_price >= ask) ||
+          ((ot === 'BUY_STOP' || ot === 'SELL_LIMIT') && compare_price <= ask)
+        );
+
+        if (wouldTriggerNow) {
+          const side = (ot === 'BUY_LIMIT' || ot === 'BUY_STOP') ? 'BUY' : 'SELL';
+          logger.info('Admin pending order would trigger immediately; converting to instant execution', {
+            operationId,
+            userType,
+            userId,
+            symbol: parsed.symbol,
+            pending_order_type: ot,
+            instant_order_type: side,
+            order_price: parsed.order_price,
+            compare_price,
+            bid,
+            ask,
+          });
+
+          const instantOrderData = {
+            ...orderData,
+            symbol: parsed.symbol,
+            order_type: side,
+            order_quantity: parsed.order_quantity,
+            quantity: parsed.order_quantity,
+          };
+
+          // Ensure we don't pass a pending price into instant flow (some provider validations may reject it)
+          delete instantOrderData.order_price;
+          delete instantOrderData.price;
+
+          return await this.placeInstantOrder(adminInfo, userType, userId, instantOrderData, ScopedUserModel);
+        }
+      } catch (eAuto) {
+        logger.warn('Admin pending auto-execute check failed; proceeding with normal pending placement', {
+          operationId,
+          userType,
+          userId,
+          symbol: parsed.symbol,
+          order_type: parsed.order_type,
+          error: eAuto.message,
+        });
+      }
+
+
+
       // 8. Determine if provider flow (EXACT same as user orders)
 
       let isProviderFlow = false;
