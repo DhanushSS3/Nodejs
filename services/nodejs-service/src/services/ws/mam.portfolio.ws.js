@@ -1,7 +1,7 @@
 const url = require('url');
 const jwt = require('jsonwebtoken');
 const { WebSocketServer } = require('ws');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 
 const logger = require('../logger.service');
 const { getSession } = require('../../utils/redisSession.util');
@@ -69,6 +69,40 @@ async function fetchMamOrders(mamAccountId) {
     order: [['created_at', 'DESC']]
   });
 
+  const openOrderIds = orders
+    .filter((o) => String(o.order_status || '').toUpperCase() === 'OPEN')
+    .map((o) => o.id);
+
+  const contractValueByMamOrderId = new Map();
+  if (openOrderIds.length) {
+    try {
+      const rows = await LiveUserOrder.findAll({
+        where: {
+          parent_mam_order_id: { [Op.in]: openOrderIds },
+          order_status: 'OPEN'
+        },
+        attributes: [
+          'parent_mam_order_id',
+          [fn('SUM', col('contract_value')), 'total_contract_value']
+        ],
+        group: ['parent_mam_order_id']
+      });
+
+      for (const r of rows || []) {
+        const pid = r.parent_mam_order_id;
+        const total = r.get ? r.get('total_contract_value') : r.total_contract_value;
+        if (pid != null && total != null && Number.isFinite(Number(total))) {
+          contractValueByMamOrderId.set(Number(pid), String(Number(total).toFixed(8)));
+        }
+      }
+    } catch (e) {
+      logger.warn('Failed to aggregate contract_value for MAM WS orders', {
+        error: e.message,
+        mamAccountId
+      });
+    }
+  }
+
   const open = [];
   const pending = [];
   const rejected = [];
@@ -134,7 +168,9 @@ async function fetchMamOrders(mamAccountId) {
         ? (order.average_entry_price?.toString?.() ?? null)
         : (pendingRequestedPrice ?? null),
       margin: order.total_aggregated_margin?.toString?.() ?? undefined,
-      contract_value: undefined,
+      contract_value: status === 'OPEN'
+        ? (contractValueByMamOrderId.get(Number(order.id)) ?? undefined)
+        : undefined,
       stop_loss: order.stop_loss?.toString?.() ?? null,
       take_profit: order.take_profit?.toString?.() ?? null,
       order_user_id: order.mam_account_id,
