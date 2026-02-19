@@ -1,4 +1,6 @@
+const { Op } = require('sequelize');
 const mamOrderService = require('../services/mamOrder.service');
+const MAMOrder = require('../models/mamOrder.model');
 
 class MAMOrdersController {
   async placeInstantOrder(req, res) {
@@ -41,33 +43,74 @@ class MAMOrdersController {
       return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
     }
 
-    const rawPage = Number(req.query.page || 1);
-    const rawPageSize = Number(req.query.page_size || req.query.limit || 50);
-    const pageSize = Math.min(Number.isFinite(rawPageSize) && rawPageSize > 0 ? rawPageSize : 50, 200);
-    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const page = Math.max(1, parseInt(req.query.page || req.body?.page || '1', 10));
+    const pageSizeRaw = parseInt(req.query.page_size || req.query.limit || req.body?.page_size || req.body?.limit || '20', 10);
+    const pageSize = Math.min(Math.max(1, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 20), 100);
     const offset = (page - 1) * pageSize;
 
+    const startDateRaw = req.query.start_date || req.body?.start_date;
+    const endDateRaw = req.query.end_date || req.body?.end_date;
+
+    let updatedAtFilter = null;
+    if (startDateRaw || endDateRaw) {
+      const startDate = startDateRaw ? new Date(startDateRaw) : null;
+      const endDate = endDateRaw ? new Date(endDateRaw) : null;
+
+      if ((startDateRaw && Number.isNaN(startDate.getTime())) || (endDateRaw && Number.isNaN(endDate.getTime()))) {
+        return res.status(400).json({ success: false, message: 'Invalid start_date or end_date' });
+      }
+
+      updatedAtFilter = {};
+      if (startDate) {
+        updatedAtFilter[Op.gte] = startDate;
+      }
+      if (endDate) {
+        updatedAtFilter[Op.lte] = endDate;
+      }
+    }
+
     try {
-      const result = await mamOrderService.getClosedOrders({
-        mamAccountId,
+      const where = { mam_account_id: parseInt(mamAccountId, 10), order_status: 'CLOSED' };
+      if (updatedAtFilter) {
+        where.updated_at = updatedAtFilter;
+      }
+
+      const { rows } = await MAMOrder.findAndCountAll({
+        where,
+        order: [['updated_at', 'DESC']],
+        offset,
         limit: pageSize,
-        offset
       });
 
-      return res.status(200).json({
-        success: true,
-        message: 'MAM closed orders fetched',
-        data: {
-          total: result.total,
-          page,
-          page_size: pageSize,
-          items: result.items
-        }
-      });
+      const data = rows.map((r) => ({
+        order_id: r.id,
+        mam_account_id: r.mam_account_id,
+        order_company_name: String(r.symbol).toUpperCase(),
+        symbol: r.symbol,
+        order_type: r.order_type,
+        order_status: r.order_status,
+        order_quantity: r.requested_volume?.toString?.() ?? String(r.requested_volume ?? ''),
+        requested_volume: r.requested_volume?.toString?.() ?? String(r.requested_volume ?? ''),
+        executed_volume: r.executed_volume?.toString?.() ?? String(r.executed_volume ?? ''),
+        average_entry_price: r.average_entry_price?.toString?.() ?? null,
+        average_exit_price: r.average_exit_price?.toString?.() ?? null,
+        gross_profit: r.gross_profit?.toString?.() ?? null,
+        net_profit_after_fees: r.net_profit_after_fees?.toString?.() ?? null,
+        stop_loss: r.stop_loss?.toString?.() ?? null,
+        take_profit: r.take_profit?.toString?.() ?? null,
+        slippage_bps: r.slippage_bps?.toString?.() ?? null,
+        rejected_investors_count: r.rejected_investors_count,
+        rejected_volume: r.rejected_volume?.toString?.() ?? null,
+        close_message: r.close_message ?? null,
+        created_at: r.created_at ? (r.created_at instanceof Date ? r.created_at.toISOString() : new Date(r.created_at).toISOString()) : null,
+        updated_at: r.updated_at ? (r.updated_at instanceof Date ? r.updated_at.toISOString() : new Date(r.updated_at).toISOString()) : null,
+      }));
+
+      return res.status(200).json(data);
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
+      return res.status(500).json({
         success: false,
-        message: error.message || 'Failed to fetch MAM closed orders'
+        message: 'Failed to fetch MAM closed orders'
       });
     }
   }
