@@ -9,6 +9,7 @@ const StrategyProviderAccount = require('../models/strategyProviderAccount.model
 const CopyFollowerAccount = require('../models/copyFollowerAccount.model');
 const MAMAccount = require('../models/mamAccount.model');
 const MAMOrder = require('../models/mamOrder.model');
+const UserTransaction = require('../models/userTransaction.model');
 const logger = require('../services/logger.service');
 const adminAuditService = require('../services/admin.audit.service');
 const adminOrderManagementService = require('../services/admin.order.management.service');
@@ -106,6 +107,121 @@ async function getMamClosedOrders(req, res) {
       await adminAuditService.logAction({
         adminId: Number(adminId),
         action: 'ORDERS_SUPERADMIN_MAM_CLOSED_LIST',
+        ipAddress: req.ip,
+        requestBody: { query: req.query },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
+
+// GET /api/superadmin/orders/mam/wallet-transactions
+async function getMamWalletTransactions(req, res) {
+  const operationId = `superadmin_mam_wallet_txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountIdRaw = req.query.mam_account_id || req.body?.mam_account_id;
+    const mamAccountId = parseInt(String(mamAccountIdRaw || ''), 10);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const pageRaw = Number.parseInt(req.query.page || req.body?.page, 10);
+    const pageSizeRaw = Number.parseInt(req.query.page_size || req.body?.page_size, 10);
+    let limitRaw = Number.parseInt(req.query.limit || req.body?.limit, 10);
+    let offsetRaw = Number.parseInt(req.query.offset || req.body?.offset, 10);
+
+    const pageSize = Math.min(
+      Math.max(1, Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? pageSizeRaw : (Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50)),
+      100
+    );
+
+    let page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : null;
+    if (!page && Number.isFinite(offsetRaw) && offsetRaw >= 0) {
+      page = Math.floor(offsetRaw / pageSize) + 1;
+    }
+    if (!page) page = 1;
+
+    const offset = (page - 1) * pageSize;
+
+    const startDateRaw = req.query.start_date || req.body?.start_date;
+    const endDateRaw = req.query.end_date || req.body?.end_date;
+    let createdAtFilter = null;
+    if (startDateRaw || endDateRaw) {
+      const startDate = startDateRaw ? new Date(startDateRaw) : null;
+      const endDate = endDateRaw ? new Date(endDateRaw) : null;
+      if ((startDateRaw && Number.isNaN(startDate.getTime())) || (endDateRaw && Number.isNaN(endDate.getTime()))) {
+        return bad(res, 'Invalid start_date or end_date', 400);
+      }
+      createdAtFilter = {};
+      if (startDate) createdAtFilter[Op.gte] = startDate;
+      if (endDate) createdAtFilter[Op.lte] = endDate;
+    }
+
+    const where = {
+      user_id: mamAccountId,
+      user_type: 'mam_account',
+      type: 'performance_fee_earned',
+    };
+    if (createdAtFilter) {
+      where.created_at = createdAtFilter;
+    }
+
+    const { rows, count } = await UserTransaction.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      attributes: ['transaction_id', 'type', 'amount', 'status', 'reference_id', 'notes', 'created_at'],
+      limit: pageSize,
+      offset,
+    });
+
+    const transactions = rows.map((r) => ({
+      transaction_id: r.transaction_id,
+      type: r.type,
+      amount: r.amount,
+      status: r.status,
+      reference_id: r.reference_id,
+      notes: r.notes,
+      created_at: r.created_at,
+      source: 'wallet_transaction',
+    }));
+
+    const total = Number(count || 0);
+    const totalPages = Math.ceil(total / pageSize) || 1;
+
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_WALLET_TRANSACTIONS_LIST',
+        ipAddress: req.ip,
+        requestBody: { query: req.query },
+        status: 'SUCCESS',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Wallet transactions retrieved successfully',
+      data: {
+        transactions,
+        pagination: {
+          total,
+          page,
+          page_size: pageSize,
+          total_pages: totalPages,
+          has_next_page: page < totalPages,
+          has_previous_page: page > 1,
+        }
+      }
+    });
+  } catch (err) {
+    logger.error('getMamWalletTransactions internal error', { error: err.message, operationId });
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_WALLET_TRANSACTIONS_LIST',
         ipAddress: req.ip,
         requestBody: { query: req.query },
         status: 'FAILURE',
@@ -1656,6 +1772,7 @@ module.exports = {
   ensureSymbolHolder,
   getUserPortfolio,
   getMamClosedOrders,
+  getMamWalletTransactions,
   placeInstantOrder,
   placePendingOrder,
   cancelPendingOrder,

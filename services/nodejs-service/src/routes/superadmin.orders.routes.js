@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
+const { query } = require('express-validator');
 const { authenticateAdmin, requireRole } = require('../middlewares/auth.middleware');
 const ctrl = require('../controllers/superadmin.orders.controller');
+const { validateRequest } = require('../middlewares/validation.middleware');
 
 // All endpoints in this router require superadmin
 router.use(authenticateAdmin);
@@ -309,6 +311,35 @@ router.post('/mam/close-all', ctrl.closeAllMamOrders);
 router.post('/mam/close', ctrl.closeMamOrder);
 
 router.get('/mam/closed', ctrl.getMamClosedOrders);
+
+router.get(
+  '/mam/wallet-transactions',
+  [
+    query('mam_account_id')
+      .exists().withMessage('mam_account_id is required')
+      .isInt({ min: 1 }).withMessage('mam_account_id must be a positive integer'),
+    query('page')
+      .optional()
+      .isInt({ min: 1 }).withMessage('page must be >= 1'),
+    query('page_size')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('page_size must be between 1 and 100'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('offset')
+      .optional()
+      .isInt({ min: 0 }).withMessage('offset must be >= 0'),
+    query('start_date')
+      .optional()
+      .isISO8601().withMessage('start_date must be a valid date'),
+    query('end_date')
+      .optional()
+      .isISO8601().withMessage('end_date must be a valid date'),
+  ],
+  validateRequest,
+  ctrl.getMamWalletTransactions
+);
 
 /**
  * @swagger

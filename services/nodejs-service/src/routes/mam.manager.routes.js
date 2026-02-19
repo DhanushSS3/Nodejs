@@ -99,6 +99,12 @@ router.get(
   authenticateJWT,
   requireMamManager,
   [
+    query('page')
+      .optional()
+      .isInt({ min: 1 }).withMessage('page must be >= 1'),
+    query('page_size')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('page_size must be between 1 and 100'),
     query('limit')
       .optional()
       .isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),

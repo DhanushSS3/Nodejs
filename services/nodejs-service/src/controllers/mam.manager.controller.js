@@ -14,11 +14,25 @@ class MAMManagerController {
         return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
       }
 
-      let limit = Number.parseInt(req.query.limit, 10);
-      let offset = Number.parseInt(req.query.offset, 10);
-      if (!Number.isFinite(limit) || limit <= 0) limit = 50;
-      if (limit > 100) limit = 100;
-      if (!Number.isFinite(offset) || offset < 0) offset = 0;
+      const pageRaw = Number.parseInt(req.query.page, 10);
+      const pageSizeRaw = Number.parseInt(req.query.page_size, 10);
+      let limitRaw = Number.parseInt(req.query.limit, 10);
+      let offsetRaw = Number.parseInt(req.query.offset, 10);
+
+      const pageSize = Math.min(
+        Math.max(1, Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? pageSizeRaw : (Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50)),
+        100
+      );
+
+      let page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : null;
+
+      if (!page && Number.isFinite(offsetRaw) && offsetRaw >= 0) {
+        page = Math.floor(offsetRaw / pageSize) + 1;
+      }
+
+      if (!page) page = 1;
+
+      const offset = (page - 1) * pageSize;
 
       const startDateRaw = req.query.start_date;
       const endDateRaw = req.query.end_date;
@@ -43,11 +57,11 @@ class MAMManagerController {
         where.created_at = createdAtFilter;
       }
 
-      const { rows } = await UserTransaction.findAndCountAll({
+      const { rows, count } = await UserTransaction.findAndCountAll({
         where,
         order: [['created_at', 'DESC']],
         attributes: ['transaction_id', 'type', 'amount', 'status', 'reference_id', 'notes', 'created_at'],
-        limit,
+        limit: pageSize,
         offset,
       });
 
@@ -62,7 +76,24 @@ class MAMManagerController {
         source: 'wallet_transaction',
       }));
 
-      return res.status(200).json(transactions);
+      const total = Number(count || 0);
+      const totalPages = Math.ceil(total / pageSize) || 1;
+
+      return res.status(200).json({
+        success: true,
+        message: 'Wallet transactions retrieved successfully',
+        data: {
+          transactions,
+          pagination: {
+            total,
+            page,
+            page_size: pageSize,
+            total_pages: totalPages,
+            has_next_page: page < totalPages,
+            has_previous_page: page > 1,
+          }
+        }
+      });
     } catch (error) {
       return res.status(500).json({
         success: false,
