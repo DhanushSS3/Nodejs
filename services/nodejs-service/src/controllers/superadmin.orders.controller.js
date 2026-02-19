@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { Op } = require('sequelize');
 const OrdersIndexRebuildService = require('../services/orders.index.rebuild.service');
 const OrdersBackfillService = require('../services/orders.backfill.service');
 const { redisCluster } = require('../../config/redis');
@@ -22,6 +23,98 @@ function bad(res, message, code = 400) {
 
 const SUPPORTED_USER_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
 const BACKFILL_SUPPORTED_TYPES = new Set(['live', 'demo', 'strategy_provider', 'copy_follower']);
+
+// GET /api/superadmin/orders/mam/closed
+async function getMamClosedOrders(req, res) {
+  const operationId = `superadmin_mam_closed_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const adminId = req.admin?.id;
+  try {
+    const mamAccountIdRaw = req.query.mam_account_id || req.body?.mam_account_id;
+    const mamAccountId = parseInt(String(mamAccountIdRaw || ''), 10);
+    if (!Number.isInteger(mamAccountId) || mamAccountId <= 0) {
+      return bad(res, 'mam_account_id must be a positive integer', 400);
+    }
+
+    const page = Math.max(1, parseInt(req.query.page || req.body?.page || '1', 10));
+    const pageSizeRaw = parseInt(req.query.page_size || req.query.limit || req.body?.page_size || req.body?.limit || '20', 10);
+    const pageSize = Math.min(Math.max(1, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 20), 100);
+    const offset = (page - 1) * pageSize;
+
+    const startDateRaw = req.query.start_date || req.body?.start_date;
+    const endDateRaw = req.query.end_date || req.body?.end_date;
+
+    let updatedAtFilter = null;
+    if (startDateRaw || endDateRaw) {
+      const startDate = startDateRaw ? new Date(startDateRaw) : null;
+      const endDate = endDateRaw ? new Date(endDateRaw) : null;
+
+      if ((startDateRaw && Number.isNaN(startDate.getTime())) || (endDateRaw && Number.isNaN(endDate.getTime()))) {
+        return bad(res, 'Invalid start_date or end_date', 400);
+      }
+
+      updatedAtFilter = {};
+      if (startDate) updatedAtFilter[Op.gte] = startDate;
+      if (endDate) updatedAtFilter[Op.lte] = endDate;
+    }
+
+    const where = { mam_account_id: mamAccountId, order_status: 'CLOSED' };
+    if (updatedAtFilter) {
+      where.updated_at = updatedAtFilter;
+    }
+
+    const { rows } = await MAMOrder.findAndCountAll({
+      where,
+      order: [['updated_at', 'DESC']],
+      offset,
+      limit: pageSize,
+    });
+
+    const data = rows.map((r) => ({
+      mam_order_id: r.id,
+      mam_account_id: r.mam_account_id,
+      symbol: r.symbol,
+      order_type: r.order_type,
+      order_status: r.order_status,
+      requested_volume: r.requested_volume?.toString?.() ?? String(r.requested_volume ?? ''),
+      executed_volume: r.executed_volume?.toString?.() ?? String(r.executed_volume ?? ''),
+      average_entry_price: r.average_entry_price?.toString?.() ?? null,
+      average_exit_price: r.average_exit_price?.toString?.() ?? null,
+      gross_profit: r.gross_profit?.toString?.() ?? null,
+      net_profit_after_fees: r.net_profit_after_fees?.toString?.() ?? null,
+      stop_loss: r.stop_loss?.toString?.() ?? null,
+      take_profit: r.take_profit?.toString?.() ?? null,
+      close_message: r.close_message ?? null,
+      metadata: r.metadata ?? null,
+      created_at: r.created_at ? (r.created_at instanceof Date ? r.created_at.toISOString() : new Date(r.created_at).toISOString()) : null,
+      updated_at: r.updated_at ? (r.updated_at instanceof Date ? r.updated_at.toISOString() : new Date(r.updated_at).toISOString()) : null,
+    }));
+
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_CLOSED_LIST',
+        ipAddress: req.ip,
+        requestBody: { query: req.query },
+        status: 'SUCCESS',
+      });
+    }
+
+    return res.status(200).json(data);
+  } catch (err) {
+    logger.error('getMamClosedOrders internal error', { error: err.message, operationId });
+    if (adminId) {
+      await adminAuditService.logAction({
+        adminId: Number(adminId),
+        action: 'ORDERS_SUPERADMIN_MAM_CLOSED_LIST',
+        ipAddress: req.ip,
+        requestBody: { query: req.query },
+        status: 'FAILURE',
+        errorMessage: err.message,
+      });
+    }
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  }
+}
 
 // POST /api/superadmin/orders/place-instant
 // body: { user_type: 'live'|'demo'|'strategy_provider'|'copy_follower', user_id: string|number, symbol: string, order_type: string, order_price: number, order_quantity: number, idempotency_key?: string }
@@ -1562,6 +1655,7 @@ module.exports = {
   ensureHolding,
   ensureSymbolHolder,
   getUserPortfolio,
+  getMamClosedOrders,
   placeInstantOrder,
   placePendingOrder,
   cancelPendingOrder,

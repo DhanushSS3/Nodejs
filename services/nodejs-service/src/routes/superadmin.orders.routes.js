@@ -308,6 +308,8 @@ router.post('/mam/close-all', ctrl.closeAllMamOrders);
 
 router.post('/mam/close', ctrl.closeMamOrder);
 
+router.get('/mam/closed', ctrl.getMamClosedOrders);
+
 /**
  * @swagger
  * /api/superadmin/orders/reject-queued:
