@@ -94,4 +94,26 @@ router.get(
   mamManagerController.getClosedOrders
 );
 
+router.get(
+  '/wallet-transactions',
+  authenticateJWT,
+  requireMamManager,
+  [
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('offset')
+      .optional()
+      .isInt({ min: 0 }).withMessage('offset must be >= 0'),
+    query('start_date')
+      .optional()
+      .isISO8601().withMessage('start_date must be a valid date'),
+    query('end_date')
+      .optional()
+      .isISO8601().withMessage('end_date must be a valid date'),
+  ],
+  validateRequest,
+  mamManagerController.getWalletTransactions
+);
+
 module.exports = router;

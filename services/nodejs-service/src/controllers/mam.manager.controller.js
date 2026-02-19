@@ -3,9 +3,74 @@ const MAMAssignment = require('../models/mamAssignment.model');
 const LiveUser = require('../models/liveUser.model');
 const LiveUserOrder = require('../models/liveUserOrder.model');
 const MAMOrder = require('../models/mamOrder.model');
+const UserTransaction = require('../models/userTransaction.model');
 const { ASSIGNMENT_STATUS } = require('../constants/mamAssignment.constants');
 
 class MAMManagerController {
+  async getWalletTransactions(req, res) {
+    try {
+      const mamAccountId = req.user?.mam_account_id;
+      if (!mamAccountId) {
+        return res.status(403).json({ success: false, message: 'No MAM account bound to manager session' });
+      }
+
+      let limit = Number.parseInt(req.query.limit, 10);
+      let offset = Number.parseInt(req.query.offset, 10);
+      if (!Number.isFinite(limit) || limit <= 0) limit = 50;
+      if (limit > 100) limit = 100;
+      if (!Number.isFinite(offset) || offset < 0) offset = 0;
+
+      const startDateRaw = req.query.start_date;
+      const endDateRaw = req.query.end_date;
+      let createdAtFilter = null;
+      if (startDateRaw || endDateRaw) {
+        const startDate = startDateRaw ? new Date(startDateRaw) : null;
+        const endDate = endDateRaw ? new Date(endDateRaw) : null;
+        if ((startDateRaw && Number.isNaN(startDate.getTime())) || (endDateRaw && Number.isNaN(endDate.getTime()))) {
+          return res.status(400).json({ success: false, message: 'Invalid start_date or end_date' });
+        }
+        createdAtFilter = {};
+        if (startDate) createdAtFilter[Op.gte] = startDate;
+        if (endDate) createdAtFilter[Op.lte] = endDate;
+      }
+
+      const where = {
+        user_id: mamAccountId,
+        user_type: 'mam_account',
+        type: 'performance_fee_earned',
+      };
+      if (createdAtFilter) {
+        where.created_at = createdAtFilter;
+      }
+
+      const { rows } = await UserTransaction.findAndCountAll({
+        where,
+        order: [['created_at', 'DESC']],
+        attributes: ['transaction_id', 'type', 'amount', 'status', 'reference_id', 'notes', 'created_at'],
+        limit,
+        offset,
+      });
+
+      const transactions = rows.map((r) => ({
+        transaction_id: r.transaction_id,
+        type: r.type,
+        amount: r.amount,
+        status: r.status,
+        reference_id: r.reference_id,
+        notes: r.notes,
+        created_at: r.created_at,
+        source: 'wallet_transaction',
+      }));
+
+      return res.status(200).json(transactions);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to load wallet transactions'
+      });
+    }
+  }
+
   async getAssignedClients(req, res) {
     try {
       const mamAccountId = req.user?.mam_account_id;
