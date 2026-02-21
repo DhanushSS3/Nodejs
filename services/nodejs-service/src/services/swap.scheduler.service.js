@@ -13,8 +13,8 @@ const logger = require('../utils/logger');
 const sequelize = require('../config/db');
 const portfolioEvents = require('./events/portfolio.events');
 const { redisCluster } = require('../../config/redis');
-const { 
-  logSwapApplication, 
+const {
+  logSwapApplication,
   logDailyProcessingSummary,
   logSwapError,
   logManualSwapProcessing
@@ -109,19 +109,19 @@ class SwapSchedulerService {
     this.isRunning = true;
     const startTime = Date.now();
     let totalSwapAmount = 0;
-    
+
     try {
       logger.info(`Starting daily swap processing for ${targetDate.toDateString()}`);
 
       // Process live orders
       const liveResults = await this.processOrdersSwap(LiveUserOrder, 'live', targetDate);
-      
+
       // Process demo orders  
       const demoResults = await this.processOrdersSwap(DemoUserOrder, 'demo', targetDate);
-      
+
       // Process copy follower orders
       const copyFollowerResults = await this.processCopyTradingOrdersSwap(CopyFollowerOrder, CopyFollowerAccount, 'copy_follower', targetDate);
-      
+
       // Process strategy provider orders
       const strategyProviderResults = await this.processCopyTradingOrdersSwap(StrategyProviderOrder, StrategyProviderAccount, 'strategy_provider', targetDate);
 
@@ -228,7 +228,7 @@ class SwapSchedulerService {
       for (let i = 0; i < openOrders.length; i += batchSize) {
         const batch = openOrders.slice(i, i + batchSize);
         const batchResults = await this.processBatch(OrderModel, batch, targetDate, orderType);
-        
+
         results.updated += batchResults.updated;
         results.errors += batchResults.errors;
         results.skipped += batchResults.skipped;
@@ -276,7 +276,7 @@ class SwapSchedulerService {
       for (let i = 0; i < openOrders.length; i += batchSize) {
         const batch = openOrders.slice(i, i + batchSize);
         const batchResults = await this.processBatch(OrderModel, batch, targetDate, orderType);
-        
+
         results.updated += batchResults.updated;
         results.errors += batchResults.errors;
         results.skipped += batchResults.skipped;
@@ -303,7 +303,7 @@ class SwapSchedulerService {
     const isLiveOrder = OrderModel.name === 'LiveUserOrder';
     const UserModel = isLiveOrder ? LiveUser : DemoUser;
     const orderType = isLiveOrder ? 'live' : 'demo';
-    
+
     // Get order status distribution for monitoring
     const statusCounts = await OrderModel.findAll({
       attributes: [
@@ -313,12 +313,12 @@ class SwapSchedulerService {
       group: ['order_status'],
       raw: true
     });
-    
+
     // IMPORTANT: This query fetches orders directly from DATABASE, not Redis cache
     const orders = await OrderModel.findAll({
       where: {
         order_status: {
-          [Op.in]: ['OPEN', 'PENDING', 'PARTIAL_FILLED'] // Add other open statuses as needed
+          [Op.in]: ['OPEN', 'PARTIAL_FILLED'] // Only EXECUTED orders accrue swap. PENDING (limit/stop) orders are not yet open positions.
         }
       },
       attributes: [
@@ -333,13 +333,13 @@ class SwapSchedulerService {
         required: true // Inner join to ensure we only get orders with valid users
       }]
     });
-    
+
     if (orders.length > 0) {
       swapDebugLogger.info(`[DEBUG] Processing ${orders.length} open ${orderType} orders`);
     } else {
       swapDebugLogger.info(`[DEBUG] No open ${orderType} orders found`);
     }
-    
+
     return orders;
   }
 
@@ -358,13 +358,13 @@ class SwapSchedulerService {
       group: ['order_status'],
       raw: true
     });
-    
+
     // IMPORTANT: This query fetches orders directly from DATABASE, not Redis cache
     // We need to join with the account table to get the group information
     const orders = await OrderModel.findAll({
       where: {
         order_status: {
-          [Op.in]: ['OPEN', 'PENDING', 'PARTIAL_FILLED'] // Add other open statuses as needed
+          [Op.in]: ['OPEN', 'PARTIAL_FILLED'] // Only EXECUTED orders accrue swap. PENDING (limit/stop) orders are not yet open positions.
         }
       },
       attributes: [
@@ -373,7 +373,7 @@ class SwapSchedulerService {
         'contract_value', 'margin', 'commission', 'stop_loss', 'take_profit'
       ]
     });
-    
+
     // Get account information separately and add to orders
     const enrichedOrders = [];
     for (const order of orders) {
@@ -408,13 +408,13 @@ class SwapSchedulerService {
         swapDebugLogger.error(`[DEBUG] Error getting account for order ${order.order_id}:`, error);
       }
     }
-    
+
     if (enrichedOrders.length > 0) {
       swapDebugLogger.info(`[DEBUG] Processing ${enrichedOrders.length} open ${orderType} orders`);
     } else {
       swapDebugLogger.info(`[DEBUG] No open ${orderType} orders found`);
     }
-    
+
     return enrichedOrders;
   }
 
@@ -461,7 +461,7 @@ class SwapSchedulerService {
 
           await OrderModel.update(
             { swap: newSwap },
-            { 
+            {
               where: { id: order.id },
               transaction
             }
@@ -524,7 +524,7 @@ class SwapSchedulerService {
       }
 
       await transaction.commit();
-      
+
       // After successful DB transaction, update Redis cache
       for (const update of redisUpdates) {
         try {
@@ -533,7 +533,7 @@ class SwapSchedulerService {
           const hashTag = `${userTypeStr}:${userIdStr}`;
           const orderKey = `user_holdings:{${hashTag}}:${update.order_id}`;
           const orderDataKey = `order_data:${update.order_id}`;
-          
+
           // Create complete Redis hash mapping like the rebuild process does
           const holdingMapping = {
             order_id: update.order_id,
@@ -544,7 +544,7 @@ class SwapSchedulerService {
             order_status: update.order_status || 'OPEN',
             swap: String(update.newSwap)
           };
-          
+
           // Add optional fields if they exist (same as rebuild process)
           if (update.contract_value != null) holdingMapping.contract_value = String(update.contract_value);
           if (update.margin != null) holdingMapping.margin = String(update.margin);
@@ -553,13 +553,13 @@ class SwapSchedulerService {
           if (update.take_profit != null) holdingMapping.take_profit = String(update.take_profit);
           if (update.created_at) holdingMapping.created_at = update.created_at;
           if (update.updated_at) holdingMapping.updated_at = update.updated_at;
-          
+
           // Update user_holdings key with complete mapping (like rebuild process)
           await redisCluster.hset(orderKey, holdingMapping);
-          
+
           // Update order_data key with swap value
           await redisCluster.hset(orderDataKey, 'swap', String(update.newSwap));
-          
+
           // Notify WebSocket clients about the swap update
           try {
             portfolioEvents.emitUserUpdate(update.orderType, update.order_user_id, {
@@ -573,13 +573,13 @@ class SwapSchedulerService {
           } catch (wsError) {
             logger.warn(`Failed to emit WebSocket update for order ${update.order_id}:`, wsError);
           }
-          
+
         } catch (redisError) {
           swapDebugLogger.error(`[DEBUG] Redis update failed for order ${update.order_id}: ${redisError.message}`);
           // Continue processing other Redis updates even if one fails
         }
       }
-      
+
     } catch (error) {
       await transaction.rollback();
       logSwapError(error, {
@@ -600,10 +600,10 @@ class SwapSchedulerService {
   async triggerManual(targetDate = new Date(), adminId = null, reason = 'Manual trigger') {
     const startTime = Date.now();
     logger.info(`Manual trigger for swap processing on ${targetDate.toDateString()}`);
-    
+
     const results = await this.processDaily(targetDate);
     const processingTime = Date.now() - startTime;
-    
+
     // Log manual processing
     logManualSwapProcessing({
       admin_id: adminId,
@@ -613,7 +613,7 @@ class SwapSchedulerService {
       processing_time_ms: processingTime,
       trigger_reason: reason
     });
-    
+
     return results;
   }
 
@@ -635,16 +635,16 @@ class SwapSchedulerService {
   async processSpecificOrder(orderType, orderId, targetDate = new Date()) {
     try {
       let OrderModel, AccountModel, order;
-      
+
       // Determine models based on order type
       if (orderType === 'live') {
         OrderModel = LiveUserOrder;
         const UserModel = LiveUser;
-        
+
         order = await OrderModel.findOne({
           where: { order_id: orderId },
           attributes: [
-            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
             'swap', 'order_user_id', 'created_at'
           ],
           include: [{
@@ -654,7 +654,7 @@ class SwapSchedulerService {
             required: true
           }]
         });
-        
+
         if (order) {
           const userGroup = order.user?.group;
           if (!userGroup) {
@@ -666,11 +666,11 @@ class SwapSchedulerService {
       } else if (orderType === 'demo') {
         OrderModel = DemoUserOrder;
         const UserModel = DemoUser;
-        
+
         order = await OrderModel.findOne({
           where: { order_id: orderId },
           attributes: [
-            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
             'swap', 'order_user_id', 'created_at'
           ],
           include: [{
@@ -680,7 +680,7 @@ class SwapSchedulerService {
             required: true
           }]
         });
-        
+
         if (order) {
           const userGroup = order.user?.group;
           if (!userGroup) {
@@ -692,20 +692,20 @@ class SwapSchedulerService {
       } else if (orderType === 'copy_follower') {
         OrderModel = CopyFollowerOrder;
         AccountModel = CopyFollowerAccount;
-        
+
         order = await OrderModel.findOne({
           where: { order_id: orderId },
           attributes: [
-            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
             'swap', 'order_user_id', 'created_at'
           ]
         });
-        
+
         if (order) {
           const account = await AccountModel.findByPk(order.order_user_id, {
             attributes: ['group']
           });
-          
+
           if (!account || !account.group) {
             throw new Error(`Account or group not found for order ${orderId}`);
           }
@@ -715,20 +715,20 @@ class SwapSchedulerService {
       } else if (orderType === 'strategy_provider') {
         OrderModel = StrategyProviderOrder;
         AccountModel = StrategyProviderAccount;
-        
+
         order = await OrderModel.findOne({
           where: { order_id: orderId },
           attributes: [
-            'id', 'order_id', 'symbol', 'order_type', 'order_quantity', 
+            'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
             'swap', 'order_user_id', 'created_at'
           ]
         });
-        
+
         if (order) {
           const account = await AccountModel.findByPk(order.order_user_id, {
             attributes: ['group']
           });
-          
+
           if (!account || !account.group) {
             throw new Error(`Account or group not found for order ${orderId}`);
           }
@@ -744,7 +744,7 @@ class SwapSchedulerService {
       }
 
       const swapCharge = await swapCalculationService.calculateSwapCharge(order, targetDate);
-      
+
       if (swapCharge !== 0) {
         const currentSwap = parseFloat(order.swap || 0);
         const newSwap = currentSwap + swapCharge;

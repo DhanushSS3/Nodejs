@@ -210,19 +210,44 @@ class RedisSyncService {
         });
         logger.info(`[${operationId}] Updated user_portfolio balance: ${userPortfolioKey}`);
 
-        // If there are no open orders, normalize portfolio fields immediately.
-        // This prevents stale negative equity/free_margin from blocking order placement
-        // before the Python portfolio calculator processes portfolio_force_recalc.
+        // If there are no TRULY OPEN (executed) orders, normalize portfolio fields immediately.
+        // This prevents stale negative equity/free_margin from blocking order placement.
+        // NOTE: PENDING orders (limit/stop not yet triggered) are NOT real positions — they
+        // must not contribute to open_pnl or reduce free_margin.
         try {
           const userOrdersIndexKey = `user_orders_index:{${userType}:${userId}}`;
-          const openOrderIds = await redisCluster.smembers(userOrdersIndexKey);
+          const orderIds = await redisCluster.smembers(userOrdersIndexKey);
 
           logger.info(`[${operationId}] user_orders_index size check for ${userType} user ${userId}`, {
             userOrdersIndexKey,
-            count: Array.isArray(openOrderIds) ? openOrderIds.length : 0,
+            count: Array.isArray(orderIds) ? orderIds.length : 0,
           });
 
-          if (!openOrderIds || openOrderIds.length === 0) {
+          // Check if any indexed order is actually OPEN (not just PENDING/QUEUED)
+          let hasActuallyOpenOrder = false;
+          if (Array.isArray(orderIds) && orderIds.length > 0) {
+            const hashTag = `${userType}:${userId}`;
+            for (const oid of orderIds) {
+              try {
+                const orderStatus = await redisCluster.hget(
+                  `user_holdings:{${hashTag}}:${oid}`,
+                  'order_status'
+                );
+                const statusUpper = (orderStatus || '').toUpperCase();
+                // OPEN and PARTIAL_FILLED are real executed positions
+                if (statusUpper === 'OPEN' || statusUpper === 'PARTIAL_FILLED') {
+                  hasActuallyOpenOrder = true;
+                  break;
+                }
+              } catch (orderCheckErr) {
+                // If we can't read an order, assume it might be open (safe default)
+                hasActuallyOpenOrder = true;
+                break;
+              }
+            }
+          }
+
+          if (!hasActuallyOpenOrder) {
             await redisCluster.hset(userPortfolioKey, {
               used_margin_executed: '0.0',
               used_margin_all: '0.0',
@@ -236,7 +261,7 @@ class RedisSyncService {
               calc_status: 'ok',
               degraded_fields: ''
             });
-            logger.info(`[${operationId}] Normalized user_portfolio fields (no open orders): ${userPortfolioKey}`);
+            logger.info(`[${operationId}] Normalized user_portfolio fields (no truly open orders, only PENDING/QUEUED): ${userPortfolioKey}`);
           }
         } catch (normalizeError) {
           logger.warn(`[${operationId}] Failed to normalize user_portfolio fields for ${userType} user ${userId}: ${normalizeError.message}`);
