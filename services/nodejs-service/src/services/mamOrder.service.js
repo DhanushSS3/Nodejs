@@ -83,11 +83,43 @@ class MAMOrderService {
       throw error;
     }
 
+    logger.debug('MAM allocation inputs', {
+      mam_account_id: mamAccountId,
+      symbol,
+      order_type,
+      requested_volume: volume,
+      allocation_precision: Number(mamAccount.allocation_precision || 0.01),
+      assignments_count: assignments.length,
+      total_free_margin: totalFreeMargin,
+      free_margin_snapshots: freeMarginSnapshots.map((s) => ({
+        client_id: s.client_id,
+        free_margin: s.free_margin,
+        balance: s.balance,
+        used_margin: s.used_margin
+      }))
+    });
+
     const allocation = this._computeAllocation({
       assignments,
       freeMarginSnapshots,
       totalVolume: volume,
       precision: Number(mamAccount.allocation_precision || 0.01)
+    });
+
+    logger.debug('MAM allocation computed', {
+      mam_account_id: mamAccountId,
+      symbol,
+      order_type,
+      requested_volume: volume,
+      allocation_sum: allocation.reduce((acc, e) => acc + (Number(e.allocated_volume) || 0), 0),
+      allocation_entries: allocation.map((e) => ({
+        client_id: e.assignment?.client_live_user_id,
+        ratio: e.ratio,
+        raw_lots: e.raw_lots,
+        allocated_volume: e.allocated_volume,
+        remainder: e.remainder,
+        free_margin: e.snapshot?.free_margin
+      }))
     });
 
     const mamLock = await acquireUserLock('mam_account', mamAccountId, 10);

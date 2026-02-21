@@ -1,4 +1,5 @@
 const mamOrderService = require('../services/mamOrder.service');
+const logger = require('../services/logger.service');
 
 class MAMOrdersController {
   async placeInstantOrder(req, res) {
@@ -9,6 +10,19 @@ class MAMOrdersController {
 
     try {
       const normalizedSymbol = String(req.body.symbol || req.body.order_company_name || '').toUpperCase();
+      const computedVolume = Number(req.body.volume || req.body.order_quantity);
+
+      logger.debug('MAM instant order request - volume inputs', {
+        mam_account_id: mamAccountId,
+        manager_id: req.user?.sub || req.user?.id,
+        symbol: normalizedSymbol,
+        order_type: req.body.order_type,
+        order_price: req.body.order_price,
+        body_volume: req.body.volume,
+        body_order_quantity: req.body.order_quantity,
+        computed_volume: computedVolume,
+        raw_body_keys: Object.keys(req.body || {})
+      });
       const result = await mamOrderService.placeInstantOrder({
         mamAccountId,
         managerId: req.user?.sub || req.user?.id,
@@ -16,7 +30,7 @@ class MAMOrdersController {
           symbol: normalizedSymbol,
           order_type: String(req.body.order_type || '').toUpperCase(),
           order_price: Number(req.body.order_price),
-          volume: Number(req.body.volume || req.body.order_quantity),
+          volume: computedVolume,
           stop_loss: req.body.stop_loss ? Number(req.body.stop_loss) : null,
           take_profit: req.body.take_profit ? Number(req.body.take_profit) : null
         }
@@ -80,6 +94,19 @@ class MAMOrdersController {
 
     try {
       const normalizedSymbol = String(req.body.symbol || req.body.order_company_name || '').toUpperCase();
+      const computedVolume = Number(req.body.volume || req.body.order_quantity);
+
+      logger.debug('MAM pending order request - volume inputs', {
+        mam_account_id: mamAccountId,
+        manager_id: req.user?.sub || req.user?.id,
+        symbol: normalizedSymbol,
+        order_type: req.body.order_type,
+        order_price: req.body.order_price,
+        body_volume: req.body.volume,
+        body_order_quantity: req.body.order_quantity,
+        computed_volume: computedVolume,
+        raw_body_keys: Object.keys(req.body || {})
+      });
       const result = await mamOrderService.placePendingOrder({
         mamAccountId,
         managerId: req.user?.sub || req.user?.id,
@@ -87,7 +114,7 @@ class MAMOrdersController {
           symbol: normalizedSymbol,
           order_type: String(req.body.order_type || '').toUpperCase(),
           order_price: Number(req.body.order_price),
-          volume: Number(req.body.volume || req.body.order_quantity)
+          volume: computedVolume
         }
       });
 
