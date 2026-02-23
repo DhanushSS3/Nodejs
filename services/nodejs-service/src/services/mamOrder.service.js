@@ -76,7 +76,8 @@ class MAMOrderService {
     await this._assertMarketOpen(groupFields?.type);
 
     const freeMarginSnapshots = await this._fetchFreeMargins(assignments);
-    const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + snap.free_margin, 0);
+    // Sum only positive free margins — negative means stale/corrupted portfolio snapshot
+    const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + Math.max(snap.free_margin, 0), 0);
     if (!(totalFreeMargin > 0)) {
       const error = new Error('All investors have zero free margin. Cannot allocate order.');
       error.statusCode = 409;
@@ -289,7 +290,8 @@ class MAMOrderService {
     }
 
     const freeMarginSnapshots = await this._fetchFreeMargins(assignments);
-    const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + snap.free_margin, 0);
+    // Sum only positive free margins — negative means stale/corrupted portfolio snapshot
+    const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + Math.max(snap.free_margin, 0), 0);
     if (!(totalFreeMargin > 0)) {
       const error = new Error('All investors have zero free margin. Cannot allocate order.');
       error.statusCode = 409;
@@ -1154,12 +1156,20 @@ class MAMOrderService {
       const clientId = assignment.client_live_user_id;
       const redisKey = `user_portfolio:{live:${clientId}}`;
       pipelines.push(redisCluster.hgetall(redisKey).then((data) => {
-        const freeMargin = this._toNumber(data?.free_margin);
+        const freeMarginRaw = this._toNumber(data?.free_margin);
         const balance = this._toNumber(data?.balance);
         const usedMargin = this._toNumber(data?.used_margin);
+
+        // IMPORTANT: Clamp free_margin to 0 — a negative value means stale/corrupted
+        // Redis portfolio data (e.g. PENDING orders incorrectly inflating open_pnl).
+        // A client with effectively no free margin contributes 0 weight to the allocation
+        // pool. This prevents negative ratios from corrupting other clients' lot shares
+        // and from deflating totalFreeMargin below real capacity.
+        const effectiveFreeMargin = Number.isFinite(freeMarginRaw) ? Math.max(freeMarginRaw, 0) : Math.max(Number(assignment?.client?.wallet_balance) || 0, 0);
+
         return {
           client_id: clientId,
-          free_margin: Number.isFinite(freeMargin) ? freeMargin : Math.max(Number(assignment?.client?.wallet_balance) || 0, 0),
+          free_margin: effectiveFreeMargin,
           balance: Number.isFinite(balance) ? balance : Number(assignment?.client?.wallet_balance) || 0,
           used_margin: Number.isFinite(usedMargin) ? usedMargin : 0
         };
@@ -1178,8 +1188,15 @@ class MAMOrderService {
 
   _computeAllocation({ assignments, freeMarginSnapshots, totalVolume, precision }) {
     const snapshotMap = new Map(freeMarginSnapshots.map((snap) => [snap.client_id, snap]));
-    const totalFreeMargin = freeMarginSnapshots.reduce((acc, snap) => acc + snap.free_margin, 0);
     const precisionValue = Number.isFinite(precision) && precision > 0 ? precision : 0.01;
+
+    // Sum only POSITIVE free margins. A negative free_margin (stale / corrupted Redis
+    // portfolio data) must not reduce the total pool or give a client a negative ratio.
+    // effectiveFreeMargin = max(free_margin, 0) for each client.
+    const totalFreeMargin = freeMarginSnapshots.reduce(
+      (acc, snap) => acc + Math.max(snap.free_margin, 0),
+      0
+    );
 
     if (!(totalFreeMargin > 0) || !(totalVolume > 0)) {
       return [];
@@ -1187,7 +1204,9 @@ class MAMOrderService {
 
     const rawEntries = assignments.map((assignment) => {
       const snap = snapshotMap.get(assignment.client_live_user_id) || { free_margin: 0, balance: 0 };
-      const ratio = snap.free_margin / totalFreeMargin;
+      // Clamp again defensively in case a snapshot slipped through with a negative value
+      const effectiveFreeMargin = Math.max(snap.free_margin, 0);
+      const ratio = effectiveFreeMargin / totalFreeMargin;
       const rawLots = totalVolume * ratio;
       const baseLots = this._roundDown(rawLots, precisionValue);
       return {
@@ -2768,7 +2787,7 @@ class MAMOrderService {
 
     return { success: true, takeprofit_id, flow };
   }
- 
+
   async cancelStopLoss({ mamAccountId, managerId, payload }) {
     const { order_id: mamOrderIdRaw } = payload || {};
 
