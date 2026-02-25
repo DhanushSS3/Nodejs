@@ -120,12 +120,12 @@ class MAMManagerController {
 
       const searchClause = searchTerm
         ? {
-            [Op.or]: [
-              { '$client.name$': { [Op.like]: `%${searchTerm}%` } },
-              { '$client.email$': { [Op.like]: `%${searchTerm}%` } },
-              { '$client.account_number$': { [Op.like]: `%${searchTerm}%` } }
-            ]
-          }
+          [Op.or]: [
+            { '$client.name$': { [Op.like]: `%${searchTerm}%` } },
+            { '$client.email$': { [Op.like]: `%${searchTerm}%` } },
+            { '$client.account_number$': { [Op.like]: `%${searchTerm}%` } }
+          ]
+        }
         : null;
 
       const { rows, count } = await MAMAssignment.findAndCountAll({
@@ -152,14 +152,14 @@ class MAMManagerController {
         updated_at: assignment.updated_at,
         client: assignment.client
           ? {
-              id: assignment.client.id,
-              name: assignment.client.name,
-              email: assignment.client.email,
-              account_number: assignment.client.account_number,
-              wallet_balance: parseFloat(assignment.client.wallet_balance) || 0,
-              group: assignment.client.group,
-              country: assignment.client.country
-            }
+            id: assignment.client.id,
+            name: assignment.client.name,
+            email: assignment.client.email,
+            account_number: assignment.client.account_number,
+            wallet_balance: parseFloat(assignment.client.wallet_balance) || 0,
+            group: assignment.client.group,
+            country: assignment.client.country
+          }
           : null
       }));
 
@@ -309,14 +309,14 @@ class MAMManagerController {
         parent_mam_order_id: order.parent_mam_order_id,
         mam_order: order.parentMAMOrder
           ? {
-              id: order.parentMAMOrder.id,
-              symbol: order.parentMAMOrder.symbol,
-              order_type: order.parentMAMOrder.order_type,
-              order_status: order.parentMAMOrder.order_status,
-              requested_volume: order.parentMAMOrder.requested_volume,
-              executed_volume: order.parentMAMOrder.executed_volume,
-              created_at: order.parentMAMOrder.created_at
-            }
+            id: order.parentMAMOrder.id,
+            symbol: order.parentMAMOrder.symbol,
+            order_type: order.parentMAMOrder.order_type,
+            order_status: order.parentMAMOrder.order_status,
+            requested_volume: order.parentMAMOrder.requested_volume,
+            executed_volume: order.parentMAMOrder.executed_volume,
+            created_at: order.parentMAMOrder.created_at
+          }
           : null
       }));
 
@@ -356,142 +356,138 @@ class MAMManagerController {
       const startDateStr = req.query.start_date ? String(req.query.start_date) : null;
       const endDateStr = req.query.end_date ? String(req.query.end_date) : null;
 
-      const baseWhere = {
-        order_status: 'CLOSED',
-        order_source: 'mam'
+      // ----------------------------------------------------------------
+      // Step 1: Fetch all CLOSED MAM orders for this account
+      // ----------------------------------------------------------------
+      const mamOrderWhere = {
+        mam_account_id: mamAccountId,
+        order_status: 'CLOSED'
       };
+      if (symbol) mamOrderWhere.symbol = symbol;
+      if (orderType) mamOrderWhere.order_type = orderType;
 
-      if (clientIdFilter) {
-        baseWhere.order_user_id = clientIdFilter;
-      }
-      if (symbol) {
-        baseWhere.symbol = symbol;
-      }
-      if (orderType) {
-        baseWhere.order_type = orderType;
-      }
-
-      if (startDateStr) {
-        const startDate = new Date(startDateStr);
-        if (!Number.isNaN(startDate.getTime())) {
-          baseWhere.updated_at = { ...(baseWhere.updated_at || {}), [Op.gte]: startDate };
+      if (startDateStr || endDateStr) {
+        mamOrderWhere.updated_at = {};
+        if (startDateStr) {
+          const d = new Date(startDateStr);
+          if (!Number.isNaN(d.getTime())) mamOrderWhere.updated_at[Op.gte] = d;
         }
-      }
-      if (endDateStr) {
-        const endDate = new Date(endDateStr);
-        if (!Number.isNaN(endDate.getTime())) {
-          baseWhere.updated_at = { ...(baseWhere.updated_at || {}), [Op.lte]: endDate, ...(baseWhere.updated_at || {}) };
+        if (endDateStr) {
+          const d = new Date(endDateStr);
+          if (!Number.isNaN(d.getTime())) mamOrderWhere.updated_at[Op.lte] = d;
         }
       }
 
-      // Fetch candidate orders for this MAM account
-      const orders = await LiveUserOrder.findAll({
-        where: baseWhere,
-        include: [
-          {
-            model: MAMOrder,
-            as: 'parentMAMOrder',
-            attributes: ['id', 'symbol', 'order_type', 'order_status', 'requested_volume', 'executed_volume', 'created_at', 'mam_account_id'],
-            where: { mam_account_id: mamAccountId }
-          }
-        ],
+      const closedMamOrders = await MAMOrder.findAll({
+        where: mamOrderWhere,
         order: [['updated_at', 'DESC']]
       });
 
-      if (!orders.length) {
+      if (!closedMamOrders.length) {
         return res.status(200).json({
           success: true,
           message: 'Closed orders retrieved successfully',
           data: {
             orders: [],
-            pagination: {
-              total: 0,
-              page,
-              page_size: pageSize,
-              total_pages: 0
-            }
+            pagination: { total: 0, page, page_size: pageSize, total_pages: 0 }
           }
         });
       }
 
-      const clientIds = Array.from(new Set(orders.map((o) => o.order_user_id)));
+      const mamOrderIds = closedMamOrders.map((o) => o.id);
 
-      const assignments = await MAMAssignment.findAll({
-        where: {
-          mam_account_id: mamAccountId,
-          client_live_user_id: { [Op.in]: clientIds },
-          status: {
-            [Op.in]: [
-              ASSIGNMENT_STATUS.ACTIVE,
-              ASSIGNMENT_STATUS.UNSUBSCRIBED,
-              ASSIGNMENT_STATUS.SUSPENDED
-            ]
-          }
-        }
-      });
+      // ----------------------------------------------------------------
+      // Step 2: Fetch all matching closed child orders in one query
+      // ----------------------------------------------------------------
+      const childWhere = {
+        parent_mam_order_id: { [Op.in]: mamOrderIds },
+        order_status: 'CLOSED',
+        order_source: 'mam'
+      };
+      if (clientIdFilter) childWhere.order_user_id = clientIdFilter;
 
-      const assignmentsByClient = new Map();
-      for (const assignment of assignments) {
-        const key = assignment.client_live_user_id;
-        if (!assignmentsByClient.has(key)) {
-          assignmentsByClient.set(key, []);
+      const childOrders = await LiveUserOrder.findAll({ where: childWhere });
+
+      // ----------------------------------------------------------------
+      // Step 3: Aggregate child orders by parent_mam_order_id
+      // ----------------------------------------------------------------
+      const aggMap = new Map(); // mam_order_id -> aggregated summary
+
+      for (const child of childOrders) {
+        const pid = child.parent_mam_order_id;
+        if (!aggMap.has(pid)) {
+          aggMap.set(pid, {
+            total_quantity: 0,
+            total_quantity_x_open_price: 0,   // for weighted avg open price
+            total_quantity_x_close_price: 0,  // for weighted avg close price
+            commission: 0,
+            swap: 0,
+            net_profit: 0,
+            close_message: null,
+            client_count: 0
+          });
         }
-        assignmentsByClient.get(key).push(assignment);
+        const agg = aggMap.get(pid);
+        const qty = Number(child.order_quantity) || 0;
+        const openPrice = Number(child.order_price) || 0;
+        const closePrice = Number(child.close_price) || 0;
+        agg.total_quantity += qty;
+        agg.total_quantity_x_open_price += qty * openPrice;
+        agg.total_quantity_x_close_price += qty * closePrice;
+        agg.commission += Number(child.commission) || 0;
+        agg.swap += Number(child.swap) || 0;
+        agg.net_profit += Number(child.net_profit) || 0;
+        if (!agg.close_message && child.close_message) {
+          agg.close_message = child.close_message;
+        }
+        agg.client_count += 1;
       }
 
-      const eligible = orders.filter((order) => {
-        const clientAssignments = assignmentsByClient.get(order.order_user_id) || [];
-        if (!clientAssignments.length) return false;
-
-        const openedAt = order.created_at;
-        const closedAt = order.updated_at;
-        if (!openedAt || !closedAt) return false;
-
-        return clientAssignments.some((assignment) => {
-          if (!assignment.activated_at) return false;
-          if (openedAt < assignment.activated_at) return false;
-          if (assignment.deactivated_at && closedAt > assignment.deactivated_at) return false;
-          return true;
-        });
-      });
-
-      const total = eligible.length;
+      // ----------------------------------------------------------------
+      // Step 4: Build paginated result rows keyed by MAM order
+      // ----------------------------------------------------------------
+      const total = closedMamOrders.length;
       const totalPages = Math.ceil(total / pageSize) || 1;
       const startIndex = (page - 1) * pageSize;
-      const pageItems = eligible.slice(startIndex, startIndex + pageSize);
+      const pageItems = closedMamOrders.slice(startIndex, startIndex + pageSize);
 
-      const serialized = pageItems.map((order) => ({
-        order_id: order.order_id,
-        client_id: order.order_user_id,
-        symbol: order.symbol,
-        order_type: order.order_type,
-        order_status: order.order_status,
-        order_price: order.order_price?.toString?.() ?? null,
-        order_quantity: order.order_quantity?.toString?.() ?? null,
-        margin: order.margin?.toString?.() ?? null,
-        net_profit: order.net_profit?.toString?.() ?? null,
-        net_profit_after_fees: order.net_profit_after_fees?.toString?.() ?? null,
-        performance_fee_amount: order.performance_fee_amount?.toString?.() ?? null,
-        commission: order.commission?.toString?.() ?? null,
-        swap: order.swap?.toString?.() ?? null,
-        stop_loss: order.stop_loss?.toString?.() ?? null,
-        take_profit: order.take_profit?.toString?.() ?? null,
-        close_price: order.close_price?.toString?.() ?? null,
-        created_at: order.created_at,
-        updated_at: order.updated_at,
-        parent_mam_order_id: order.parent_mam_order_id,
-        mam_order: order.parentMAMOrder
-          ? {
-              id: order.parentMAMOrder.id,
-              symbol: order.parentMAMOrder.symbol,
-              order_type: order.parentMAMOrder.order_type,
-              order_status: order.parentMAMOrder.order_status,
-              requested_volume: order.parentMAMOrder.requested_volume,
-              executed_volume: order.parentMAMOrder.executed_volume,
-              created_at: order.parentMAMOrder.created_at
-            }
-          : null
-      }));
+      const serialized = pageItems.map((mamOrder) => {
+        const agg = aggMap.get(mamOrder.id);
+        const totalQty = agg ? agg.total_quantity : 0;
+        const avgOpenPrice = agg && totalQty > 0
+          ? agg.total_quantity_x_open_price / totalQty
+          : Number(mamOrder.average_entry_price) || 0;
+        const avgClosePrice = agg && totalQty > 0
+          ? agg.total_quantity_x_close_price / totalQty
+          : Number(mamOrder.average_exit_price) || 0;
+
+        return {
+          order_id: mamOrder.id,
+          symbol: mamOrder.symbol,
+          order_type: mamOrder.order_type,
+          order_status: mamOrder.order_status,
+          // Aggregated across all client child orders
+          order_quantity: totalQty.toFixed(8),
+          order_price: avgOpenPrice > 0 ? avgOpenPrice.toFixed(8) : null,
+          close_price: avgClosePrice > 0 ? avgClosePrice.toFixed(8) : null,
+          commission: agg ? agg.commission.toFixed(8) : '0.00000000',
+          swap: agg ? agg.swap.toFixed(8) : '0.00000000',
+          net_profit: agg ? agg.net_profit.toFixed(8) : '0.00000000',
+          close_message: agg ? agg.close_message : null,
+          client_count: agg ? agg.client_count : 0,
+          // MAM order level metadata
+          requested_volume: mamOrder.requested_volume?.toString?.() ?? null,
+          executed_volume: mamOrder.executed_volume?.toString?.() ?? null,
+          stop_loss: mamOrder.stop_loss?.toString?.() ?? null,
+          take_profit: mamOrder.take_profit?.toString?.() ?? null,
+          gross_profit: mamOrder.gross_profit?.toString?.() ?? null,
+          net_profit_after_fees: mamOrder.net_profit_after_fees?.toString?.() ?? null,
+          rejected_investors_count: mamOrder.rejected_investors_count ?? 0,
+          rejected_volume: mamOrder.rejected_volume?.toString?.() ?? null,
+          created_at: mamOrder.created_at,
+          updated_at: mamOrder.updated_at
+        };
+      });
 
       return res.status(200).json({
         success: true,

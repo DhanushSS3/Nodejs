@@ -11,7 +11,7 @@ class PortfolioEventBus extends EventEmitter {
     super();
     // Increase max listeners to prevent warnings temporarily
     this.setMaxListeners(100);
-    
+
     // Track listeners to prevent duplicates and enable cleanup
     this.listenerRegistry = new Map(); // eventName -> Set of handler functions
     this.userListeners = new Map(); // userKey -> Set of eventNames
@@ -26,7 +26,7 @@ class PortfolioEventBus extends EventEmitter {
   emitUserUpdate(userType, userId, payload = {}) {
     const key = this.makeUserKey(userType, userId);
     const evt = { userType, userId, ...payload };
-    
+
     // Debug logging for pending order events
     if (payload.type === 'order_update' && payload.reason === 'pending_confirmed') {
       logger && logger.info && logger.info('Portfolio event emitting pending confirmation', {
@@ -38,7 +38,7 @@ class PortfolioEventBus extends EventEmitter {
         orderId: payload.order_id
       });
     }
-    
+
     if (payload.type === 'order_pending_confirmed') {
       logger && logger.info && logger.info('Portfolio event emitting dedicated pending confirmation', {
         userKey: key,
@@ -48,14 +48,14 @@ class PortfolioEventBus extends EventEmitter {
         orderId: payload.order_id
       });
     }
-    
+
     // Emit locally (same-process listeners)
     this.emit(`user:${key}`, evt);
     // Publish cross-process via Redis Pub/Sub
     try {
       const msg = JSON.stringify({ _src: INSTANCE_ID, type: 'user_update', ...evt });
       // Channel name: portfolio_events
-      redisCluster.publish('portfolio_events', msg).catch(() => {});
+      redisCluster.publish('portfolio_events', msg).catch(() => { });
     } catch (e) {
       logger && logger.warn ? logger.warn('PortfolioEventBus publish failed', { error: e.message }) : null;
     }
@@ -63,29 +63,29 @@ class PortfolioEventBus extends EventEmitter {
 
   // Specific method for copy follower account updates
   emitCopyFollowerAccountUpdate(copyFollowerAccountId, payload = {}) {
-    const evt = { 
-      userType: 'copy_follower', 
-      userId: copyFollowerAccountId, 
+    const evt = {
+      userType: 'copy_follower',
+      userId: copyFollowerAccountId,
       copyFollowerAccountId,
-      ...payload 
+      ...payload
     };
     const key = this.makeUserKey('copy_follower', copyFollowerAccountId);
-    
+
     // Emit locally (same-process listeners)
     this.emit(`user:${key}`, evt);
-    
+
     // Publish cross-process via Redis Pub/Sub
     try {
-      const msg = JSON.stringify({ 
-        _src: INSTANCE_ID, 
-        type: 'copy_follower_account_update', 
-        ...evt 
+      const msg = JSON.stringify({
+        _src: INSTANCE_ID,
+        type: 'copy_follower_account_update',
+        ...evt
       });
-      redisCluster.publish('portfolio_events', msg).catch(() => {});
+      redisCluster.publish('portfolio_events', msg).catch(() => { });
     } catch (e) {
-      logger && logger.warn ? logger.warn('PortfolioEventBus copy follower publish failed', { 
-        error: e.message, 
-        copyFollowerAccountId 
+      logger && logger.warn ? logger.warn('PortfolioEventBus copy follower publish failed', {
+        error: e.message,
+        copyFollowerAccountId
       }) : null;
     }
   }
@@ -93,16 +93,16 @@ class PortfolioEventBus extends EventEmitter {
   onUserUpdate(userType, userId, handler) {
     const key = this.makeUserKey(userType, userId);
     const eventName = `user:${key}`;
-    
+
     // Track this listener to prevent duplicates
     if (!this.listenerRegistry.has(eventName)) {
       this.listenerRegistry.set(eventName, new Set());
     }
-    
+
     if (!this.userListeners.has(key)) {
       this.userListeners.set(key, new Set());
     }
-    
+
     // Check if we already have too many listeners for this user
     const currentCount = this.listenerCount(eventName);
     if (currentCount >= 7) { // Slightly above WebSocket limit of 5 to allow for cleanup timing
@@ -110,12 +110,12 @@ class PortfolioEventBus extends EventEmitter {
       this.removeAllListeners(eventName);
       this.listenerRegistry.set(eventName, new Set());
     }
-    
+
     // Add the listener
     this.listenerRegistry.get(eventName).add(handler);
     this.userListeners.get(key).add(eventName);
     this.on(eventName, handler);
-    
+
     // Return cleanup function
     return () => {
       this.removeListener(eventName, handler);
@@ -139,10 +139,10 @@ class PortfolioEventBus extends EventEmitter {
     const key = this.makeUserKey(userType, userId);
     const eventName = `user:${key}`;
     const listenerCount = this.listenerCount(eventName);
-    
+
     if (listenerCount > 0) {
       this.removeAllListeners(eventName);
-      
+
       // Clean up tracking maps
       this.listenerRegistry.delete(eventName);
       if (this.userListeners.has(key)) {
@@ -151,7 +151,7 @@ class PortfolioEventBus extends EventEmitter {
           this.userListeners.delete(key);
         }
       }
-      
+
       logger && logger.info ? logger.info(`Cleaned up ${listenerCount} listeners for ${eventName}`) : null;
     }
   }
@@ -174,7 +174,7 @@ class PortfolioEventBus extends EventEmitter {
     for (const [eventName, handlers] of this.listenerRegistry) {
       const actualCount = this.listenerCount(eventName);
       stats.totalListeners += actualCount;
-      
+
       // Extract user info from event name
       if (eventName.startsWith('user:')) {
         const userKey = eventName.substring(5); // Remove 'user:' prefix
@@ -191,7 +191,7 @@ class PortfolioEventBus extends EventEmitter {
     this.removeAllListeners();
     this.listenerRegistry.clear();
     this.userListeners.clear();
-    
+
     logger && logger.warn ? logger.warn(`Emergency cleanup performed. Removed ${stats.totalListeners} listeners for ${stats.totalUsers} users`) : null;
     return stats;
   }
@@ -211,7 +211,7 @@ class PortfolioEventBus extends EventEmitter {
           const { userType, userId, ...rest } = data;
           const key = this.makeUserKey(userType, userId);
           this.emit(`user:${key}`, { userType, userId, ...rest });
-        } catch (_) {}
+        } catch (_) { }
       });
       redisCluster.subscribe('portfolio_events').then(() => {
         logger && logger.info ? logger.info('PortfolioEventBus subscribed to portfolio_events') : null;
@@ -226,7 +226,7 @@ class PortfolioEventBus extends EventEmitter {
 
 const bus = new PortfolioEventBus();
 // Start cross-process bridge
-try { bus._ensureSubscribed(); } catch (_) {}
+try { bus._ensureSubscribed(); } catch (_) { }
 
 // Process cleanup handlers to prevent memory leaks
 process.on('SIGTERM', () => {
@@ -254,7 +254,7 @@ setInterval(() => {
     if (stats.totalListeners > 50) {
       logger && logger.warn ? logger.warn('High listener count detected, consider cleanup', stats) : null;
     }
-    
+
     // Auto-cleanup users with excessive listeners (>8)
     for (const [userKey, count] of Object.entries(stats.userBreakdown)) {
       if (count > 8) {

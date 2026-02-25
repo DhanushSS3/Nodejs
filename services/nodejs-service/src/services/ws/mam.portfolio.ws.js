@@ -74,6 +74,8 @@ async function fetchMamOrders(mamAccountId) {
     .map((o) => o.id);
 
   const contractValueByMamOrderId = new Map();
+  const commissionByMamOrderId = new Map();
+  const swapByMamOrderId = new Map();
   if (openOrderIds.length) {
     try {
       const rows = await LiveUserOrder.findAll({
@@ -83,7 +85,9 @@ async function fetchMamOrders(mamAccountId) {
         },
         attributes: [
           'parent_mam_order_id',
-          [fn('SUM', col('contract_value')), 'total_contract_value']
+          [fn('SUM', col('contract_value')), 'total_contract_value'],
+          [fn('SUM', col('commission')), 'total_commission'],
+          [fn('SUM', col('swap')), 'total_swap']
         ],
         group: ['parent_mam_order_id']
       });
@@ -91,8 +95,16 @@ async function fetchMamOrders(mamAccountId) {
       for (const r of rows || []) {
         const pid = r.parent_mam_order_id;
         const total = r.get ? r.get('total_contract_value') : r.total_contract_value;
+        const totalCommission = r.get ? r.get('total_commission') : r.total_commission;
+        const totalSwap = r.get ? r.get('total_swap') : r.total_swap;
         if (pid != null && total != null && Number.isFinite(Number(total))) {
           contractValueByMamOrderId.set(Number(pid), String(Number(total).toFixed(8)));
+        }
+        if (pid != null && totalCommission != null && Number.isFinite(Number(totalCommission))) {
+          commissionByMamOrderId.set(Number(pid), String(Number(totalCommission).toFixed(8)));
+        }
+        if (pid != null && totalSwap != null && Number.isFinite(Number(totalSwap))) {
+          swapByMamOrderId.set(Number(pid), String(Number(totalSwap).toFixed(8)));
         }
       }
     } catch (e) {
@@ -175,8 +187,12 @@ async function fetchMamOrders(mamAccountId) {
       take_profit: order.take_profit?.toString?.() ?? null,
       order_user_id: order.mam_account_id,
       order_status: order.order_status,
-      commission: null,
-      swap: null,
+      commission: status === 'OPEN'
+        ? (commissionByMamOrderId.get(Number(order.id)) ?? '0.00000000')
+        : null,
+      swap: status === 'OPEN'
+        ? (swapByMamOrderId.get(Number(order.id)) ?? '0.00000000')
+        : null,
       close_message: order.close_message || null,
       created_at: createdAtIso,
 
