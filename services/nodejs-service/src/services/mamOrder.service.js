@@ -32,6 +32,50 @@ const OPEN_CHILD_STATUSES = ['OPEN', 'QUEUED', 'PENDING', 'PENDING-QUEUED', 'MOD
 const PENDING_CHILD_STATUSES = ['PENDING', 'PENDING-QUEUED', 'PENDING-CANCEL', 'MODIFY'];
 
 class MAMOrderService {
+  async _getQuoteToUsdRate(quoteCurrency) {
+    const ccy = String(quoteCurrency || '').trim().toUpperCase();
+    if (!ccy) return null;
+    if (ccy === 'USD') return 1;
+
+    try {
+      const direct = `USD${ccy}`;
+      const [bidRaw] = await redisCluster.hmget(`market:${direct}`, 'bid');
+      const bid = bidRaw != null ? Number(bidRaw) : null;
+      if (Number.isFinite(bid) && bid > 0) {
+        return 1 / bid;
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch direct USD conversion pair for MAM margin check', {
+        quoteCurrency: ccy,
+        error: error.message
+      });
+    }
+
+    try {
+      const inverse = `${ccy}USD`;
+      const [bidRaw] = await redisCluster.hmget(`market:${inverse}`, 'bid');
+      const bid = bidRaw != null ? Number(bidRaw) : null;
+      if (Number.isFinite(bid) && bid > 0) {
+        return bid;
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch inverse USD conversion pair for MAM margin check', {
+        quoteCurrency: ccy,
+        error: error.message
+      });
+    }
+
+    return null;
+  }
+
+  _extractQuoteCurrency(symbol) {
+    const s = String(symbol || '').trim().toUpperCase();
+    if (!s) return null;
+    const clean = s.replace(/[^A-Z]/g, '');
+    if (clean.length < 6) return null;
+    return clean.slice(-3);
+  }
+
   async placeInstantOrder({
     mamAccountId,
     managerId,
@@ -1643,13 +1687,25 @@ class MAMOrderService {
     const contractValue = contractSize * lots;
     const marginFactor = this._resolveMarginFactor({ instrumentType, groupFields });
 
-    const requiredMargin = this._estimateMargin({
+    const requiredMarginQuote = this._estimateMargin({
       lots,
       order_price: orderPrice,
       contractSize,
       leverage: Number(client.leverage) || 100,
       marginFactor
     });
+
+    const quoteCurrency = this._extractQuoteCurrency(symbol);
+    let requiredMarginUsd = requiredMarginQuote;
+    if (quoteCurrency && quoteCurrency !== 'USD') {
+      const rate = await this._getQuoteToUsdRate(quoteCurrency);
+      if (Number.isFinite(rate) && rate > 0) {
+        requiredMarginUsd = requiredMarginQuote * rate;
+      } else {
+        // If we cannot convert, do NOT pre-reject; let Python be the source of truth.
+        requiredMarginUsd = null;
+      }
+    }
 
     logger.debug('MAM allocation margin evaluation', {
       mam_order_id: mamOrderId,
@@ -1661,18 +1717,27 @@ class MAMOrderService {
       contract_value: Number(contractValue.toFixed(6)),
       instrument_type: instrumentType || null,
       margin_factor: marginFactor,
-      required_margin: Number(requiredMargin.toFixed(6)),
+      required_margin_quote: Number(requiredMarginQuote.toFixed(6)),
+      required_margin_usd: requiredMarginUsd != null ? Number(Number(requiredMarginUsd).toFixed(6)) : null,
+      quote_currency: quoteCurrency,
       wallet_balance: Number(assignment.client.wallet_balance || 0),
       free_margin_snapshot: snapshot?.free_margin
     });
 
-    if (requiredMargin > assignment.client.wallet_balance) {
+    const comparableBalance = Number.isFinite(Number(snapshot?.free_margin))
+      ? Number(snapshot.free_margin)
+      : Number(assignment.client.wallet_balance || 0);
+
+    if (requiredMarginUsd != null && requiredMarginUsd > comparableBalance) {
       logger.warn('MAM allocation rejected - insufficient wallet', {
         mam_order_id: mamOrderId,
         client_id: clientId,
         lots,
-        required_margin: Number(requiredMargin.toFixed(6)),
-        wallet_balance: Number(assignment.client.wallet_balance || 0)
+        required_margin_usd: Number(Number(requiredMarginUsd).toFixed(6)),
+        comparable_balance: Number(comparableBalance.toFixed(6)),
+        wallet_balance: Number(assignment.client.wallet_balance || 0),
+        free_margin_snapshot: snapshot?.free_margin,
+        quote_currency: quoteCurrency
       });
       return { success: false, reason: 'Insufficient wallet balance for margin' };
     }
@@ -1739,7 +1804,8 @@ class MAMOrderService {
       const flow = result.flow;
       const exec_price = Number.isFinite(Number(result.exec_price)) ? Number(result.exec_price) : order_price;
       const pythonMargin = Number(result.margin_usd ?? result.used_margin_usd);
-      const margin = Number.isFinite(pythonMargin) && pythonMargin > 0 ? pythonMargin : Number(requiredMargin);
+      const fallbackMargin = requiredMarginUsd != null ? Number(requiredMarginUsd) : Number(requiredMarginQuote);
+      const margin = Number.isFinite(pythonMargin) && pythonMargin > 0 ? pythonMargin : fallbackMargin;
       const contract_value = Number(result.contract_value ?? 0);
       const totalUsedMargin = Number(result.used_margin_executed);
 
