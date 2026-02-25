@@ -132,6 +132,36 @@ async function fetchMamOrders(mamAccountId) {
 
     if (!bucket) continue;
 
+    const rejectionDetails = (() => {
+      if (status !== 'REJECTED') return null;
+      try {
+        const snap = Array.isArray(order.allocation_snapshot) ? order.allocation_snapshot : [];
+        const rejected = snap
+          .filter((e) => String(e?.status || '').toLowerCase() === 'rejected')
+          .map((e) => ({
+            client_id: e?.client_id ?? null,
+            client_account_number: e?.client_account_number ?? null,
+            allocated_volume: e?.allocated_volume ?? null,
+            reason: e?.reason ?? null
+          }));
+
+        if (!rejected.length) return null;
+
+        const reasons = rejected
+          .map((e) => (e?.reason ? String(e.reason).trim() : ''))
+          .filter((r) => r);
+        const uniqueReasons = Array.from(new Set(reasons));
+
+        return {
+          rejected_investors: rejected,
+          rejection_reasons: uniqueReasons,
+          rejection_reason: uniqueReasons.length ? uniqueReasons.join(' | ') : null
+        };
+      } catch (_) {
+        return null;
+      }
+    })();
+
     const pendingRequestedPrice = (() => {
       try {
         const raw = order?.metadata?.order_price;
@@ -192,6 +222,9 @@ async function fetchMamOrders(mamAccountId) {
         ? (swapByMamOrderId.get(Number(order.id)) ?? '0.00000000')
         : null,
       close_message: order.close_message || null,
+      rejection_reason: rejectionDetails?.rejection_reason ?? null,
+      rejection_reasons: rejectionDetails?.rejection_reasons ?? null,
+      rejected_investors: rejectionDetails?.rejected_investors ?? null,
       created_at: createdAtIso,
 
       mam_account_id: order.mam_account_id,
