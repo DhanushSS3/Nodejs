@@ -606,11 +606,54 @@ class OpenWorker:
                     strict=False,
                     include_queued=True,
                 )
+                _exec_m_str = str(float(executed_margin)) if executed_margin is not None else "0.0"
+                _all_m_str = str(float(total_margin)) if total_margin is not None else "0.0"
+                _exec_m_f = float(executed_margin) if executed_margin is not None else 0.0
+
+                # CRITICAL: Always write a COMPLETE portfolio snapshot, not just margin fields.
+                # Writing only 3 fields via hset leaves equity/balance/free_margin missing when the
+                # portfolio key was created by this worker (before the portfolio calculator ran).
+                # The portfolio calculator will overwrite with live values on the next tick, but until
+                # that tick the order-execution service sees an incomplete snapshot and returns
+                # "insufficient_margin" with available=0 for subsequent orders.
                 margin_updates = {
-                    "used_margin_executed": str(float(executed_margin)) if executed_margin is not None else "0.0",
-                    "used_margin_all": str(float(total_margin)) if total_margin is not None else "0.0",
-                    "used_margin": str(float(executed_margin)) if executed_margin is not None else "0.0",  # Legacy field now points to executed only
+                    "used_margin_executed": _exec_m_str,
+                    "used_margin_all": _all_m_str,
+                    "used_margin": _exec_m_str,  # Legacy field: tracks executed margin only
                 }
+                # Enrich with a full portfolio snapshot so equity/free_margin are always present.
+                # Use wallet_balance as the balance anchor; the portfolio calculator will refine later.
+                try:
+                    _cfg = await fetch_user_config(
+                        str(payload.get('user_type')), str(payload.get('user_id'))
+                    )
+                    _wallet = float(_cfg.get("wallet_balance") or 0.0)
+                    # We don't know open PnL here — use 0 as a conservative placeholder.
+                    # The portfolio calculator will correct this within its next 200 ms tick.
+                    _equity = _wallet  # placeholder; no PnL computed here
+                    _free_margin = _equity - _exec_m_f
+                    _margin_level = round((_equity / _exec_m_f * 100.0) if _exec_m_f > 0 else 0.0, 2)
+                    margin_updates.update({
+                        "balance": str(round(_wallet, 8)),
+                        "equity": str(round(_equity, 2)),
+                        "free_margin": str(round(_free_margin, 2)),
+                        "margin_level": str(_margin_level),
+                        "open_pnl": "0.0",   # placeholder; portfolio calc will correct
+                        "total_pl": "0.0",   # placeholder; portfolio calc will correct
+                        "ts": str(int(__import__('time').time() * 1000)),
+                        "calc_status": "provisional",   # signals calculator to refresh immediately
+                        "degraded_fields": "open_pnl,total_pl",
+                    })
+                    logger.info(
+                        "[OPEN:PORTFOLIO_SNAPSHOT] user=%s:%s balance=%s equity=%s free_margin=%s exec_margin=%s",
+                        payload.get('user_type'), payload.get('user_id'),
+                        _wallet, _equity, _free_margin, _exec_m_f,
+                    )
+                except Exception as _pf_err:
+                    logger.warning(
+                        "[OPEN:PORTFOLIO_SNAPSHOT_FAILED] user=%s:%s error=%s — writing margin fields only",
+                        payload.get('user_type'), payload.get('user_id'), str(_pf_err)
+                    )
                 
                 # Add retry logic for Redis connection pool exhaustion
                 max_retries = 3

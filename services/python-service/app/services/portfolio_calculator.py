@@ -81,6 +81,9 @@ class PortfolioCalculatorListener:
         
         # Throttled calculation loop task
         self._calculation_task = None
+        # Fallback scan loop task (independent of pub/sub)
+        self._fallback_scan_task = None
+
         
         # Semaphore to limit concurrent Redis operations and prevent connection exhaustion
         self._redis_semaphore = asyncio.Semaphore(20)  # Limit to 20 concurrent Redis operations
@@ -91,32 +94,35 @@ class PortfolioCalculatorListener:
     async def start_listener(self):
         """Start the market price update listener and calculation loop"""
         self.logger.info("Starting Portfolio Calculator Listener...")
-        try:
-            self._pubsub = redis_pubsub_client.pubsub()
-            await self._pubsub.subscribe('market_price_updates', 'portfolio_force_recalc')
-            self._running = True
-            self.logger.info("Successfully subscribed to market_price_updates and portfolio_force_recalc channels")
+        self._running = True
+        loop = asyncio.get_event_loop()
 
-            # Start throttled calculation loop as a background task
-            loop = asyncio.get_event_loop()
-            self._calculation_task = loop.create_task(self._throttled_calculation_loop())
+        # Throttled calculation loop: drains dirty set every 200ms
+        self._calculation_task = loop.create_task(self._throttled_calculation_loop())
 
-            # Start the main listening loop
-            await self._listen_loop()
-            
-        except Exception as e:
-            self.logger.error(f"Failed to start portfolio calculator listener: {e}")
-            raise
-    
+        # Fallback scan loop: independently sweeps symbol_holders every 30s so
+        # portfolios keep updating even when the pub/sub connection is frozen.
+        self._fallback_scan_task = loop.create_task(self._fallback_scan_loop())
+
+        # Main pub/sub listener with automatic reconnect
+        await self._listen_loop()
+
     async def stop_listener(self):
         """Stop the listener and calculation loop gracefully"""
         self.logger.info("Stopping Portfolio Calculator Listener...")
         self._running = False
-        if self._pubsub:
-            await self._pubsub.unsubscribe('market_price_updates')
-            await self._pubsub.close()
-        if self._calculation_task:
-            self._calculation_task.cancel()
+        for attr in ("_pubsub", "_calculation_task", "_fallback_scan_task"):
+            obj = getattr(self, attr, None)
+            if obj is None:
+                continue
+            try:
+                if asyncio.isfuture(obj) or asyncio.iscoroutine(obj):
+                    obj.cancel()
+                elif hasattr(obj, 'unsubscribe'):
+                    await obj.unsubscribe()
+                    await obj.aclose()
+            except Exception:
+                pass
         self.logger.info("Portfolio Calculator Listener stopped")
 
     async def _throttled_calculation_loop(self):
@@ -896,7 +902,15 @@ class PortfolioCalculatorListener:
             except Exception as e:
                 log_connection_error("cluster", f"fetch_portfolio_{user_type}_{user_id}", str(e), operation_id)
                 connection_tracker.end_operation(operation_id, success=False, error=str(e))
-                raise
+                # Do NOT re-raise: a transient Redis read error must not abort the portfolio write.
+                # Fall back to empty snapshot — we lose the cached-margin optimisation for this tick
+                # but still proceed to write equity/free_margin computed by _calculate_portfolio_metrics.
+                self.logger.warning(
+                    "[PORTFOLIO] hgetall failed for %s, continuing with empty snapshot: %s",
+                    redis_key, e
+                )
+                existing_pf = {}
+
             existing_exe = None
             existing_all = None
             try:
@@ -949,31 +963,57 @@ class PortfolioCalculatorListener:
                 )
             )
 
+            # CRITICAL: isolate compute_user_total_margin in its own try/except.
+            # This call may make an HTTP request to the Node internal API (up to 3 seconds).
+            # If it raises (timeout, connection refused, Redis error, etc.) we must NOT let
+            # the exception propagate to the outer try block, because the outer try's except
+            # absorbs it without ever calling hset — leaving equity/free_margin completely
+            # missing from the portfolio hash for the entire duration of the outage.
+            # Instead: fall back to the cached margin values so we still write a full snapshot.
+            _margin_recompute_failed = False
             if has_queued:
                 if force_recompute or executed_margin is None or total_margin is None:
-                    exec_margin_new, total_margin_new, _ = await compute_user_total_margin(
-                        user_type=user_type,
-                        user_id=user_id,
-                        orders=orders,
-                        prices_cache=None,
-                        strict=False,
-                        include_queued=True,
-                    )
-                    executed_margin = exec_margin_new if exec_margin_new is not None else executed_margin
-                    total_margin = total_margin_new if total_margin_new is not None else total_margin
+                    try:
+                        exec_margin_new, total_margin_new, _ = await compute_user_total_margin(
+                            user_type=user_type,
+                            user_id=user_id,
+                            orders=orders,
+                            prices_cache=None,
+                            strict=False,
+                            include_queued=True,
+                        )
+                        executed_margin = exec_margin_new if exec_margin_new is not None else executed_margin
+                        total_margin = total_margin_new if total_margin_new is not None else total_margin
+                    except Exception as _margin_err:
+                        _margin_recompute_failed = True
+                        self.logger.warning(
+                            "[PORTFOLIO] compute_user_total_margin failed for %s:%s (queued path), "
+                            "falling back to cached margin=%s. Error: %s",
+                            user_type, user_id, executed_margin, _margin_err
+                        )
+                        # Keep existing cached values; portfolio write will still happen
             elif has_open_orders:
                 if force_recompute or executed_margin is None:
-                    exec_margin_new, total_margin_new, _ = await compute_user_total_margin(
-                        user_type=user_type,
-                        user_id=user_id,
-                        orders=orders,
-                        prices_cache=None,
-                        strict=False,
-                        include_queued=False,
-                    )
-                    executed_margin = exec_margin_new if exec_margin_new is not None else executed_margin
-                    if total_margin_new is not None:
-                        total_margin = total_margin_new
+                    try:
+                        exec_margin_new, total_margin_new, _ = await compute_user_total_margin(
+                            user_type=user_type,
+                            user_id=user_id,
+                            orders=orders,
+                            prices_cache=None,
+                            strict=False,
+                            include_queued=False,
+                        )
+                        executed_margin = exec_margin_new if exec_margin_new is not None else executed_margin
+                        if total_margin_new is not None:
+                            total_margin = total_margin_new
+                    except Exception as _margin_err:
+                        _margin_recompute_failed = True
+                        self.logger.warning(
+                            "[PORTFOLIO] compute_user_total_margin failed for %s:%s (open path), "
+                            "falling back to cached margin=%s. Error: %s",
+                            user_type, user_id, executed_margin, _margin_err
+                        )
+                        # Keep existing cached values; portfolio write will still happen
                 elif total_margin is None:
                     total_margin = executed_margin if executed_margin is not None else total_margin
             else:
@@ -1046,34 +1086,158 @@ class PortfolioCalculatorListener:
 
     
     async def _listen_loop(self):
-        """Main listening loop for market price updates"""
-        self.logger.info("Portfolio Calculator Listener is now active and listening for market_price_updates")
-        
-        try:
-            async for message in self._pubsub.listen():
-                if not self._running:
-                    break
-                
-                if message['type'] != 'message':
-                    continue
+        """
+        Main pub/sub polling loop.
 
-                channel_raw = message.get('channel')
-                channel = channel_raw.decode('utf-8') if isinstance(channel_raw, (bytes, bytearray)) else str(channel_raw)
+        CRITICAL: We deliberately avoid `async for message in pubsub.listen()` because
+        that generator blocks forever when the underlying TCP connection stalls silently
+        (no exception, no timeout, no messages — the loop just freezes).  Instead we use
+        `get_message(ignore_subscribe_messages=True, timeout=1.0)` with an outer watchdog
+        so a stale connection is detected within a few seconds and rebuilt.
+        """
+        self.logger.info("Portfolio Calculator Listener: starting pub/sub poll loop")
+        _last_msg_ts = time.time()
+        _STALE_AFTER_S = 30  # reconnect if no message for 30 s
 
-                if channel == 'market_price_updates':
-                    symbol = str(message.get('data', ''))
-                    await self._process_symbol_update(symbol)
-                elif channel == 'portfolio_force_recalc':
-                    await self._handle_force_recalc_message(message.get('data'))
-                    
-        except Exception as e:
-            self.logger.error(f"Error in portfolio calculator listen loop: {e}")
-            if self._running:
-                # Attempt to reconnect after a delay
+        while self._running:
+            # ── (Re)connect pub/sub ──────────────────────────────────────────────
+            try:
+                if self._pubsub is None:
+                    self._pubsub = redis_pubsub_client.pubsub()
+                await self._pubsub.subscribe('market_price_updates', 'portfolio_force_recalc')
+                self.logger.info("[PubSub] Subscribed to market_price_updates + portfolio_force_recalc")
+                _last_msg_ts = time.time()
+            except Exception as sub_err:
+                self.logger.error("[PubSub] Subscribe failed: %s — retry in 5 s", sub_err)
+                self._pubsub = None
                 await asyncio.sleep(5)
-                await self.start_listener()
-    
+                continue
+
+            # ── Poll loop ────────────────────────────────────────────────────────
+            try:
+                while self._running:
+                    try:
+                        message = await asyncio.wait_for(
+                            self._pubsub.get_message(
+                                ignore_subscribe_messages=True,
+                                timeout=1.0,
+                            ),
+                            timeout=2.0,  # hard outer timeout
+                        )
+                    except asyncio.TimeoutError:
+                        message = None
+                    except Exception as get_err:
+                        self.logger.warning("[PubSub] get_message error: %s", get_err)
+                        message = None
+
+                    if message is not None:
+                        _last_msg_ts = time.time()
+                        if message.get('type') == 'message':
+                            channel_raw = message.get('channel', '')
+                            channel = (
+                                channel_raw.decode('utf-8')
+                                if isinstance(channel_raw, (bytes, bytearray))
+                                else str(channel_raw)
+                            )
+                            if channel == 'market_price_updates':
+                                symbol = str(message.get('data', ''))
+                                await self._process_symbol_update(symbol)
+                            elif channel == 'portfolio_force_recalc':
+                                await self._handle_force_recalc_message(message.get('data'))
+
+                    # Watchdog: if silent for too long, tear down and reconnect
+                    if (time.time() - _last_msg_ts) > _STALE_AFTER_S:
+                        self.logger.warning(
+                            "[PubSub] No message for %.0fs — reconnecting",
+                            time.time() - _last_msg_ts,
+                        )
+                        break  # exit inner poll loop → outer loop will reconnect
+
+            except Exception as poll_err:
+                self.logger.error("[PubSub] Poll loop error: %s", poll_err)
+
+            # Close and nullify so the outer loop re-subscribes
+            try:
+                await self._pubsub.unsubscribe()
+                await self._pubsub.aclose()
+            except Exception:
+                pass
+            self._pubsub = None
+            if self._running:
+                await asyncio.sleep(2)
+
+    async def _fallback_scan_loop(self):
+        """
+        Independent safety net: every 30 s, scan ALL symbol_holders:*:live/demo/...
+        keys and dirty every holder directly. This guarantees portfolio calculation
+        even when the pub/sub connection is frozen or broken.
+        """
+        _SCAN_INTERVAL_S = 30
+        self.logger.info("[FallbackScan] Starting fallback symbol_holders scan loop (every %ds)", _SCAN_INTERVAL_S)
+        await asyncio.sleep(5)  # brief startup delay
+
+        while self._running:
+            try:
+                dirtied = 0
+                for user_type in ('live', 'demo', 'strategy_provider', 'copy_follower'):
+                    try:
+                        cursor = b"0"
+                        pattern = f"symbol_holders:*:{user_type}"
+                        scanned_keys: list = []
+                        while True:
+                            try:
+                                result = await redis_cluster.scan(cursor=cursor, match=pattern, count=200)
+                            except Exception as scan_err:
+                                self.logger.warning("[FallbackScan] SCAN error for %s: %s", user_type, scan_err)
+                                break
+                            if isinstance(result, tuple) and len(result) == 2:
+                                cursor, keys = result
+                                if isinstance(keys, (list, set)):
+                                    scanned_keys.extend(keys)
+                            elif isinstance(result, dict):
+                                any_more = False
+                                for _, v in result.items():
+                                    if isinstance(v, tuple) and len(v) == 2:
+                                        node_cursor, node_keys = v
+                                        if isinstance(node_keys, (list, set)):
+                                            scanned_keys.extend(list(node_keys))
+                                        if node_cursor not in (0, b"0", "0"):
+                                            any_more = True
+                                cursor = b"1" if any_more else b"0"
+                            else:
+                                break
+                            if cursor in (0, b"0", "0"):
+                                break
+
+                        for key in scanned_keys:
+                            try:
+                                key_str = key.decode() if isinstance(key, bytes) else str(key)
+                                members = await redis_cluster.smembers(key_str)
+                                if members:
+                                    user_set = set()
+                                    for m in members:
+                                        m_str = m.decode() if isinstance(m, bytes) else str(m)
+                                        if m_str.startswith(f"{user_type}:"):
+                                            user_set.add(m_str)
+                                        else:
+                                            user_set.add(f"{user_type}:{m_str}")
+                                    added = self._add_to_dirty_users(user_set, user_type)
+                                    dirtied += added
+                            except Exception as member_err:
+                                self.logger.debug("[FallbackScan] smembers error for %s: %s", key, member_err)
+                    except Exception as type_err:
+                        self.logger.warning("[FallbackScan] Error for user_type=%s: %s", user_type, type_err)
+
+                if dirtied > 0:
+                    self.logger.info("[FallbackScan] Queued %d users from symbol_holders scan", dirtied)
+
+            except Exception as outer_err:
+                self.logger.error("[FallbackScan] Outer error: %s", outer_err)
+
+            await asyncio.sleep(_SCAN_INTERVAL_S)
+
     async def _process_symbol_update(self, symbol: str):
+
         """
         Process a single symbol update by fetching affected users
         Single Responsibility: Only handles symbol update processing

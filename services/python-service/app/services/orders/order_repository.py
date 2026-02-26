@@ -755,10 +755,13 @@ async def _place_order_non_atomic(
         margin_updates = {}
         if recomputed_user_used_margin_executed is not None:
             margin_updates["used_margin_executed"] = str(float(recomputed_user_used_margin_executed))
+            # Legacy field mirrors executed margin
+            margin_updates["used_margin"] = str(float(recomputed_user_used_margin_executed))
         if recomputed_user_used_margin_all is not None:
             margin_updates["used_margin_all"] = str(float(recomputed_user_used_margin_all))
         if margin_updates:
             await redis_cluster.hset(portfolio_key, mapping=margin_updates)
+
         # Log total duration for non-atomic path
         try:
             _TIMING_LOG.info(__import__("orjson").dumps({

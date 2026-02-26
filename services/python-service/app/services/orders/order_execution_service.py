@@ -435,9 +435,13 @@ class OrderExecutor:
                     portfolio_equity = float(portfolio.get("equity"))
 
                 if (portfolio_equity is not None) and (portfolio_used_margin_all is not None):
+                    # Primary path: full portfolio snapshot available — equity already includes PnL
                     current_free_margin = float(portfolio_equity) - float(portfolio_used_margin_all)
                 elif portfolio.get("free_margin") is not None:
                     current_free_margin = float(portfolio.get("free_margin"))
+                # NOTE: do NOT fall back to wallet_balance - used_margin here.
+                # If equity/free_margin are missing the portfolio snapshot is stale/incomplete;
+                # the outer fallback handles the zero-orders case safely.
         except (TypeError, ValueError):
             current_free_margin = None
 
@@ -454,7 +458,10 @@ class OrderExecutor:
                 try:
                     order_status = str(od.get("order_status", "")).upper()
                     execution_status = str(od.get("execution_status", "")).upper()
-                    if order_status not in ("CLOSED", "CANCELLED", "REJECTED") or execution_status not in ("CLOSED", "CANCELLED", "REJECTED"):
+                    # Use AND: both statuses must be non-terminal to count as an open order.
+                    # Using OR would misclassify a CLOSED order with a stale execution_status as open.
+                    if (order_status not in ("CLOSED", "CANCELLED", "REJECTED") and
+                            execution_status not in ("CLOSED", "CANCELLED", "REJECTED")):
                         has_open_orders = True
                         break
                 except Exception:
@@ -752,6 +759,23 @@ class OrderExecutor:
             "status": displayed_status,
             "execution_status": execution_status
         })
+
+        # CRITICAL: Force the portfolio calculator to process this user on the next tick.
+        # The symbol_holders SADD (done in place_order_atomic_or_fallback) can silently fail,
+        # leaving the user absent from symbol_holders and NEVER processed on market ticks.
+        # Publishing portfolio_force_recalc is the guaranteed fallback: the calculator's
+        # _handle_force_recalc_message adds the user directly to the dirty set regardless of
+        # symbol_holders state, ensuring equity/balance/free_margin are written within ~200ms.
+        try:
+            import json as _json
+            _recalc_payload = _json.dumps({
+                "reason": "order_placed",
+                "users": [{"user_type": user_type, "user_id": int(user_id)}],
+            })
+            from app.config.redis_config import redis_pubsub_client as _rpc
+            await _rpc.publish("portfolio_force_recalc", _recalc_payload)
+        except Exception as _pr_err:
+            logger.warning("portfolio_force_recalc publish failed after order placement: %s", _pr_err)
 
         # 14) For provider flow, create/update canonical order hash and global lookups
         if flow == "provider":

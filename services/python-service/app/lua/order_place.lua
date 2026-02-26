@@ -171,11 +171,14 @@ timing_us.hset_order = now_us() - t_hset_order_0
 local t_portfolio_0 = now_us()
 if recomputed_user_used_margin_executed and tostring(recomputed_user_used_margin_executed) ~= '' then
   redis.call('HSET', portfolio_key, 'used_margin_executed', tostring(recomputed_user_used_margin_executed))
+  -- Keep legacy `used_margin` field in sync with executed margin
+  redis.call('HSET', portfolio_key, 'used_margin', tostring(recomputed_user_used_margin_executed))
 end
 if recomputed_user_used_margin_all and tostring(recomputed_user_used_margin_all) ~= '' then
   redis.call('HSET', portfolio_key, 'used_margin_all', tostring(recomputed_user_used_margin_all))
 end
 timing_us.portfolio_updates = now_us() - t_portfolio_0
+
 
 -- Event streaming is not handled here to avoid cross-slot access; perform externally if needed
 
