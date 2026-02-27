@@ -101,7 +101,7 @@ const handleFileUploadErrors = (error, req, res, next) => {
       details: {
         field: error.field,
         filename: error.filename,
-        allowed_types: ['JPEG', 'PNG', 'GIF', 'WebP', 'BMP', 'TIFF']
+        allowed_types: ['JPEG', 'PNG', 'GIF', 'WebP', 'BMP', 'TIFF', 'PDF']
       }
     });
   }
@@ -114,7 +114,7 @@ const handleFileUploadErrors = (error, req, res, next) => {
       details: {
         field: error.field,
         filename: error.filename,
-        allowed_extensions: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+        allowed_extensions: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.pdf']
       }
     });
   }
@@ -135,7 +135,7 @@ const handleFileUploadErrors = (error, req, res, next) => {
   if (error.code === 'FILE_VALIDATION_ERROR') {
     return res.status(400).json({
       success: false,
-      message: 'File validation failed. Please ensure you are uploading valid image files.',
+      message: 'File validation failed. Please ensure you are uploading valid image or PDF files.',
       error_code: 'FILE_VALIDATION_ERROR',
       details: {
         field: error.field,
