@@ -2685,21 +2685,32 @@ class MAMOrderService {
         skippedOrders: []
       });
 
-      try {
-        const metadata = {
-          ...(mamOrder.metadata || {}),
-          take_profit: Number(take_profit),
-          last_takeprofit_update_at: new Date().toISOString(),
-          last_takeprofit_updated_by: `mam_manager:${managerId}`
-        };
-        await mamOrder.update({
-          metadata,
-          take_profit: Number(take_profit)
-        });
-      } catch (metaError) {
-        logger.warn('Failed to update MAM order metadata after takeprofit add', {
+      // Bug fix: only persist take_profit on the MAM order when at least one child
+      // successfully received the TP. If every child failed or was skipped the MAM
+      // record must NOT be updated, otherwise the subsequent cancel sees a TP value
+      // that was never actually applied to any child and will misbehave.
+      if (summary.successful > 0) {
+        try {
+          const metadata = {
+            ...(mamOrder.metadata || {}),
+            take_profit: Number(take_profit),
+            last_takeprofit_update_at: new Date().toISOString(),
+            last_takeprofit_updated_by: `mam_manager:${managerId}`
+          };
+          await mamOrder.update({
+            metadata,
+            take_profit: Number(take_profit)
+          });
+        } catch (metaError) {
+          logger.warn('Failed to update MAM order metadata after takeprofit add', {
+            mam_order_id: mamOrderId,
+            error: metaError.message
+          });
+        }
+      } else {
+        logger.warn('MAM takeprofit: no children succeeded, skipping MAM order TP update', {
           mam_order_id: mamOrderId,
-          error: metaError.message
+          summary
         });
       }
 
@@ -2938,6 +2949,16 @@ class MAMOrderService {
         skippedOrders: []
       });
 
+      // Bug fix: clear the MAM order's stop_loss when:
+      //   • no children failed, AND
+      //   • every skip was because the child had NO_ACTIVE_STOPLOSS (already gone)
+      // Previously `skipped > 0` blocked the clear, which meant older orders whose
+      // SL was never applied (pre-fix era) could never be cleaned up via cancel.
+      const allSkipsAreNoSL = summary.skippedOrders.every(
+        (s) => s.reason === 'NO_ACTIVE_STOPLOSS'
+      );
+      const shouldClearSL = summary.failed === 0 && (summary.skipped === 0 || allSkipsAreNoSL);
+      let updatedStopLoss = mamOrder.stop_loss != null ? Number(mamOrder.stop_loss) : null;
       try {
         const metadata = {
           ...(mamOrder.metadata || {}),
@@ -2945,9 +2966,10 @@ class MAMOrderService {
           last_stoploss_cancelled_by: `mam_manager:${managerId}`
         };
         const updates = { metadata };
-        if (summary.failed === 0 && summary.skipped === 0) {
+        if (shouldClearSL) {
           metadata.stop_loss = null;
           updates.stop_loss = null;
+          updatedStopLoss = null;
         }
         await mamOrder.update(updates);
       } catch (metaError) {
@@ -2961,8 +2983,9 @@ class MAMOrderService {
         portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
           type: 'mam_order_stoploss_cancel',
           mam_order_id: mamOrderId,
-          // For UI convenience, expose the updated stop_loss (likely null when fully cancelled)
-          stop_loss: mamOrder.stop_loss != null ? Number(mamOrder.stop_loss) : null,
+          // Bug fix: emit the value that was actually persisted (updatedStopLoss),
+          // not the stale in-memory mamOrder.stop_loss reference.
+          stop_loss: updatedStopLoss,
           summary
         });
       } catch (eventError) {
@@ -3202,6 +3225,17 @@ class MAMOrderService {
         skippedOrders: []
       });
 
+      // Bug fix: clear the MAM order's take_profit when:
+      //   • no children failed, AND
+      //   • every skip was because the child had NO_ACTIVE_TAKEPROFIT (already gone or never applied)
+      // Previously `skipped > 0` blocked the clear, which meant that for orders from
+      // the pre-fix era (where TP was saved on the MAM record but never reached children)
+      // the cancel could never clean up the MAM-level take_profit field.
+      const allSkipsAreNoTP = summary.skippedOrders.every(
+        (s) => s.reason === 'NO_ACTIVE_TAKEPROFIT'
+      );
+      const shouldClearTP = summary.failed === 0 && (summary.skipped === 0 || allSkipsAreNoTP);
+      let updatedTakeProfit = mamOrder.take_profit != null ? Number(mamOrder.take_profit) : null;
       try {
         const metadata = {
           ...(mamOrder.metadata || {}),
@@ -3209,9 +3243,10 @@ class MAMOrderService {
           last_takeprofit_cancelled_by: `mam_manager:${managerId}`
         };
         const updates = { metadata };
-        if (summary.failed === 0 && summary.skipped === 0) {
+        if (shouldClearTP) {
           metadata.take_profit = null;
           updates.take_profit = null;
+          updatedTakeProfit = null;
         }
         await mamOrder.update(updates);
       } catch (metaError) {
@@ -3225,8 +3260,9 @@ class MAMOrderService {
         portfolioEvents.emitUserUpdate('mam_account', mamAccountId, {
           type: 'mam_order_takeprofit_cancel',
           mam_order_id: mamOrderId,
-          // Expose the updated take_profit (likely null when fully cancelled)
-          take_profit: mamOrder.take_profit != null ? Number(mamOrder.take_profit) : null,
+          // Bug fix: emit the value that was actually persisted (updatedTakeProfit),
+          // not the stale in-memory mamOrder.take_profit reference.
+          take_profit: updatedTakeProfit,
           summary
         });
       } catch (eventError) {
