@@ -44,15 +44,15 @@ function getRawPassword() {
 
 /**
  * Hash password as required by Pay2Pay:
- * SHA256(username + rawPassword) → encode as Base64
+ * SHA256(username + rawPassword) in HEX format → encode as Base64
  * @param {string} username
  * @param {string} rawPassword
- * @returns {string} Base64-encoded SHA-256 hash
+ * @returns {string} Base64-encoded hex string of SHA-256 hash
  */
 function hashPassword(username, rawPassword) {
     const input = `${username}${rawPassword}`;
-    const hash = crypto.createHash('sha256').update(input, 'utf8').digest();
-    return Buffer.from(hash).toString('base64');
+    const hexHash = crypto.createHash('sha256').update(input, 'utf8').digest('hex');
+    return Buffer.from(hexHash).toString('base64');
 }
 
 // ─── RSA Signature ───────────────────────────────────────────────────────────
