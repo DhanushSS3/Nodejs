@@ -249,14 +249,7 @@ async function createRedirectDeposit(params) {
     // ── Generate merchant reference ID ───────────────────────────────────────
     const merchantReferenceId = GatewayPayment.generateMerchantReferenceId();
 
-    // ── Build Pay2Pay redirect request body ──────────────────────────────────
-    // Uses the Redirect Collection API endpoint
-    const ipnUrl = getIpnUrl();
-    const returnUrl = getReturnUrl();
-
-    if (!ipnUrl) {
-        throw new Error('PAY2PAY_IPN_URL is not configured.');
-    }
+    const returnUrl = process.env.PAY2PAY_RETURN_URL;
     if (!returnUrl) {
         throw new Error('PAY2PAY_RETURN_URL is not configured.');
     }
@@ -268,62 +261,70 @@ async function createRedirectDeposit(params) {
         throw new Error('PAY2PAY_MERCHANT_KEY is not configured. Required for redirect flow.');
     }
 
-    // Build request body WITHOUT signature first (signature is computed over these params)
-    const requestBody = {
-        merchantId,
+    // ── Build Redirect URL (GET params) ──────────────────────────────────────
+    // Algorithm from PP-COLLECTION-REDIRECT-API PDF:
+    // 1. Sort fields alphabetically
+    // 2. Join the VALUES of these fields (no keys, no &)
+    // 3. Append merchantKey
+    // 4. Base64(SHA256(joinedString))
+
+    // Convert current time to seconds (Unix timestamp)
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    // Must not contain special chars if possible (spaces are encoded later)
+    const content = 'Thanh toan nap tien LiveFXHub';
+
+    // The exact fields required by the GET redirect API
+    const redirectParams = {
+        content: content,
         currency: 'VND',
-        amount: intAmount,
-        orderId: merchantReferenceId,
-        orderDesc: description || 'LiveFXHub wallet deposit',
-        returnUrl,
-        ipnUrl,
-        paymentMethod: process.env.PAY2PAY_DEFAULT_PAYMENT_METHOD || 'QRBANK',
+        language: 'vi',
+        merchant_id: merchantId,
+        order_code: merchantReferenceId,
+        timestamp: timestamp,
+        total_amount: intAmount.toString(),
+        url_redirect: returnUrl
     };
 
-    // Add Merchant Key signature for redirect flow (SHA256 of sorted params + merchantKey → base64)
-    const redirectSignature = computeRedirectSignature(requestBody, merchantKey);
-    requestBody.signature = redirectSignature;
+    // Sort keys alphabetically
+    const sortedKeys = Object.keys(redirectParams).sort();
 
-    const bodyStr = JSON.stringify(requestBody);
-    const headers = await tokenService.buildRequestHeaders(bodyStr);
+    // Join VALUES only
+    const valuesJoined = sortedKeys.map(k => redirectParams[k]).join('');
 
-    // ── Call Pay2Pay redirect initialize endpoint ─────────────────────────────
-    const url = `${getDomain()}/pgw-transaction-service/mch/api/v1.0/redirectUrl`;
+    // Append merchant key and hash
+    const stringToSign = valuesJoined + merchantKey;
+    const redirectSignature = crypto.createHash('sha256').update(stringToSign, 'utf8').digest('base64');
 
-    logger.info('Pay2Pay: calling redirect initialize', {
+    // Build the final URL payload via URLSearchParams
+    // Using encodeURIComponent is handled by URLSearchParams implicitly
+    const queryParams = new URLSearchParams();
+    sortedKeys.forEach(k => {
+        queryParams.append(k, redirectParams[k]);
+    });
+    // Finally add the signature
+    queryParams.append('signature', redirectSignature);
+
+    // Base URL is the domain root for the redirect API
+    // e.g., https://uat-checkout.pay2pay.vn/?...
+    let baseDomain = tokenService.getDomain();
+
+    // According to the PDF: Test env is https://uat-checkout.pay2pay.vn
+    // Prod env is https://checkout.pay2pay.vn
+    // We will logic branch it if the root domain looks like api.
+    if (baseDomain.includes('uat-api.pay2pay.vn')) {
+        baseDomain = 'https://uat-checkout.pay2pay.vn';
+    } else if (baseDomain.includes('api.pay2pay.vn')) {
+        baseDomain = 'https://checkout.pay2pay.vn';
+    }
+
+    // Append standard root. URL object ensures no double slashes.
+    const paymentUrl = `${baseDomain}/?${queryParams.toString()}`;
+
+    logger.info('Pay2Pay: redirect URL generated', {
         merchantReferenceId,
         amountVnd: intAmount,
-        url,
+        paymentUrl
     });
-
-    let providerResponse;
-    try {
-        const response = await axios.post(url, requestBody, { headers, timeout: 20000 });
-        providerResponse = response.data;
-    } catch (err) {
-        const errData = err.response && err.response.data;
-        logger.error('Pay2Pay: redirect initialize API error', {
-            merchantReferenceId,
-            error: err.message,
-            response: errData,
-        });
-        throw new Error(
-            `Pay2Pay API error: ${errData ? JSON.stringify(errData) : err.message}`
-        );
-    }
-
-    if (!providerResponse || providerResponse.code !== 'SUCCESS') {
-        throw new Error(`Pay2Pay returned non-SUCCESS: ${JSON.stringify(providerResponse)}`);
-    }
-
-    const paymentUrl =
-        providerResponse.data && (providerResponse.data.paymentUrl || providerResponse.data.redirectUrl);
-
-    if (!paymentUrl) {
-        throw new Error('Pay2Pay did not return a paymentUrl in response');
-    }
-
-    const txnId = providerResponse.data && providerResponse.data.txnId;
 
     // ── Persist GatewayPayment record ─────────────────────────────────────────
     const gatewayPayment = await GatewayPayment.create({
@@ -337,41 +338,29 @@ async function createRedirectDeposit(params) {
         initiator_user_type: initiatorUserType || null,
         requested_amount: intAmount,
         requested_currency: 'VND',
-        settled_currency: 'USD',
-        provider_reference_id: txnId || null,
-        provider_payload: {
-            initResponse: providerResponse.data,
-        },
+        fx_rate: fxRate,
+        estimated_usd: feeEstimate.grossUsd,
+        fee_amount: feeEstimate.totalFeeUsd,
+        fee_currency: 'USD',
         metadata: {
-            fxRateAtCreation: fxRate,
-            estimatedGrossUsd: feeEstimate.grossUsd,
-            estimatedCustomerFeeUsd: feeEstimate.customerFeeUsd,
-            estimatedMerchantFeeUsd: feeEstimate.merchantFeeUsd,
+            feeDeductedFromCustomer: feeEstimate.customerFeeUsd,
+            feeBorneByMerchant: feeEstimate.merchantFeeUsd,
+            merchantFeeSharePercent: feeEstimate.merchantSharePct,
             estimatedCreditUsd: feeEstimate.creditUsd,
-            description,
+            pay2payAmountVnd: intAmount,
+            redirectPayload: redirectParams,
+            externalTxnId: null // Populated via IPN
         },
-    });
-
-    logger.info('Pay2Pay: deposit created', {
-        id: gatewayPayment.id,
-        merchantReferenceId,
-        amountVnd: intAmount,
-        paymentUrl,
-        userId,
-        userType,
     });
 
     return {
-        merchantReferenceId,
+        merchantReferenceId: gatewayPayment.merchant_reference_id,
         paymentUrl,
-        txnId: txnId || null,
+        // Optional payload if frontend needs to display summary BEFORE jumping
         amount: intAmount,
         currency: 'VND',
         fxRate,
-        estimatedUsd: feeEstimate.creditUsd,
-        estimatedGrossUsd: feeEstimate.grossUsd,
-        estimatedCustomerFeeUsd: feeEstimate.customerFeeUsd,
-        gatewayPaymentId: gatewayPayment.id,
+        estimatedUsd: feeEstimate.grossUsd,
     };
 }
 

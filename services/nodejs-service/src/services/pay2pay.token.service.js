@@ -322,6 +322,8 @@ function clearTokenCache() {
 }
 
 module.exports = {
+    getDomain,
+    getTenant,
     getAccessToken,
     buildRequestHeaders,
     createSignature,
