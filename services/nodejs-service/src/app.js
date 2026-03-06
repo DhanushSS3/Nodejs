@@ -10,6 +10,7 @@ const adminUsersSecretRoutes = require('./routes/admin.users.secret.routes');
 const cacheRoutes = require('./routes/cache.routes');
 const cryptoPaymentRoutes = require('./routes/crypto.payment.routes');
 const stripePaymentRoutes = require('./routes/stripe.payment.routes');
+const pay2payPaymentRoutes = require('./routes/pay2pay.payment.routes');
 const groupsRoutes = require('./routes/groups.routes');
 const favoritesRoutes = require('./routes/favorites.routes');
 const withdrawalsRoutes = require('./routes/withdrawals.routes');
@@ -63,6 +64,7 @@ app.use(express.json({
       && (
         req.originalUrl.startsWith('/api/stripe-payments/webhook')
         || req.originalUrl.startsWith('/api/stripe/webhook')
+        || req.originalUrl.startsWith('/api/pay2pay-payments/ipn')
       )
     ) {
       req.rawBody = buf.toString('utf8');
@@ -81,9 +83,9 @@ app.use(cors({
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
     'Accept',
     'Origin',
     'Cache-Control',
@@ -116,8 +118,8 @@ if (swaggerEnabled) {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
@@ -136,6 +138,7 @@ app.use('/api/cache', cacheRoutes);
 app.use('/api/crypto-payments', cryptoPaymentRoutes);
 app.use('/api/stripe-payments', stripePaymentRoutes);
 app.use('/api/stripe', stripePaymentRoutes);
+app.use('/api/pay2pay-payments', pay2payPaymentRoutes);
 app.use('/api/groups', groupsRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/withdrawals', withdrawalsRoutes);
@@ -165,7 +168,7 @@ app.get('/api/debug/python-health', async (req, res) => {
   try {
     const axios = require('axios');
     const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
-    
+
     // Test basic connectivity to Python service
     let pythonConnectivity = 'unknown';
     try {
@@ -174,7 +177,7 @@ app.get('/api/debug/python-health', async (req, res) => {
     } catch (error) {
       pythonConnectivity = `error: ${error.message}`;
     }
-    
+
     res.json({
       message: 'Python health routes are registered',
       pythonServiceUrl: pythonServiceUrl,
@@ -182,7 +185,7 @@ app.get('/api/debug/python-health', async (req, res) => {
       environment: process.env.NODE_ENV || 'development',
       availableRoutes: [
         'GET /api/python-health/status',
-        'GET /api/python-health/market-data', 
+        'GET /api/python-health/market-data',
         'GET /api/python-health/execution-prices',
         'GET /api/python-health/websocket/status',
         'GET /api/python-health/cleanup/status',
