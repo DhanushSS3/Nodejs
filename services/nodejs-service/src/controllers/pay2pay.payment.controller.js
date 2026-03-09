@@ -15,6 +15,7 @@ const pay2payService = require('../services/pay2pay.payment.service');
 const fxService = require('../services/pay2pay.fx.service');
 const logger = require('../utils/logger');
 const { LiveUser, StrategyProviderAccount, CopyFollowerAccount } = require('../models');
+const pay2payLogger = require('../services/logging/Pay2PayLogger');
 
 const SUPPORTED_USER_TYPES = ['live', 'strategy_provider', 'copy_follower'];
 
@@ -285,6 +286,12 @@ class Pay2PayController {
     async handleIPN(req, res) {
         const rawBodyStr = req.rawBody || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
 
+        // Log the exact raw IPN data uniquely to pay2pay.log
+        pay2payLogger.logIPN({
+            'p-api-key': req.headers['p-api-key'],
+            'p-signature': req.headers['p-signature']
+        }, req.body || rawBodyStr);
+
         logger.info('Pay2Pay IPN received', {
             ip: req.ip,
             headers: {
@@ -420,7 +427,38 @@ class Pay2PayController {
         }
 
         try {
-            const payment = await pay2payService.getPaymentByMerchantReferenceId(merchantReferenceId);
+            let payment = await pay2payService.getPaymentByMerchantReferenceId(merchantReferenceId);
+
+            // If it's still pending locally, let's actively ask Pay2Pay what happened
+            // rather than waiting passively for the webhook.
+            if (payment.status === 'PENDING') {
+                try {
+                    const inquiry = await pay2payService.inquiryStatus(merchantReferenceId);
+
+                    // If Pay2Pay says it's successful but it's pending here, we missed/delayed the IPN
+                    if (inquiry && inquiry.code === 'SUCCESS' && inquiry.data && inquiry.data.status === 'SUCCESS') {
+                        logger.info('Pay2Pay active sync: transaction successful, processing manually', {
+                            merchantReferenceId
+                        });
+
+                        // Feed the inquiry data directly into our IPN processor to handle
+                        // all the FX mapping and wallet crediting logic identical to a webhook.
+                        await pay2payService.processIPN(inquiry.data, JSON.stringify(inquiry.data), {
+                            ip: req.ip,
+                            userAgent: 'Active Sync GET /payment'
+                        });
+
+                        // Re-fetch the updated payment from DB
+                        payment = await pay2payService.getPaymentByMerchantReferenceId(merchantReferenceId);
+                    }
+                } catch (inquiryErr) {
+                    logger.warn('Pay2Pay active sync failed, falling back to local DB status', {
+                        merchantReferenceId,
+                        error: inquiryErr.message
+                    });
+                }
+            }
+
             return res.status(200).json({ status: true, message: 'Payment retrieved', data: payment });
         } catch (err) {
             if (err.message === 'Payment not found') {

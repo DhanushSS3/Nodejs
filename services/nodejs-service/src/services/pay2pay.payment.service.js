@@ -20,6 +20,7 @@ const idGenerator = require('./idGenerator.service');
 const redisUserCache = require('./redis.user.cache.service');
 const tokenService = require('./pay2pay.token.service');
 const fxService = require('./pay2pay.fx.service');
+const pay2payLogger = require('./logging/Pay2PayLogger');
 const sequelize = require('../config/db');
 const {
     GatewayPayment,
@@ -270,12 +271,20 @@ async function createRedirectDeposit(params) {
 
     // Convert current time to seconds (Unix timestamp)
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    // Must not contain special chars if possible (spaces are encoded later)
-    const content = 'Thanh toan nap tien LiveFXHub';
+
+    // The "content" field is what the user sees on the Pay2Pay screen as the "Note"
+    // We remove special characters to ensure URL encoding doesn't break the signature hash
+    let safeContent = (description || 'Nap tien giao dich')
+        .replace(/[^a-zA-Z0-9 ]/g, '') // Keep only alphanumerics and spaces
+        .trim();
+
+    if (!safeContent) {
+        safeContent = 'Nap tien giao dich';
+    }
 
     // The exact fields required by the GET redirect API
     const redirectParams = {
-        content: content,
+        content: safeContent,
         currency: 'VND',
         language: 'vi',
         merchant_id: merchantId,
@@ -325,6 +334,8 @@ async function createRedirectDeposit(params) {
         amountVnd: intAmount,
         paymentUrl
     });
+
+    pay2payLogger.logRequest('GET RediretUrl', redirectParams);
 
     // ── Persist GatewayPayment record ─────────────────────────────────────────
     const gatewayPayment = await GatewayPayment.create({
@@ -742,27 +753,29 @@ async function inquiryStatus(merchantReferenceId) {
     const bodyStr = JSON.stringify(requestBody);
     const headers = await tokenService.buildRequestHeaders(bodyStr);
 
-    const url = `${getDomain()}/pgw-transaction-service/mch/api/v2.0/inquiry`;
+    const url = `${tokenService.getDomain()}/pgw-transaction-service/mch/api/v2.0/inquiry`;
 
     logger.info('Pay2Pay: querying transaction status', { merchantReferenceId, url });
+    pay2payLogger.logRequest('POST /api/v2.0/inquiry', requestBody);
 
     try {
-        const response = await axios.post(url, requestBody, { headers, timeout: 15000 });
-        const data = response.data;
+        const response = await axios.post(url, bodyStr, {
+            headers,
+            timeout: 15000,
+        });
 
+        const data = response.data;
         if (!data || data.code !== 'SUCCESS') {
-            logger.warn('Pay2Pay inquiry returned non-SUCCESS', { data });
+            logger.warn('Pay2Pay inquiry returned non-SUCCESS', { merchantReferenceId, data });
+        } else {
+            logger.info('Pay2Pay inquiry SUCCESS', { merchantReferenceId });
         }
 
+        pay2payLogger.logResponse('POST /api/v2.0/inquiry - SUCCESS', data);
         return data;
     } catch (err) {
-        const errData = err.response && err.response.data;
-        logger.error('Pay2Pay inquiry failed', {
-            merchantReferenceId,
-            error: err.message,
-            response: errData,
-        });
-        throw new Error(`Pay2Pay inquiry error: ${errData ? JSON.stringify(errData) : err.message}`);
+        pay2payLogger.logError('POST /api/v2.0/inquiry - FAIL', err.response ? err.response.data : err.message);
+        throw new Error(`Pay2Pay inquiry error: ${err.message}`);
     }
 }
 

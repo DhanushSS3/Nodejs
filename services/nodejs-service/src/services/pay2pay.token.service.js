@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./logger.service');
+const pay2payLogger = require('./logging/Pay2PayLogger');
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -153,17 +154,25 @@ async function login() {
     const url = `${getDomain()}/auth-service/api/v1.0/user/login`;
 
     logger.info('Pay2Pay: logging in', { username, url });
+    pay2payLogger.logRequest('POST /auth-service/api/v1.0/user/login', { username });
 
-    const response = await axios.post(url, body, {
-        headers: {
-            'Content-Type': 'application/json',
-            'p-request-id': requestId,
-            'p-request-time': requestTime,
-            'p-tenant': tenant,
-            'p-signature': signature,
-        },
-        timeout: 15000,
-    });
+    let response;
+    try {
+        response = await axios.post(url, body, {
+            headers: {
+                'Content-Type': 'application/json',
+                'p-request-id': requestId,
+                'p-request-time': requestTime,
+                'p-tenant': tenant,
+                'p-signature': signature,
+            },
+            timeout: 15000,
+        });
+        pay2payLogger.logResponse('POST /auth-service/api/v1.0/user/login - SUCCESS', response.data);
+    } catch (err) {
+        pay2payLogger.logError('POST /auth-service/api/v1.0/user/login - FAIL', err.response ? err.response.data : err.message);
+        throw err;
+    }
 
     const data = response.data;
     if (!data || data.code !== 'SUCCESS' || !data.data || !data.data.accessToken) {
@@ -211,6 +220,7 @@ async function refresh() {
     const signature = createSignature(requestId, requestTime, tenant, bodyStr);
 
     const url = `${getDomain()}/auth-service/api/v1.0/user/refresh`;
+    pay2payLogger.logRequest('POST /auth-service/api/v1.0/user/refresh', { refreshToken: _refreshToken });
 
     try {
         const response = await axios.post(url, body, {
@@ -224,6 +234,7 @@ async function refresh() {
             },
             timeout: 15000,
         });
+        pay2payLogger.logResponse('POST /auth-service/api/v1.0/user/refresh - SUCCESS', response.data);
 
         const data = response.data;
         if (!data || data.code !== 'SUCCESS' || !data.data || !data.data.accessToken) {
@@ -243,6 +254,7 @@ async function refresh() {
 
         return accessToken;
     } catch (err) {
+        pay2payLogger.logError('POST /auth-service/api/v1.0/user/refresh - FAIL', err.response ? err.response.data : err.message);
         logger.warn('Pay2Pay: token refresh failed, logging in fresh', { error: err.message });
         return login();
     }
