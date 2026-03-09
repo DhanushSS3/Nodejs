@@ -302,8 +302,9 @@ class Pay2PayController {
 
         if (!verification.valid) {
             logger.warn('Pay2Pay IPN: rejected - invalid signature', { error: verification.error });
-            // Return 200 to prevent Pay2Pay infinite retries; log internally
-            return res.status(200).json({ code: 'SIGNATURE_INVALID', message: 'Invalid signature' });
+            // For testing/debugging, we return 400 so the client sees the failure.
+            // (Note: some providers retry infinitely on 400, so you might revert to 200 in prod if they spam you)
+            return res.status(400).json({ code: 'SIGNATURE_INVALID', message: 'Invalid signature' });
         }
 
         // ── Process the notification ───────────────────────────────────────────

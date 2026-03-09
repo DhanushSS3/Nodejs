@@ -395,7 +395,22 @@ function verifyIPN(headers, rawBodyStr) {
     const receivedSignature =
         headers['p-signature'] || headers['P-SIGNATURE'] || '';
 
-    const expectedSignature = computeIpnSignature(rawBodyStr, secretKey);
+    // The new v1.3 logic works like this:
+    // 1. parse JSON body
+    // 2. append values of each field together (in the exact order they appear in the JSON)
+    // 3. append secretKey
+    // 4. SHA-256 -> Base64
+    let bodyObj;
+    try {
+        bodyObj = typeof rawBodyStr === 'string' ? JSON.parse(rawBodyStr) : rawBodyStr;
+    } catch (e) {
+        logger.error('Pay2Pay IPN: failed to parse body for signature calculation', { error: e.message });
+        return { valid: false, error: 'Invalid JSON body' };
+    }
+
+    // Join values
+    const valuesJoined = Object.values(bodyObj).join('');
+    const expectedSignature = computeIpnSignature(valuesJoined, secretKey);
 
     if (receivedSignature !== expectedSignature) {
         logger.warn('Pay2Pay IPN: signature mismatch', {
