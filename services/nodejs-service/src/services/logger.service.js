@@ -372,7 +372,7 @@ class Logger {
    */
   static getGenericErrorResponse(error, operation = 'operation') {
     const correlationId = this.generateCorrelationId();
-    
+
     // Map specific error types to user-friendly messages
     const errorMessages = {
       'ValidationError': 'Invalid input provided. Please check your data and try again.',
@@ -455,7 +455,7 @@ class Logger {
     ];
 
     const sanitized = { ...body };
-    
+
     for (const field of sensitiveFields) {
       if (sanitized[field]) {
         sanitized[field] = '[REDACTED]';

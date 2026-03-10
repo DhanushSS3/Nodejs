@@ -332,8 +332,12 @@ class Pay2PayController {
             return res.status(200).json({ code: 'SUCCESS', message: 'OK' });
         } catch (err) {
             logger.error('Pay2Pay IPN: processing error', { error: err.message, stack: err.stack });
-            // Return 200 to Pay2Pay — internal error, don't trigger retries
-            return res.status(200).json({ code: 'INTERNAL_ERROR', message: 'Processing failed' });
+
+            // Log the explicit reason to the dedicated pay2pay file for debugging
+            pay2payLogger.logError('IPN processing failed', { error: err.message, stack: err.stack, body: req.body });
+
+            // Return 200 SUCCESS to Pay2Pay to stop them from retrying the failed transaction repeatedly
+            return res.status(200).json({ code: 'SUCCESS', message: 'Logged internal error, stopping retries' });
         }
     }
 
