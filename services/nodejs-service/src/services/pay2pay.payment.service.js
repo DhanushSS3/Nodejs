@@ -39,6 +39,10 @@ function getDomain() {
     return (process.env.PAY2PAY_DOMAIN || 'https://api.pay2pay.vn').replace(/\/$/, '');
 }
 
+function getCheckoutDomain() {
+    return (process.env.PAY2PAY_CHECKOUT_DOMAIN || 'https://checkout.pay2pay.vn').replace(/\/$/, '');
+}
+
 function getApiKey() {
     return process.env.PAY2PAY_API_KEY || '';
 }
@@ -313,18 +317,9 @@ async function createRedirectDeposit(params) {
     // Finally add the signature
     queryParams.append('signature', redirectSignature);
 
-    // Base URL is the domain root for the redirect API
-    // e.g., https://uat-checkout.pay2pay.vn/?...
-    let baseDomain = tokenService.getDomain();
-
-    // According to the PDF: Test env is https://uat-checkout.pay2pay.vn
-    // Prod env is https://checkout.pay2pay.vn
-    // We will logic branch it if the root domain looks like api.
-    if (baseDomain.includes('uat-api.pay2pay.vn')) {
-        baseDomain = 'https://uat-checkout.pay2pay.vn';
-    } else if (baseDomain.includes('api.pay2pay.vn')) {
-        baseDomain = 'https://checkout.pay2pay.vn';
-    }
+    // Base URL is the configured checkout domain for the redirect API
+    // Must be set in .env based on environment (e.g. checkout.pay2pay.vn vs uat-checkout.pay2pay.vn)
+    const baseDomain = getCheckoutDomain();
 
     // Append standard root. URL object ensures no double slashes.
     const paymentUrl = `${baseDomain}/?${queryParams.toString()}`;
