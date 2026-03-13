@@ -102,8 +102,53 @@ let _bankListCachedAt = 0;
 const BANK_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
+ * Detect if a Pay2Pay API error is a token revocation / expiry.
+ * Pay2Pay returns HTTP 200 with code: 'TOKEN_REVOKED' or 'UNAUTHORIZED',
+ * or sometimes HTTP 401.
+ */
+function isTokenRevoked(err) {
+    if (!err) return false;
+    const status = err.response && err.response.status;
+    if (status === 401) return true;
+    const data = err.response && err.response.data;
+    if (data) {
+        const code = (data.code || '').toUpperCase();
+        if (code === 'TOKEN_REVOKED' || code === 'UNAUTHORIZED' || code === 'TOKEN_EXPIRED') return true;
+        const msg = (data.message || '').toLowerCase();
+        if (msg.includes('token') && (msg.includes('revoked') || msg.includes('expired') || msg.includes('invalid'))) return true;
+    }
+    // Catch the message thrown by our own code
+    if (err.message && err.message.toLowerCase().includes('token has been revoked')) return true;
+    return false;
+}
+
+/**
+ * Retry wrapper for Pay2Pay API calls.
+ * On token revocation error: clear cache, force re-login, retry ONCE.
+ *
+ * @param {Function} fn - async function to run
+ * @returns {Promise<any>}
+ */
+async function withTokenRetry(fn) {
+    try {
+        return await fn();
+    } catch (err) {
+        if (isTokenRevoked(err)) {
+            logger.warn('Pay2Pay payout: token revoked/expired detected, clearing cache and retrying once');
+            pay2payLogger.logError('Token revoked — forcing re-login', { originalError: err.message });
+            tokenService.clearTokenCache(); // force fresh login on next getAccessToken()
+            // Short delay before retry
+            await new Promise(r => setTimeout(r, 300));
+            return await fn(); // retry once with fresh token
+        }
+        throw err;
+    }
+}
+
+/**
  * Fetch the list of supported banks from Pay2Pay.
  * Result is cached for 24 hours in-memory.
+ * Automatically retries once if the token was revoked.
  * @returns {Promise<Array>}
  */
 async function listBanks() {
@@ -113,16 +158,18 @@ async function listBanks() {
         return _bankListCache;
     }
 
-    const bodyStr = JSON.stringify({});
-    const headers = await tokenService.buildRequestHeaders(bodyStr);
     const url = `${getDomain()}/merchant-transaction-service/api/v2.0/list_bank`;
-
     logger.info('Pay2Pay payout: fetching bank list from API', { url });
     pay2payLogger.logRequest('POST /merchant-transaction-service/api/v2.0/list_bank', {});
 
-    try {
+    const doFetch = async () => {
+        const headers = await tokenService.buildRequestHeaders(JSON.stringify({}));
         const response = await axios.post(url, {}, { headers, timeout: 15000 });
-        const data = response.data;
+        return response.data;
+    };
+
+    try {
+        const data = await withTokenRetry(doFetch);
         pay2payLogger.logResponse('POST /merchant-transaction-service/api/v2.0/list_bank - SUCCESS', data);
 
         if (!data || data.code !== 'SUCCESS' || !Array.isArray(data.data)) {
@@ -130,7 +177,7 @@ async function listBanks() {
         }
 
         _bankListCache = data.data;
-        _bankListCachedAt = now;
+        _bankListCachedAt = Date.now();
         logger.info(`Pay2Pay payout: bank list cached (${_bankListCache.length} banks)`);
         return _bankListCache;
     } catch (err) {
@@ -322,9 +369,9 @@ async function dispatchPayout(moneyRequest, adminId) {
     const audit = generateAuditNumber();
     const transferContent = `LFX WD ${moneyRequest.request_id}`;
 
-    // ── Step 1: Get access token ───────────────────────────────────────────────
+    // ── Step 1: Get access token (with retry on revocation) ───────────────────
     logger.info(`[${operationId}] Step 1: acquiring Pay2Pay access token`);
-    const accessToken = await getAccessToken();
+    const accessToken = await withTokenRetry(() => getAccessToken());
 
     // ── Step 2: Implore-auth ──────────────────────────────────────────────────
     logger.info(`[${operationId}] Step 2: calling implore-auth`);
@@ -695,6 +742,7 @@ module.exports = {
     verifyPayoutIPN,
     processPayoutIPN,
     generateAuditNumber,
+    withTokenRetry,   // exposed for testing
     // Exposed for testing
     getVerifiedKey,
     executeTransfer247,
