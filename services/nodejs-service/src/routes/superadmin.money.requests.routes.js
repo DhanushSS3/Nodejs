@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateAdmin, requireRole } = require('../middlewares/auth.middleware');
 const ctrl = require('../controllers/superadmin.money.requests.controller');
+const payoutCtrl = require('../controllers/pay2pay.payout.controller');
 
 // All routes here require superadmin
 router.use(authenticateAdmin, requireRole(['superadmin']));
@@ -146,5 +147,26 @@ router.post('/money-requests/:requestId/reject', ctrl.reject);
  *         description: Request put on hold
  */
 router.post('/money-requests/:requestId/hold', ctrl.hold);
+
+/**
+ * @swagger
+ * /api/superadmin/money-requests/{requestId}/retry-payout:
+ *   post:
+ *     summary: Retry a failed Pay2Pay payout dispatch
+ *     description: Re-triggers the Pay2Pay Transfer 24/7 for a withdrawal that was approved but whose payout_status is FAILED or PENDING.
+ *     tags: [Superadmin Money Requests]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: requestId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Payout re-dispatched or skipped with reason
+ */
+router.post('/money-requests/:requestId/retry-payout', payoutCtrl.retryPayout);
 
 module.exports = router;

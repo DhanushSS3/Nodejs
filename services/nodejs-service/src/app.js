@@ -39,6 +39,8 @@ const mamOrdersRoutes = require('./routes/mam.orders.routes');
 const mamManagerRoutes = require('./routes/mam.manager.routes');
 const pythonHealthRoutes = require('./routes/python.health.routes');
 const internalTransferRoutes = require('./routes/internalTransfer.routes');
+const pay2payPayoutRoutes = require('./routes/pay2pay.payout.routes');
+const vietnamWithdrawalRoutes = require('./routes/vietnam.withdrawal.routes');
 
 const app = express();
 
@@ -65,6 +67,7 @@ app.use(express.json({
         req.originalUrl.startsWith('/api/stripe-payments/webhook')
         || req.originalUrl.startsWith('/api/stripe/webhook')
         || req.originalUrl.startsWith('/api/pay2pay-payments/ipn')
+        || req.originalUrl.startsWith('/api/pay2pay-payout/ipn')
       )
     ) {
       req.rawBody = buf.toString('utf8');
@@ -162,6 +165,8 @@ app.use('/api/mam/auth', mamAuthRoutes);
 app.use('/api/mam/orders', mamOrdersRoutes);
 app.use('/api/mam/manager', mamManagerRoutes);
 app.use('/api/internal-transfers', internalTransferRoutes);
+app.use('/api/pay2pay-payout', pay2payPayoutRoutes);
+app.use('/api/withdrawals', vietnamWithdrawalRoutes);
 
 // Debug endpoint to test Python health routes
 app.get('/api/debug/python-health', async (req, res) => {

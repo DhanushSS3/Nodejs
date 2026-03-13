@@ -97,6 +97,31 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     allowNull: true,
     comment: 'Link to user_transactions.transaction_id if approved',
   },
+  /**
+   * Pay2Pay Payout Tracking (Transfer 24/7)
+   * payout_status: lifecycle of the Pay2Pay outbound transfer
+   *   NA         → not a Pay2Pay payout (manual / other)
+   *   PENDING    → approved but payout not yet dispatched
+   *   PROCESSING → dispatched to Pay2Pay, awaiting IPN
+   *   SUCCESS    → Pay2Pay IPN confirmed delivery
+   *   FAILED     → Pay2Pay IPN reported failure; user refunded
+   */
+  payout_status: {
+    type: DataTypes.ENUM('NA', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED'),
+    allowNull: false,
+    defaultValue: 'NA',
+    comment: 'Pay2Pay Transfer 24/7 payout lifecycle status',
+  },
+  payout_ref: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: 'Pay2Pay audit number (16-digit) or txnId from IPN',
+  },
+  gateway_payment_id: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+    comment: 'FK to gateway_payments.id for the outbound payout record',
+  },
 }, {
   tableName: 'money_requests',
   timestamps: true,
@@ -148,6 +173,15 @@ const MoneyRequest = sequelize.define('MoneyRequest', {
     },
     {
       fields: ['initiator_user_type']
+    },
+    {
+      fields: ['payout_status']
+    },
+    {
+      fields: ['payout_ref']
+    },
+    {
+      fields: ['gateway_payment_id']
     }
   ],
   scopes: {

@@ -1,6 +1,7 @@
 const moneyRequestService = require('../services/moneyRequest.service');
 const logger = require('../services/logger.service');
 const adminAuditService = require('../services/admin.audit.service');
+const payoutController = require('./pay2pay.payout.controller');
 
 function getAdmin(req) {
   const admin = req.admin || {};
@@ -80,6 +81,8 @@ async function approve(req, res) {
     const id = parseInt(req.params.requestId, 10);
     const { notes } = req.body || {};
     if (!Number.isFinite(id)) return res.status(400).json({ success: false, message: 'Invalid request id' });
+
+    // Standard approval: debit wallet, mark status = 'approved'
     const updated = await moneyRequestService.approveRequest(id, adminId, notes || null);
 
     await adminAuditService.logAction({
@@ -89,7 +92,30 @@ async function approve(req, res) {
       requestBody: { id, notes },
       status: 'SUCCESS',
     });
-    return res.status(200).json({ success: true, message: 'Request approved', data: updated });
+
+    // ── Auto-dispatch Pay2Pay payout for BANK withdrawals ──────────────────
+    // Re-fetch the Sequelize instance (updated has plain JSON via getRequestById)
+    let payoutResult = null;
+    try {
+      const MoneyRequest = require('../models/moneyRequest.model');
+      const moneyRequestInstance = await MoneyRequest.findByPk(id);
+      if (moneyRequestInstance) {
+        payoutResult = await payoutController.approveAndDispatch(moneyRequestInstance, adminId);
+      }
+    } catch (payoutErr) {
+      // Log but don't fail the response — wallet debit already committed
+      logger.error(`[${operationId}] Pay2Pay payout dispatch error (wallet already debited)`, {
+        id,
+        error: payoutErr.message,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Request approved',
+      data: updated,
+      payout: payoutResult,
+    });
   } catch (error) {
     logger.error('Failed to approve money request', { operationId, error: error.message });
     await adminAuditService.logAction({
