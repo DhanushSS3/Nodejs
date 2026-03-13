@@ -23,7 +23,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./logger.service');
-const pay2payLogger = require('./logging/Pay2PayLogger');
+const payoutLogger = require('./logging/Pay2PayPayoutLogger');
 const tokenService = require('./pay2pay.token.service');
 const walletService = require('./wallet.service');
 const idGenerator = require('./idGenerator.service');
@@ -100,6 +100,43 @@ function generateAuditNumber() {
 let _bankListCache = null;
 let _bankListCachedAt = 0;
 const BANK_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// ─── Fee Calculation ──────────────────────────────────────────────────────────
+
+/**
+ * Calculate the fee breakdown for a Pay2Pay payout (Transfer 24/7).
+ *
+ * Fee logic mirrors the collection side:
+ *   totalFeeVnd      = grossAmountVnd × (PAY2PAY_MERCHANT_FEE_PERCENT / 100)
+ *   merchantFeeVnd   = totalFeeVnd × (PAY2PAY_MERCHANT_FEE_SHARE_PERCENT / 100)
+ *   clientFeeVnd     = totalFeeVnd - merchantFeeVnd
+ *   netAmountVnd     = grossAmountVnd - clientFeeVnd
+ *   (client receives less; merchant absorbs its share as cost)
+ *
+ * @param {number} grossAmountVnd - Full VND amount before fees
+ * @returns {Object} fee breakdown
+ */
+function payoutFeeBreakdown(grossAmountVnd) {
+    const feePercent = parseFloat(process.env.PAY2PAY_MERCHANT_FEE_PERCENT || '0.5');
+    const merchantSharePercent = parseFloat(process.env.PAY2PAY_MERCHANT_FEE_SHARE_PERCENT || '50');
+    const clientSharePercent = 100 - merchantSharePercent;
+
+    const totalFeeVnd = Math.round(grossAmountVnd * feePercent / 100);
+    const merchantFeeVnd = Math.round(totalFeeVnd * merchantSharePercent / 100);
+    const clientFeeVnd = totalFeeVnd - merchantFeeVnd;
+    const netAmountVnd = grossAmountVnd - clientFeeVnd; // what client actually receives
+
+    return {
+        grossAmountVnd,
+        feePercent,
+        merchantSharePercent,
+        clientSharePercent,
+        totalFeeVnd,
+        merchantFeeVnd,
+        clientFeeVnd,
+        netAmountVnd,
+    };
+}
 
 /**
  * Detect if a Pay2Pay API error is a token revocation / expiry.
@@ -366,8 +403,22 @@ async function dispatchPayout(moneyRequest, adminId) {
         throw new Error('method_details.amountVnd is required and must be positive (VND amount for Pay2Pay)');
     }
 
+    const fees = payoutFeeBreakdown(Number(amountVnd));
+    payoutLogger.logFeeBreakdown(fees);
+    logger.info(`[${operationId}] Fee breakdown`, fees);
+
     const audit = generateAuditNumber();
     const transferContent = `LFX WD ${moneyRequest.request_id}`;
+
+    payoutLogger.logPayoutDispatch(operationId, {
+        moneyRequestId: moneyRequest.id,
+        requestId: moneyRequest.request_id,
+        amountVnd,
+        audit,
+        bankId,
+        bankCode: binCode || bankCode,
+        fees,
+    });
 
     // ── Step 1: Get access token (with retry on revocation) ───────────────────
     logger.info(`[${operationId}] Step 1: acquiring Pay2Pay access token`);
@@ -420,13 +471,13 @@ async function dispatchPayout(moneyRequest, adminId) {
         gateway_payment_id: gatewayPayment.id,
     });
 
-    logger.info(`[${operationId}] Pay2Pay payout dispatched successfully`, {
+    payoutLogger.logPayoutOutcome(operationId, 'success', {
         audit,
         gatewayPaymentId: gatewayPayment.id,
         merchantReferenceId,
     });
 
-    return { audit, gatewayPaymentId: gatewayPayment.id, p2pResponse };
+    return { audit, gatewayPaymentId: gatewayPayment.id, p2pResponse, fees };
 }
 
 // ─── Payout IPN Verification ──────────────────────────────────────────────────
@@ -738,11 +789,12 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
 module.exports = {
     listBanks,
     invalidateBankListCache,
+    payoutFeeBreakdown,
     dispatchPayout,
     verifyPayoutIPN,
     processPayoutIPN,
     generateAuditNumber,
-    withTokenRetry,   // exposed for testing
+    withTokenRetry,
     // Exposed for testing
     getVerifiedKey,
     executeTransfer247,
