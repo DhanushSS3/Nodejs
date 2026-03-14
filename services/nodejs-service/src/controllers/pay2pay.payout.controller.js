@@ -210,6 +210,39 @@ async function handlePayoutIPN(req, res) {
     }
 }
 
+// ─── Bank Account Name Lookup ──────────────────────────────────────────────────
+
+/**
+ * GET /api/pay2pay-payout/account-name?bankId=BIDV&bankRefNumber=1023020330000
+ * Returns the registered account holder name for the given bank account.
+ * Called by the frontend to auto-fill and verify the account name.
+ */
+async function getBankAccountName(req, res) {
+    const { bankId, bankRefNumber } = req.query;
+
+    if (!bankId || !bankRefNumber) {
+        return res.status(400).json({
+            success: false,
+            message: 'bankId and bankRefNumber are required query parameters',
+        });
+    }
+
+    try {
+        const result = await payoutService.getBankAccountName(bankId, bankRefNumber);
+        return res.status(200).json({
+            success: true,
+            data: result,
+        });
+    } catch (err) {
+        logger.error('Pay2Pay payout: getBankAccountName error', { error: err.message, bankId, bankRefNumber });
+        // Return a user-friendly error (e.g. account not found, invalid bank)
+        return res.status(422).json({
+            success: false,
+            message: err.message || 'Failed to look up account name',
+        });
+    }
+}
+
 // ─── Bank List ────────────────────────────────────────────────────────────────
 
 /**
@@ -235,4 +268,5 @@ module.exports = {
     retryPayout,         // POST /api/superadmin/money-requests/:id/retry-payout
     handlePayoutIPN,     // POST /api/pay2pay-payout/ipn
     getBankList,         // GET  /api/pay2pay-payout/banks
+    getBankAccountName,  // GET  /api/pay2pay-payout/account-name
 };

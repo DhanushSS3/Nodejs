@@ -22,8 +22,9 @@
 const moneyRequestService = require('../services/moneyRequest.service');
 const fxService = require('../services/pay2pay.fx.service');
 const { payoutFeeBreakdown } = require('../services/pay2pay.payout.service');
+const payoutService = require('../services/pay2pay.payout.service');
 const InternalTransferService = require('../services/internalTransfer.service');
-const { LiveUser } = require('../models');
+const { LiveUser, StrategyProviderAccount } = require('../models');
 const logger = require('../services/logger.service');
 const payoutLogger = require('../services/logging/Pay2PayPayoutLogger');
 
@@ -166,8 +167,13 @@ async function createVietnamBankWithdrawal(req, res) {
     if (!authContext.isActive) {
       return res.status(401).json({ success: false, message: 'Account is inactive' });
     }
-    if (authContext.authAccountType !== 'live') {
-      return res.status(403).json({ success: false, message: 'Only live trading accounts can submit withdrawal requests' });
+
+    const allowedAccountTypes = ['live', 'strategy_provider'];
+    if (!allowedAccountTypes.includes(authContext.authAccountType)) {
+      return res.status(403).json({
+        success: false,
+        message: `Account type '${authContext.authAccountType}' cannot submit Vietnam bank withdrawals. Use a live or strategy provider account.`,
+      });
     }
 
     const {
@@ -217,10 +223,31 @@ async function createVietnamBankWithdrawal(req, res) {
       ...fees,
     });
 
-    // ── Validate balance (checks free margin — open positions safe) ────────
+    // ── Resolve account model & owner (supports live + strategy_provider) ────
+    const accountType = authContext.authAccountType;
+    let account;
+    let ownerId; // always the live user who owns this account
+
+    if (accountType === 'live') {
+      account = await LiveUser.findByPk(authContext.authUserId, {
+        attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance'],
+      });
+      ownerId = authContext.authUserId;
+    } else if (accountType === 'strategy_provider') {
+      account = await StrategyProviderAccount.findByPk(authContext.authUserId, {
+        attributes: ['id', 'user_id', 'strategy_name', 'account_number', 'wallet_balance'],
+      });
+      if (account) ownerId = account.user_id; // strategy account belongs to a live user
+    }
+
+    if (!account) {
+      return res.status(404).json({ success: false, message: `${accountType} account not found` });
+    }
+
+    // ── Validate balance & margin (against the specific sub-account) ──────────
     const withdrawalValidation = await InternalTransferService.validateWithdrawal(
-      authContext.authUserId,
-      'live',
+      ownerId,
+      accountType,
       authContext.authUserId,
       parsedAmountUsd
     );
@@ -236,16 +263,11 @@ async function createVietnamBankWithdrawal(req, res) {
       });
     }
 
-    // ── Fetch user ─────────────────────────────────────────────────────────
-    const user = await LiveUser.findByPk(authContext.authUserId, {
-      attributes: ['id', 'name', 'email', 'account_number', 'wallet_balance'],
-    });
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User account not found' });
-    }
-
+    const user = account; // alias for downstream email/logging
     logger.info(`[${operationId}] Creating Vietnam bank withdrawal request`, {
-      userId: authContext.authUserId,
+      userId: ownerId,
+      sourceAccountId: authContext.authUserId,
+      sourceAccountType: accountType,
       amountUsd: parsedAmountUsd,
       grossAmountVnd,
       netAmountVnd: fees.netAmountVnd,
@@ -283,10 +305,10 @@ async function createVietnamBankWithdrawal(req, res) {
 
     // ── Create MoneyRequest ────────────────────────────────────────────────
     const created = await moneyRequestService.createRequest({
-      userId: authContext.authUserId,
-      initiatorAccountType: 'live',
+      userId: ownerId,
+      initiatorAccountType: accountType,
       targetAccountId: authContext.authUserId,
-      targetAccountType: 'live',
+      targetAccountType: accountType,
       type: 'withdraw',
       amount: parsedAmountUsd,
       currency,

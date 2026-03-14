@@ -796,11 +796,65 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
     }
 }
 
+// ─── Bank Account Name Lookup ──────────────────────────────────────────────────
+
+/**
+ * Look up the registered account holder name for a Vietnam bank account.
+ * Calls: GET /bank-gateway-service/mch/api/v1.0/account-name
+ *
+ * @param {string} bankId       - Pay2Pay bank ID (from /banks list)
+ * @param {string} bankRefNumber - Bank account number to look up
+ * @returns {Promise<{ bankRefName: string, bankId: string, bankRefNumber: string }>}
+ */
+async function getBankAccountName(bankId, bankRefNumber) {
+    if (!bankId || !bankRefNumber) {
+        throw new Error('bankId and bankRefNumber are required for account name lookup');
+    }
+
+    const url = `${getDomain()}/bank-gateway-service/mch/api/v1.0/account-name`;
+    const params = { bankId: String(bankId), bankRefNumber: String(bankRefNumber) };
+
+    logger.info('Pay2Pay: looking up bank account name', { url, bankId, bankRefNumber });
+
+    const doFetch = async () => {
+        const headers = await tokenService.buildRequestHeaders('');
+        const response = await axios.get(url, { headers, params, timeout: 15000 });
+        return response.data;
+    };
+
+    try {
+        const data = await withTokenRetry(doFetch);
+
+        if (!data || data.code !== 'SUCCESS') {
+            throw new Error(
+                `Pay2Pay account name lookup failed: ${data?.message || data?.code || JSON.stringify(data)}`
+            );
+        }
+
+        // Pay2Pay returns the name at data.data.bankRefName (confirmed by docs)
+        const bankRefName = data.data?.bankRefName || data.data?.accountName || data.data?.name;
+        if (!bankRefName) {
+            throw new Error('Pay2Pay returned SUCCESS but bankRefName was empty in the response');
+        }
+
+        logger.info('Pay2Pay: bank account name resolved', { bankId, bankRefNumber, bankRefName });
+        return { bankRefName, bankId, bankRefNumber };
+    } catch (err) {
+        logger.error('Pay2Pay: bank account name lookup failed', {
+            bankId,
+            bankRefNumber,
+            error: err.response ? err.response.data : err.message,
+        });
+        throw new Error(`Pay2Pay account name lookup error: ${err.message}`);
+    }
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
     listBanks,
     invalidateBankListCache,
+    getBankAccountName,
     payoutFeeBreakdown,
     dispatchPayout,
     verifyPayoutIPN,
