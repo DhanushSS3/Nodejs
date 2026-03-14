@@ -541,13 +541,20 @@ function verifyPayoutIPN(headers, rawBodyStr) {
  */
 async function processPayoutIPN(body, rawBodyStr, context = {}) {
     const {
-        audit,       // our 16-digit reference
+        auditNumber,  // our 16-digit reference — Pay2Pay sends this as 'auditNumber' in payout IPN
+        audit: auditLegacy, // fallback for any future format changes
         txnId,
         status,
-        amount,
+        orgAmount,  // Pay2Pay uses 'orgAmount' (not 'amount') in payout IPN
+        amount: amountLegacy,
         code,
         message,
+        txnDate,
     } = body;
+
+    // Resolve audit ref — prefer auditNumber (confirmed field name from Pay2Pay payout IPN)
+    const audit = auditNumber || auditLegacy;
+    const amount = orgAmount || amountLegacy;
 
     const normalizedStatus = (status || '').toUpperCase();
     const payloadHash = crypto
@@ -555,7 +562,8 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
         .update(rawBodyStr || JSON.stringify(body), 'utf8')
         .digest('hex');
 
-    logger.info('Pay2Pay payout IPN: processing', { audit, txnId, status: normalizedStatus });
+    logger.info('Pay2Pay payout IPN: processing', { audit, txnId, status: normalizedStatus, txnDate, amount });
+
 
     // ── Record event ──────────────────────────────────────────────────────────
     let gatewayEvent;
