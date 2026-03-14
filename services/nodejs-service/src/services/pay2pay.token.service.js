@@ -59,19 +59,39 @@ function hashPassword(username, rawPassword) {
 // ─── RSA Signature ───────────────────────────────────────────────────────────
 
 /**
- * Create the p-signature for a Pay2Pay API request.
+ * Create a Pay2Pay p-signature by sorting all relevant headers and appending the body.
  *
- * If PAY2PAY_PRIVATE_KEY is a valid PEM RSA key → uses RSA SHA256withRSA (full API spec).
- * If it is a plain secret string → falls back to HMAC-SHA256 (simpler; works until
- * Pay2Pay issues you a proper RSA key pair).
+ * Algorithm (matches the Pay2Pay API spec):
+ *   1. Collect all headers whose key (lowercase) starts with 'p-', or equals
+ *      'authorization' or 'verification'.
+ *   2. Sort the collected keys alphabetically (case-insensitive).
+ *   3. Concatenate the VALUES of those headers in sorted order.
+ *   4. Append the JSON body string.
+ *   5. RSA-SHA256 sign the result → Base64.
  *
- * String to sign: requestId + requestTime + tenant + bodyStr
- *
- * @returns {string} Base64-encoded signature
+ * @param {Object} headers - The full set of request headers (before p-signature is added)
+ * @param {string} bodyStr - Serialised request body (empty string '' for no body)
+ * @returns {string} Base64-encoded RSA-SHA256 signature
  */
-function createSignature(requestId, requestTime, tenant, bodyStr) {
+function createSignatureFromHeaders(headers, bodyStr) {
     const privateKey = getPrivateKey();
-    const stringToSign = `${requestId}${requestTime}${tenant}${bodyStr || ''}`;
+
+    // Step 1 & 2: filter and sort
+    const keysToSign = Object.keys(headers)
+        .filter((k) => {
+            const lk = k.toLowerCase();
+            return lk.startsWith('p-') || lk === 'authorization' || lk === 'verification';
+        })
+        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+    // Step 3: concatenate values
+    let headerString = '';
+    for (const key of keysToSign) {
+        headerString += headers[key];
+    }
+
+    // Step 4: append body
+    const stringToSign = headerString + (bodyStr || '');
 
     const isPem = privateKey && (
         privateKey.includes('-----BEGIN RSA PRIVATE KEY-----') ||
@@ -79,23 +99,35 @@ function createSignature(requestId, requestTime, tenant, bodyStr) {
     );
 
     if (isPem) {
-        // Full RSA SHA256withRSA signing
         const sign = crypto.createSign('SHA256');
         sign.update(stringToSign, 'utf8');
         sign.end();
         return sign.sign(privateKey, 'base64');
     }
 
-    // Fallback: HMAC-SHA256 with the secret as key
-    // This is used when only a shared secret is provided (UAT testing phase)
+    // Fallback: HMAC-SHA256
     const secret = privateKey || process.env.PAY2PAY_IPN_SECRET_KEY || '';
     if (!secret) {
-        throw new Error(
-            'PAY2PAY_PRIVATE_KEY is not configured. Cannot sign Pay2Pay API request.'
-        );
+        throw new Error('PAY2PAY_PRIVATE_KEY is not configured. Cannot sign Pay2Pay API request.');
     }
     logger.warn('Pay2Pay: using HMAC-SHA256 fallback for p-signature (set a real RSA key for production)');
     return crypto.createHmac('sha256', secret).update(stringToSign, 'utf8').digest('base64');
+}
+
+/**
+ * Legacy helper kept for backward compatibility.
+ * For simple calls without an Authorization header the two approaches are equivalent:
+ *   sorted headers = p-request-id + p-request-time + p-tenant (alphabetical)
+ *                  = requestId + requestTime + tenant
+ * @deprecated Prefer createSignatureFromHeaders() for new calls.
+ */
+function createSignature(requestId, requestTime, tenant, bodyStr) {
+    const syntheticHeaders = {
+        'p-request-id': requestId,
+        'p-request-time': requestTime,
+        'p-tenant': tenant,
+    };
+    return createSignatureFromHeaders(syntheticHeaders, bodyStr);
 }
 
 // ─── Time Formatting ─────────────────────────────────────────────────────────
@@ -293,25 +325,36 @@ async function getAccessToken() {
  * Build all required Pay2Pay request headers for an authenticated API call.
  * Automatically obtains a valid access token.
  *
- * @param {string|object} body - request body (object or string); pass '' for GET
+ * Signs using the header-sort method (createSignatureFromHeaders) so that
+ * the Authorization value is included in the string-to-sign — required for
+ * implore-auth and transfer_247 calls.
+ *
+ * @param {string|object} body        - request body (object or string); pass '' for GET
+ * @param {Object}        extraHeaders - optional extra headers to include BEFORE signing
+ *                                       (e.g. { 'verification': verifiedKey })
  * @returns {Promise<Object>} headers object ready for axios
  */
-async function buildRequestHeaders(body) {
+async function buildRequestHeaders(body, extraHeaders = {}) {
     const accessToken = await getAccessToken();
     const bodyStr = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : '';
     const requestId = uuidv4();
     const requestTime = getRequestTime();
     const tenant = getTenant();
-    const signature = createSignature(requestId, requestTime, tenant, bodyStr);
 
-    return {
+    // Build all signable headers first (before computing p-signature)
+    const headers = {
         'Content-Type': 'application/json',
         'p-request-id': requestId,
         'p-request-time': requestTime,
         'p-tenant': tenant,
         'Authorization': `Bearer ${accessToken}`,
-        'p-signature': signature,
+        ...extraHeaders,
     };
+
+    // Compute signature over the full header set + body
+    headers['p-signature'] = createSignatureFromHeaders(headers, bodyStr);
+
+    return headers;
 }
 
 /**
@@ -339,6 +382,7 @@ module.exports = {
     getAccessToken,
     buildRequestHeaders,
     createSignature,
+    createSignatureFromHeaders,
     hashPassword,
     getRequestTime,
     isEnabled,

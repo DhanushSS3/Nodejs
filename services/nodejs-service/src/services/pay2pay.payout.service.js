@@ -61,7 +61,7 @@ function getUsername() {
 }
 
 function getPasscodeRaw() {
-    return process.env.PAY2PAY_PAYOUT_PASSCODE_RAW || '';
+    return process.env.PAY2PAY_PAYOUT_PASSCODE_RAW || '359135';
 }
 
 /**
@@ -257,32 +257,31 @@ async function getVerifiedKey(accessToken) {
     const authValue = hashPasscode(username, rawPasscode);
     const body = {
         phone: username,
-        apiRoute: '/merchant-transaction-service/api/v2.0/transfer_247',
+        api: '/merchant-transaction-service/api/v2.0/transfer_247',  // NOTE: 'api' not 'apiRoute'
         authMode: 'PASSCODE',
         authValue,
     };
     const bodyStr = JSON.stringify(body);
 
-    // Build signed headers — but we already have an accessToken from step 1,
-    // so we build headers manually to avoid a second getAccessToken() call.
     const requestId = uuidv4();
     const requestTime = tokenService.getRequestTime();
     const tenant = process.env.PAY2PAY_TENANT || 'MERCHANT-WEB';
-    const signature = tokenService.createSignature(requestId, requestTime, tenant, bodyStr);
 
+    // Build headers BEFORE computing signature — Authorization must be part of the signed string
     const headers = {
         'Content-Type': 'application/json',
         'p-request-id': requestId,
         'p-request-time': requestTime,
         'p-tenant': tenant,
         'Authorization': `Bearer ${accessToken}`,
-        'p-signature': signature,
     };
+    // Compute signature with sorted-header method (Authorization value included)
+    headers['p-signature'] = tokenService.createSignatureFromHeaders(headers, bodyStr);
 
     const url = `${getDomain()}/auth-service/api/v1.0/implore-auth`;
 
-    logger.info('Pay2Pay payout: calling implore-auth', { username, apiRoute: body.apiRoute });
-    payoutLogger.logRequest('POST /auth-service/api/v1.0/implore-auth', { phone: username, apiRoute: body.apiRoute, authMode: 'PASSCODE' });
+    logger.info('Pay2Pay payout: calling implore-auth', { username, apiRoute: body.api });
+    payoutLogger.logRequest('POST /auth-service/api/v1.0/implore-auth', { phone: username, api: body.api, authMode: 'PASSCODE' });
 
     try {
         const response = await axios.post(url, body, { headers, timeout: 15000 });
@@ -328,10 +327,10 @@ async function executeTransfer247(verifiedKey, payload) {
         content: (payload.content || 'Payout LFX').substring(0, 50),
     };
     const bodyStr = JSON.stringify(body);
-    const headers = await tokenService.buildRequestHeaders(bodyStr);
 
-    // Pass the verifiedKey as the `verification` header
-    headers['verification'] = verifiedKey;
+    // Pass the verifiedKey as the 'verification' extra header BEFORE signature so that
+    // it is included in the sorted-header string-to-sign (required by Pay2Pay).
+    const headers = await tokenService.buildRequestHeaders(bodyStr, { 'verification': verifiedKey });
 
     const url = `${getDomain()}/merchant-transaction-service/api/v2.0/transfer_247`;
 
