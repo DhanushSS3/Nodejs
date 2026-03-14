@@ -247,15 +247,24 @@ async function getBankAccountName(req, res) {
 
 /**
  * GET /api/pay2pay-payout/banks
- * Returns the cached list of supported banks for Vietnam payouts.
+ * Returns a slim list of supported banks for the Vietnam withdrawal bank dropdown.
+ * Only returns bankId and bankName — enough for the frontend selector.
+ * Full bank details (bankCode, binCode) are resolved server-side on withdrawal submit.
  */
 async function getBankList(req, res) {
     try {
         const banks = await payoutService.listBanks();
+
+        // Slim the response — frontend only needs bankId for selection and bankName for display
+        const slimBanks = banks.map(b => ({
+            bankId:   b.bankId,
+            bankName: b.bankName || b.shortName || b.bankId,
+        }));
+
         return res.status(200).json({
             success: true,
-            message: `${banks.length} banks available`,
-            data: banks,
+            message: `${slimBanks.length} banks available`,
+            data: slimBanks,
         });
     } catch (err) {
         logger.error('Pay2Pay payout: getBankList error', { error: err.message });

@@ -21,7 +21,7 @@
 
 const moneyRequestService = require('../services/moneyRequest.service');
 const fxService = require('../services/pay2pay.fx.service');
-const { payoutFeeBreakdown } = require('../services/pay2pay.payout.service');
+const { payoutFeeBreakdown, listBanks, getBankAccountName: fetchBankAccountName } = require('../services/pay2pay.payout.service');
 const payoutService = require('../services/pay2pay.payout.service');
 const InternalTransferService = require('../services/internalTransfer.service');
 const { LiveUser, StrategyProviderAccount } = require('../models');
@@ -180,19 +180,16 @@ async function createVietnamBankWithdrawal(req, res) {
       amount,
       bankId,
       bankRefNumber,
-      bankRefName,
-      bankCode,
-      binCode,
+      bankRefName: bankRefNameFromBody, // optional — auto-fetched if omitted
       currency = 'USD',
     } = req.body || {};
 
-    // ── Validate required fields ───────────────────────────────────────────
+    // ── Validate required fields ────────────────────────────────────────
     const missing = [];
     if (!amount || Number(amount) <= 0) missing.push('amount (positive number in USD)');
     if (!bankId) missing.push('bankId');
     if (!bankRefNumber) missing.push('bankRefNumber');
-    if (!bankRefName || String(bankRefName).trim().length === 0) missing.push('bankRefName');
-    if (!bankCode) missing.push('bankCode');
+    // bankRefName is optional — will be auto-fetched from Pay2Pay if not supplied
 
     if (missing.length > 0) {
       return res.status(400).json({
@@ -202,6 +199,53 @@ async function createVietnamBankWithdrawal(req, res) {
     }
 
     const parsedAmountUsd = Number(amount);
+
+    // ── Resolve bankCode + binCode from the cached bank list ────────────────
+    let bankCode, binCode, bankName;
+    try {
+      const banks = await listBanks();
+      const bankEntry = banks.find(
+        b => b.bankId === String(bankId) || b.binCode === String(bankId)
+      );
+      if (!bankEntry) {
+        return res.status(400).json({
+          success: false,
+          message: `bankId '${bankId}' was not found in the Pay2Pay bank list. Use GET /api/pay2pay-payout/banks to get valid bank IDs.`,
+        });
+      }
+      bankCode = bankEntry.bankCode || bankEntry.binCode || String(bankId);
+      binCode  = bankEntry.binCode  || bankEntry.bankCode || String(bankId);
+      bankName = bankEntry.bankName || bankEntry.shortName || String(bankId);
+    } catch (bankListErr) {
+      logger.error(`[${operationId}] Failed to resolve bank details from bank list`, { error: bankListErr.message });
+      return res.status(503).json({
+        success: false,
+        message: 'Could not retrieve bank details. Please try again shortly.',
+      });
+    }
+
+    // ── Resolve bankRefName ──────────────────────────────────────────────
+    let bankRefName;
+    if (bankRefNameFromBody && String(bankRefNameFromBody).trim().length > 0) {
+      // Frontend already fetched and confirmed it — use as-is
+      bankRefName = String(bankRefNameFromBody).trim().toUpperCase();
+      logger.info(`[${operationId}] bankRefName supplied by client`, { bankRefName });
+    } else {
+      // Auto-fetch from Pay2Pay account-name API
+      try {
+        logger.info(`[${operationId}] bankRefName not supplied, fetching from Pay2Pay`, { bankId, bankRefNumber });
+        const nameResult = await fetchBankAccountName(bankId, bankRefNumber);
+        bankRefName = nameResult.bankRefName.trim().toUpperCase();
+        logger.info(`[${operationId}] bankRefName auto-fetched`, { bankRefName });
+      } catch (nameErr) {
+        logger.warn(`[${operationId}] Failed to auto-fetch bankRefName`, { error: nameErr.message });
+        return res.status(422).json({
+          success: false,
+          message: `Could not verify account holder name for bankId '${bankId}' / account '${bankRefNumber}'. ` +
+                   `Please provide bankRefName manually or check the bank details.`,
+        });
+      }
+    }
 
     // ── Auto USD → VND conversion ──────────────────────────────────────────
     const { vndAmount: grossAmountVnd, rate } = await fxService.usdToVnd(parsedAmountUsd);
@@ -275,14 +319,15 @@ async function createVietnamBankWithdrawal(req, res) {
       bankCode,
     });
 
-    // ── Build method_details (all payout + fee data stored here) ──────────
+    // ── Build method_details (all payout + fee data stored here) ───────────
     const methodDetails = {
       // Pay2Pay transfer fields
       bankId: String(bankId),
       bankRefNumber: String(bankRefNumber),
-      bankRefName: String(bankRefName).trim().toUpperCase(),
-      bankCode: String(bankCode),
-      binCode: binCode ? String(binCode) : String(bankCode),
+      bankRefName,                           // already trimmed + uppercased above
+      bankCode,                              // resolved from bank list
+      binCode,                               // resolved from bank list
+      bankName,                              // human-friendly bank name
       gateway: 'pay2pay',
       transferType: 'transfer_247',
 
