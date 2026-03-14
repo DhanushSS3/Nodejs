@@ -16,7 +16,7 @@
  *   - On FAIL    → refund user wallet + mark payout_status = FAILED
  *
  * Bank List:
- *   - GET /merchant-transaction-service/api/v2.0/list_bank (cached 24h in-memory)
+ *   - GET /bank-gateway-service/mch/api/v1.0/bank (cached 24h in-memory)
  */
 
 const crypto = require('crypto');
@@ -195,19 +195,20 @@ async function listBanks() {
         return _bankListCache;
     }
 
-    const url = `${getDomain()}/merchant-transaction-service/api/v2.0/list_bank`;
+    const url = `${getDomain()}/bank-gateway-service/mch/api/v1.0/bank`;
     logger.info('Pay2Pay payout: fetching bank list from API', { url });
-    payoutLogger.logRequest('POST /merchant-transaction-service/api/v2.0/list_bank', {});
+    payoutLogger.logRequest('GET /bank-gateway-service/mch/api/v1.0/bank', {});
 
     const doFetch = async () => {
-        const headers = await tokenService.buildRequestHeaders(JSON.stringify({}));
-        const response = await axios.post(url, {}, { headers, timeout: 15000 });
+        // Headers for GET request (pass empty string for body to correctly sign)
+        const headers = await tokenService.buildRequestHeaders('');
+        const response = await axios.get(url, { headers, timeout: 15000 });
         return response.data;
     };
 
     try {
         const data = await withTokenRetry(doFetch);
-        payoutLogger.logResponse('POST /merchant-transaction-service/api/v2.0/list_bank - SUCCESS', data);
+        payoutLogger.logResponse('GET /bank-gateway-service/mch/api/v1.0/bank - SUCCESS', data);
 
         if (!data || data.code !== 'SUCCESS' || !Array.isArray(data.data)) {
             throw new Error(`Pay2Pay listBanks returned unexpected response: ${JSON.stringify(data)}`);
@@ -218,7 +219,7 @@ async function listBanks() {
         logger.info(`Pay2Pay payout: bank list cached (${_bankListCache.length} banks)`);
         return _bankListCache;
     } catch (err) {
-        payoutLogger.logError('POST /merchant-transaction-service/api/v2.0/list_bank - FAIL', err.response ? err.response.data : err.message);
+        payoutLogger.logError('GET /bank-gateway-service/mch/api/v1.0/bank - FAIL', err.response ? err.response.data : err.message);
         throw new Error(`Pay2Pay listBanks error: ${err.message}`);
     }
 }
