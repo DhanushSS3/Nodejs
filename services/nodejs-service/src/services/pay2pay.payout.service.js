@@ -811,7 +811,7 @@ async function getBankAccountName(bankId, bankRefNumber) {
         throw new Error('bankId and bankRefNumber are required for account name lookup');
     }
 
-    const url = `${getDomain()}/bank-gateway-service/mch/api/v1.0/account-name`;
+    const url = `${getDomain()}/bank-gateway-service/mch/api/v1.0/pob/get_name`;
     const params = { bankId: String(bankId), bankRefNumber: String(bankRefNumber) };
 
     logger.info('Pay2Pay: looking up bank account name', { url, bankId, bankRefNumber });
