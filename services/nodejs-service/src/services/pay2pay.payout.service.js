@@ -582,6 +582,7 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
             });
             if (existing && existing.processing_status === 'PROCESSED') {
                 logger.info('Pay2Pay payout IPN: duplicate, already processed', { audit, txnId });
+                payoutLogger.logIPNResult(audit, 'duplicate_skipped', { txnId, status: normalizedStatus });
                 return { ok: true, duplicate: true };
             }
             if (existing) gatewayEvent = existing;
@@ -601,6 +602,7 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
             processing_error: 'MoneyRequest not found for audit ref',
         });
         logger.warn('Pay2Pay payout IPN: MoneyRequest not found', { audit });
+        payoutLogger.logIPNResult(audit, 'ignored_not_found', { txnId, status: normalizedStatus });
         return { ok: true, ignored: true, reason: 'money_request_not_found' };
     }
 
@@ -620,6 +622,7 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
             audit,
             payout_status: moneyRequest.payout_status,
         });
+        payoutLogger.logIPNResult(audit, 'ignored_final_state', { txnId, status: normalizedStatus, currentStatus: moneyRequest.payout_status });
         return { ok: true, duplicate: true };
     }
 
@@ -758,6 +761,7 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
         });
 
         logger.info('Pay2Pay payout IPN: processing complete', { audit, txnId, action });
+        payoutLogger.logIPNResult(audit, action, { txnId, status: normalizedStatus });
         return { ok: true, action };
 
     } catch (err) {

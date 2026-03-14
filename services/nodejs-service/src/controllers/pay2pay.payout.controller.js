@@ -14,7 +14,7 @@
 const payoutService = require('../services/pay2pay.payout.service');
 const MoneyRequest = require('../models/moneyRequest.model');
 const adminAuditService = require('../services/admin.audit.service');
-const pay2payLogger = require('../services/logging/Pay2PayLogger');
+const payoutLogger = require('../services/logging/Pay2PayPayoutLogger');
 const logger = require('../services/logger.service');
 
 // ─── Admin-Triggered Dispatch ─────────────────────────────────────────────────
@@ -165,7 +165,7 @@ async function handlePayoutIPN(req, res) {
     const rawBodyStr = req.rawBody
         || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
 
-    pay2payLogger.logIPN(
+    payoutLogger.logPayoutIPN(
         { 'p-api-key': req.headers['p-api-key'], 'p-signature': req.headers['p-signature'] },
         req.body || rawBodyStr
     );
@@ -204,7 +204,7 @@ async function handlePayoutIPN(req, res) {
         return res.status(200).json({ code: 'SUCCESS', message: 'OK' });
     } catch (err) {
         logger.error('Pay2Pay payout IPN: processing error', { error: err.message, stack: err.stack });
-        pay2payLogger.logError('Payout IPN processing failed', { error: err.message, body: req.body });
+        payoutLogger.logError('Payout IPN processing failed', { error: err.message, body: req.body });
         // Return 200 to stop Pay2Pay from retrying
         return res.status(200).json({ code: 'SUCCESS', message: 'Logged internal error, stopping retries' });
     }
