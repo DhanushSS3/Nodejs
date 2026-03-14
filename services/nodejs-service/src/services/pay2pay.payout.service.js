@@ -107,8 +107,8 @@ const BANK_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
  * Calculate the fee breakdown for a Pay2Pay payout (Transfer 24/7).
  *
  * Fee logic mirrors the collection side:
- *   totalFeeVnd      = grossAmountVnd × (PAY2PAY_MERCHANT_FEE_PERCENT / 100)
- *   merchantFeeVnd   = totalFeeVnd × (PAY2PAY_MERCHANT_FEE_SHARE_PERCENT / 100)
+ *   totalFeeVnd      = grossAmountVnd × (PAY2PAY_PAYOUT_FEE_PERCENT / 100)
+ *   merchantFeeVnd   = totalFeeVnd × (PAY2PAY_PAYOUT_FEE_SHARE_PERCENT / 100)
  *   clientFeeVnd     = totalFeeVnd - merchantFeeVnd
  *   netAmountVnd     = grossAmountVnd - clientFeeVnd
  *   (client receives less; merchant absorbs its share as cost)
@@ -117,8 +117,8 @@ const BANK_LIST_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
  * @returns {Object} fee breakdown
  */
 function payoutFeeBreakdown(grossAmountVnd) {
-    const feePercent = parseFloat(process.env.PAY2PAY_MERCHANT_FEE_PERCENT || '0.5');
-    const merchantSharePercent = parseFloat(process.env.PAY2PAY_MERCHANT_FEE_SHARE_PERCENT || '50');
+    const feePercent = parseFloat(process.env.PAY2PAY_PAYOUT_FEE_PERCENT || '0.5');
+    const merchantSharePercent = parseFloat(process.env.PAY2PAY_PAYOUT_FEE_SHARE_PERCENT || '50');
     const clientSharePercent = 100 - merchantSharePercent;
 
     const totalFeeVnd = Math.round(grossAmountVnd * feePercent / 100);
