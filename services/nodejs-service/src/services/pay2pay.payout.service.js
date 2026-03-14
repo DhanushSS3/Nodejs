@@ -172,7 +172,7 @@ async function withTokenRetry(fn) {
     } catch (err) {
         if (isTokenRevoked(err)) {
             logger.warn('Pay2Pay payout: token revoked/expired detected, clearing cache and retrying once');
-            pay2payLogger.logError('Token revoked — forcing re-login', { originalError: err.message });
+            payoutLogger.logError('Token revoked — forcing re-login', { originalError: err.message });
             tokenService.clearTokenCache(); // force fresh login on next getAccessToken()
             // Short delay before retry
             await new Promise(r => setTimeout(r, 300));
@@ -197,7 +197,7 @@ async function listBanks() {
 
     const url = `${getDomain()}/merchant-transaction-service/api/v2.0/list_bank`;
     logger.info('Pay2Pay payout: fetching bank list from API', { url });
-    pay2payLogger.logRequest('POST /merchant-transaction-service/api/v2.0/list_bank', {});
+    payoutLogger.logRequest('POST /merchant-transaction-service/api/v2.0/list_bank', {});
 
     const doFetch = async () => {
         const headers = await tokenService.buildRequestHeaders(JSON.stringify({}));
@@ -207,7 +207,7 @@ async function listBanks() {
 
     try {
         const data = await withTokenRetry(doFetch);
-        pay2payLogger.logResponse('POST /merchant-transaction-service/api/v2.0/list_bank - SUCCESS', data);
+        payoutLogger.logResponse('POST /merchant-transaction-service/api/v2.0/list_bank - SUCCESS', data);
 
         if (!data || data.code !== 'SUCCESS' || !Array.isArray(data.data)) {
             throw new Error(`Pay2Pay listBanks returned unexpected response: ${JSON.stringify(data)}`);
@@ -218,7 +218,7 @@ async function listBanks() {
         logger.info(`Pay2Pay payout: bank list cached (${_bankListCache.length} banks)`);
         return _bankListCache;
     } catch (err) {
-        pay2payLogger.logError('POST /merchant-transaction-service/api/v2.0/list_bank - FAIL', err.response ? err.response.data : err.message);
+        payoutLogger.logError('POST /merchant-transaction-service/api/v2.0/list_bank - FAIL', err.response ? err.response.data : err.message);
         throw new Error(`Pay2Pay listBanks error: ${err.message}`);
     }
 }
@@ -282,12 +282,12 @@ async function getVerifiedKey(accessToken) {
     const url = `${getDomain()}/auth-service/api/v1.0/implore-auth`;
 
     logger.info('Pay2Pay payout: calling implore-auth', { username, apiRoute: body.apiRoute });
-    pay2payLogger.logRequest('POST /auth-service/api/v1.0/implore-auth', { phone: username, apiRoute: body.apiRoute, authMode: 'PASSCODE' });
+    payoutLogger.logRequest('POST /auth-service/api/v1.0/implore-auth', { phone: username, apiRoute: body.apiRoute, authMode: 'PASSCODE' });
 
     try {
         const response = await axios.post(url, body, { headers, timeout: 15000 });
         const data = response.data;
-        pay2payLogger.logResponse('POST /auth-service/api/v1.0/implore-auth - SUCCESS', data);
+        payoutLogger.logResponse('POST /auth-service/api/v1.0/implore-auth - SUCCESS', data);
 
         if (!data || data.code !== 'SUCCESS' || !data.data || !data.data.verifiedKey) {
             throw new Error(`Pay2Pay implore-auth failed: ${JSON.stringify(data)}`);
@@ -296,7 +296,7 @@ async function getVerifiedKey(accessToken) {
         logger.info('Pay2Pay payout: implore-auth success, verifiedKey received');
         return data.data.verifiedKey;
     } catch (err) {
-        pay2payLogger.logError('POST /auth-service/api/v1.0/implore-auth - FAIL', err.response ? err.response.data : err.message);
+        payoutLogger.logError('POST /auth-service/api/v1.0/implore-auth - FAIL', err.response ? err.response.data : err.message);
         throw new Error(`Pay2Pay implore-auth error: ${err.message}`);
     }
 }
@@ -341,12 +341,12 @@ async function executeTransfer247(verifiedKey, payload) {
         bankId: body.bankId,
         bankCode: body.bankCode,
     });
-    pay2payLogger.logRequest('POST /merchant-transaction-service/api/v2.0/transfer_247', body);
+    payoutLogger.logRequest('POST /merchant-transaction-service/api/v2.0/transfer_247', body);
 
     try {
         const response = await axios.post(url, body, { headers, timeout: 30000 });
         const data = response.data;
-        pay2payLogger.logResponse('POST /merchant-transaction-service/api/v2.0/transfer_247 - SUCCESS', data);
+        payoutLogger.logResponse('POST /merchant-transaction-service/api/v2.0/transfer_247 - SUCCESS', data);
 
         if (!data || (data.code !== 'SUCCESS' && data.code !== 'PROCESSING')) {
             throw new Error(`Pay2Pay transfer_247 returned error: ${JSON.stringify(data)}`);
@@ -360,7 +360,7 @@ async function executeTransfer247(verifiedKey, payload) {
 
         return data;
     } catch (err) {
-        pay2payLogger.logError('POST /merchant-transaction-service/api/v2.0/transfer_247 - FAIL', err.response ? err.response.data : err.message);
+        payoutLogger.logError('POST /merchant-transaction-service/api/v2.0/transfer_247 - FAIL', err.response ? err.response.data : err.message);
         throw new Error(`Pay2Pay transfer_247 error: ${err.message}`);
     }
 }
