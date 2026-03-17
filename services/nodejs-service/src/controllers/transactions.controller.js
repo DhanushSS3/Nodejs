@@ -1,7 +1,6 @@
 const { Op } = require('sequelize');
 const logger = require('../services/logger.service');
 const UserTransaction = require('../models/userTransaction.model');
-const MoneyRequest = require('../models/moneyRequest.model');
 
 function getAuthUser(req) {
   const user = req.user || {};
@@ -83,54 +82,13 @@ async function getUserTransactions(req, res) {
       created_at: r.created_at,
     }));
 
-    // Also include the user's money requests (withdraw/deposit) so that
-    // pending, approved, rejected, and on-hold requests appear in the
-    // wallet history alongside actual wallet movements.
-    let requestTypeFilter;
-    if (typeParam) {
-      if (typeParam === 'withdraw' || typeParam === 'deposit') {
-        requestTypeFilter = typeParam;
-      } else {
-        requestTypeFilter = null;
-      }
-    } else {
-      requestTypeFilter = { [Op.in]: ['deposit', 'withdraw'] };
-    }
-
-    let requestEntries = [];
-    if (requestTypeFilter) {
-      const requestWhere = {
-        user_id: userId,
-        type: requestTypeFilter,
-        status: { [Op.in]: ['pending', 'approved', 'rejected', 'on_hold'] },
-      };
-
-      const moneyRequests = await MoneyRequest.findAll({
-        where: requestWhere,
-        order: [['created_at', 'DESC']],
-        limit,
+    const combined = transactions
+      .map((t) => ({ ...t, source: 'wallet_transaction' }))
+      .sort((a, b) => {
+        const aTime = a.created_at instanceof Date ? a.created_at.getTime() : new Date(a.created_at).getTime();
+        const bTime = b.created_at instanceof Date ? b.created_at.getTime() : new Date(b.created_at).getTime();
+        return bTime - aTime;
       });
-
-      requestEntries = moneyRequests.map((r) => ({
-        transaction_id: r.request_id,
-        type: r.type,
-        amount: r.amount,
-        status: r.status,
-        reference_id: r.request_id,
-        notes: r.notes,
-        created_at: r.created_at,
-        source: 'money_request',
-      }));
-    }
-
-    const combined = [
-      ...transactions.map((t) => ({ ...t, source: 'wallet_transaction' })),
-      ...requestEntries,
-    ].sort((a, b) => {
-      const aTime = a.created_at instanceof Date ? a.created_at.getTime() : new Date(a.created_at).getTime();
-      const bTime = b.created_at instanceof Date ? b.created_at.getTime() : new Date(b.created_at).getTime();
-      return bTime - aTime;
-    });
 
     logger.transactionSuccess('user_transactions_get', { operationId, userId, count: combined.length, total: count });
 
