@@ -668,7 +668,7 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
                 where: {
                     reference_id: `REFUND_${moneyRequest.request_id}`,
                     user_id: targetAccountId,
-                    type: 'deposit',
+                    type: 'refund',
                 },
                 transaction: dbTransaction,
             });
@@ -692,7 +692,7 @@ async function processPayoutIPN(body, rawBodyStr, context = {}) {
                     transaction_id: refundTxnId,
                     user_id: targetAccountId,
                     user_type: targetAccountType,
-                    type: 'deposit',
+                    type: 'refund',
                     amount: refundAmount,
                     balance_before: currentBalance,
                     balance_after: newBalance,

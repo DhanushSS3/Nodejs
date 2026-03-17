@@ -46,13 +46,13 @@ async function getUserTransactions(req, res) {
 
     const { limit, offset } = parsePaging(req.query || {});
 
-    // Only allow transfer, deposit, and withdraw types (focusing on wallet movements)
-    const allowedTypes = ['transfer', 'deposit', 'withdraw'];
+    // Only allow transfer, deposit, withdraw, and refund types (focusing on wallet movements)
+    const allowedTypes = ['transfer', 'deposit', 'withdraw', 'refund'];
     const typeParam = (req.query?.type || '').toString().toLowerCase().trim();
     let typeFilter;
     if (typeParam) {
       if (!allowedTypes.includes(typeParam)) {
-        return res.status(400).json({ success: false, message: 'Invalid type. Allowed: transfer, deposit, withdraw' });
+        return res.status(400).json({ success: false, message: 'Invalid type. Allowed: transfer, deposit, withdraw, refund' });
       }
       typeFilter = typeParam;
     } else {

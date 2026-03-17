@@ -254,10 +254,30 @@ class MoneyRequestService {
   async getPendingRequests(filters = {}) {
     try {
       const { type, status = 'pending', limit = 50, offset = 0 } = filters;
-      
-      const whereClause = { status };
+
+      let whereClause;
       if (type) {
-        whereClause.type = type;
+        // When admin lists withdrawals for review, also show Pay2Pay failed payouts
+        // so the UI can offer a retry option.
+        if (String(type).toLowerCase() === 'withdraw') {
+          whereClause = {
+            type: 'withdraw',
+            [Op.or]: [
+              { status },
+              { payout_status: 'FAILED' },
+            ],
+          };
+        } else {
+          whereClause = { status, type };
+        }
+      } else {
+        // No type filter: keep normal pending list but also include failed payouts for withdrawals.
+        whereClause = {
+          [Op.or]: [
+            { status },
+            { type: 'withdraw', payout_status: 'FAILED' },
+          ],
+        };
       }
 
       const { count, rows } = await MoneyRequest.findAndCountAll({
@@ -280,6 +300,7 @@ class MoneyRequestService {
           const user = data.user || row.user || null;
           return {
             ...data,
+            payout_status: data.payout_status,
             user_email: user && user.email ? user.email : null,
             user_account_number: user && user.account_number ? user.account_number : null
           };

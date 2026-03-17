@@ -317,6 +317,8 @@ class TakeProfitService:
         cfg = await fetch_user_config(user_type, user_id)
         group = cfg.get("group") or "Standard"
         sending_orders = (cfg.get("sending_orders") or "").strip().lower()
+        account_number = cfg.get("account_number")
+        account_number = str(account_number) if account_number is not None else None
         if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
             flow = "local"
         elif user_type == "live" and sending_orders == "barclays":
