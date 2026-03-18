@@ -52,6 +52,12 @@ class SwapCalculationService {
     const startTime = Date.now();
     
     try {
+      // Don't apply swap charges for pending orders
+      if (order.order_status && !['OPEN', 'PARTIAL_FILLED'].includes(order.order_status)) {
+        swapDebugLogger.info(`[DEBUG] Swap not applicable for pending order ${order.order_id} (status: ${order.order_status})`);
+        return 0;
+      }
+
       // Get group configuration for the symbol
       const groupConfig = await groupsCacheService.getGroup(order.group_name, order.symbol);
       

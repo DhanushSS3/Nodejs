@@ -28,6 +28,7 @@ const tokenService = require('./pay2pay.token.service');
 const walletService = require('./wallet.service');
 const idGenerator = require('./idGenerator.service');
 const redisUserCache = require('./redis.user.cache.service');
+const pay2payFxService = require('./pay2pay.fx.service');
 const sequelize = require('../config/db');
 const {
     GatewayPayment,
@@ -391,12 +392,19 @@ async function dispatchPayout(moneyRequest, adminId) {
     });
 
     const details = moneyRequest.method_details || {};
-    const { bankId, bankRefNumber, bankRefName, bankCode, binCode, amountVnd } = details;
+    let { bankId, bankRefNumber, bankRefName, bankCode, binCode, amountVnd } = details;
 
     if (!bankId || !bankRefNumber || !bankRefName || !bankCode) {
         throw new Error(
             'Incomplete bank details in method_details. Required: bankId, bankRefNumber, bankRefName, bankCode'
         );
+    }
+
+    // Always recalculate amountVnd using the server-side withdrawal FX rate
+    if (moneyRequest.amount) {
+        const fxResult = await pay2payFxService.usdToVnd(Math.abs(parseFloat(moneyRequest.amount)));
+        amountVnd = fxResult.vndAmount;
+        logger.info(`[${operationId}] Re-calculated amountVnd from USD using withdrawal rate ${fxResult.rate}`, { amountUsd: moneyRequest.amount, amountVnd });
     }
 
     if (!amountVnd || Number(amountVnd) <= 0) {

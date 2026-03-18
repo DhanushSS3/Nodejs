@@ -645,7 +645,7 @@ class SwapSchedulerService {
           where: { order_id: orderId },
           attributes: [
             'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
-            'swap', 'order_user_id', 'created_at'
+            'swap', 'order_user_id', 'created_at', 'order_status'
           ],
           include: [{
             model: UserModel,
@@ -671,7 +671,7 @@ class SwapSchedulerService {
           where: { order_id: orderId },
           attributes: [
             'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
-            'swap', 'order_user_id', 'created_at'
+            'swap', 'order_user_id', 'created_at', 'order_status'
           ],
           include: [{
             model: UserModel,
@@ -697,7 +697,7 @@ class SwapSchedulerService {
           where: { order_id: orderId },
           attributes: [
             'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
-            'swap', 'order_user_id', 'created_at'
+            'swap', 'order_user_id', 'created_at', 'order_status'
           ]
         });
 
@@ -720,7 +720,7 @@ class SwapSchedulerService {
           where: { order_id: orderId },
           attributes: [
             'id', 'order_id', 'symbol', 'order_type', 'order_quantity',
-            'swap', 'order_user_id', 'created_at'
+            'swap', 'order_user_id', 'created_at', 'order_status'
           ]
         });
 
@@ -741,6 +741,19 @@ class SwapSchedulerService {
 
       if (!order) {
         throw new Error(`Order ${orderId} not found`);
+      }
+
+      if (order.order_status && !['OPEN', 'PARTIAL_FILLED'].includes(order.order_status)) {
+        logger.info(`Swap skipped for order ${orderId} because it is in pending state: ${order.order_status}`);
+        return {
+          order_id: orderId,
+          group_name: userGroup,
+          current_swap: parseFloat(order.swap || 0),
+          calculated_swap: 0,
+          new_swap: parseFloat(order.swap || 0),
+          skipped: true,
+          reason: `Pending state: ${order.order_status}`
+        };
       }
 
       const swapCharge = await swapCalculationService.calculateSwapCharge(order, targetDate);
