@@ -532,24 +532,6 @@ class OrderCloser:
                 await add_lifecycle_id(order_id, close_id, "close_id")
             except Exception as e:
                 logger.warning("add_lifecycle_id close_id failed: %s", e)
-            
-            # Persist close_id into canonical order_data for downstream consumers (Node DB mapping fallback)
-            try:
-                await redis_cluster.hset(f"order_data:{order_id}", mapping={"close_id": close_id})
-            except Exception:
-                pass
-            
-            # 🆕 CRITICAL: Save close_id to database IMMEDIATELY before sending to provider
-            # This ensures close_id is persisted even if provider confirmation fails
-            try:
-                await _save_close_id_to_database(order_id, close_id, user_type, user_id)
-            except Exception as e:
-                logger.error(
-                    "[CLOSE:CLOSE_ID_DB_SAVE_ERROR] order_id=%s close_id=%s error=%s",
-                    order_id, close_id, str(e)
-                )
-                # Continue with close even if DB save fails
-                # The close_id will still be in Redis and can be recovered
         if payload.get("stoploss_cancel_id"):
             try:
                 await add_lifecycle_id(order_id, str(payload.get("stoploss_cancel_id")), "stoploss_cancel_id")
@@ -690,6 +672,23 @@ class OrderCloser:
         okc, via_c = await send_provider_order(provider_close)
         if not okc:
             return {"ok": False, "reason": f"provider_close_send_failed:{via_c}"}
+
+        # 🆕 CRITICAL: Save close_id to Redis and Database AFTER successfully sending to provider
+        # This ensures we don't save until actually dispatched, allowing retry on crash
+        if payload.get("close_id"):
+            close_id = str(payload.get("close_id"))
+            try:
+                await redis_cluster.hset(f"order_data:{order_id}", mapping={"close_id": close_id})
+            except Exception:
+                pass
+            
+            try:
+                await _save_close_id_to_database(order_id, close_id, user_type, user_id)
+            except Exception as e:
+                logger.error(
+                    "[CLOSE:CLOSE_ID_DB_SAVE_ERROR] order_id=%s close_id=%s error=%s",
+                    order_id, close_id, str(e)
+                )
 
         # If there were NO cancel steps, return immediately without waiting for provider ack
         if len(cancel_steps) == 0:

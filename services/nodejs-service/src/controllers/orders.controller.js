@@ -1312,37 +1312,49 @@ async function closeOrder(req, res) {
       ? (canonical.stop_loss != null && Number(canonical.stop_loss) > 0)
       : (sqlRow ? (sqlRow.stop_loss != null && Number(sqlRow.stop_loss) > 0) : false);
 
-    // 🆕 DUPLICATE CLOSE PREVENTION: Check if close already in progress
-    // Check 1: SQL row already has close_id (from previous request or autocutoff)
-    if (sqlRow && sqlRow.close_id && String(sqlRow.close_id).trim()) {
-      logger.warn('Close already initiated - close_id exists in SQL', {
-        order_id,
-        user_id: req_user_id,
-        user_type: req_user_type,
-        existing_close_id: String(sqlRow.close_id)
-      });
-      return res.status(409).json({
-        success: false,
-        message: 'Close request already in progress for this order',
-        close_id: String(sqlRow.close_id),
-        error_code: 'CLOSE_ALREADY_IN_PROGRESS'
-      });
+    let isProviderFlow = false;
+    try {
+      const userCfgKey = `user:{${req_user_type}:${req_user_id}}:config`;
+      const ucfg = await redisCluster.hgetall(userCfgKey);
+      const so = (ucfg && ucfg.sending_orders) ? String(ucfg.sending_orders).trim().toLowerCase() : null;
+      isProviderFlow = (so === 'barclays');
+    } catch (_) {
+      isProviderFlow = false;
     }
 
-    // Check 2: Redis canonical has close_id
-    if (canonical && canonical.close_id && String(canonical.close_id).trim()) {
-      logger.warn('Close already initiated - close_id exists in Redis canonical', {
-        order_id,
-        user_id: req_user_id,
-        user_type: req_user_type,
-        existing_close_id: String(canonical.close_id)
-      });
-      return res.status(409).json({
-        success: false,
-        message: 'Close request already in progress for this order',
-        close_id: String(canonical.close_id),
-        error_code: 'CLOSE_ALREADY_IN_PROGRESS'
-      });
+    // 🆕 DUPLICATE CLOSE PREVENTION: Check if close already in progress
+    if (isProviderFlow) {
+      // Check 1: SQL row already has close_id (from previous request or autocutoff)
+      if (sqlRow && sqlRow.close_id && String(sqlRow.close_id).trim()) {
+        logger.warn('Close already initiated - close_id exists in SQL', {
+          order_id,
+          user_id: req_user_id,
+          user_type: req_user_type,
+          existing_close_id: String(sqlRow.close_id)
+        });
+        return res.status(409).json({
+          success: false,
+          message: 'Close request already in progress for this order',
+          close_id: String(sqlRow.close_id),
+          error_code: 'CLOSE_ALREADY_IN_PROGRESS'
+        });
+      }
+
+      // Check 2: Redis canonical has close_id
+      if (canonical && canonical.close_id && String(canonical.close_id).trim()) {
+        logger.warn('Close already initiated - close_id exists in Redis canonical', {
+          order_id,
+          user_id: req_user_id,
+          user_type: req_user_type,
+          existing_close_id: String(canonical.close_id)
+        });
+        return res.status(409).json({
+          success: false,
+          message: 'Close request already in progress for this order',
+          close_id: String(canonical.close_id),
+          error_code: 'CLOSE_ALREADY_IN_PROGRESS'
+        });
+      }
     }
 
     // Check 3: Redis pending lock exists
@@ -1407,7 +1419,8 @@ async function closeOrder(req, res) {
       // Reuse fetched sqlRow if available
       const rowToUpdate = sqlRow || await OrderModel.findOne({ where: { order_id } });
       if (rowToUpdate) {
-        const idUpdates = { close_id };
+        const idUpdates = {};
+        if (!isProviderFlow) idUpdates.close_id = close_id;
         if (takeprofit_cancel_id) idUpdates.takeprofit_cancel_id = takeprofit_cancel_id;
         if (stoploss_cancel_id) idUpdates.stoploss_cancel_id = stoploss_cancel_id;
         idUpdates.status = incomingStatus; // persist whatever frontend sent as status
