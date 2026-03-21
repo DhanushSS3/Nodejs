@@ -28,6 +28,7 @@ from app.services.logging.provider_logger import (
     get_provider_errors_logger,
     log_provider_stats
 )
+from app.services.orders.order_registry import replace_provider_id
 
 # Initialize dedicated loggers
 logger = get_dispatcher_logger()
@@ -116,7 +117,7 @@ def _select_worker_queue(status: Optional[str]) -> Optional[str]:
     return None
 
 
-async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], canonical_order_id: str, provider_order_id: str = None) -> Dict[str, Any]:
+async def _compose_payload(report: Dict[str, Any], order_data: Dict[str, Any], canonical_order_id: str, provider_order_id: Optional[str] = None) -> Dict[str, Any]:
     # Use the provider_order_id passed from dispatcher, or extract from report as fallback
     if not provider_order_id:
         provider_order_id = (
@@ -159,14 +160,14 @@ class Dispatcher:
         self._consumer_tag: Optional[str] = None
         
         # Statistics tracking
-        self._stats = {
+        self._stats: Dict[str, Any] = {
             'start_time': time.time(),
             'messages_processed': 0,
             'messages_routed': 0,
             'messages_dlq': 0,
             'routing_errors': 0,
             'redis_errors': 0,
-            'last_message_time': None
+            'last_message_time': 0.0
         }
 
     async def connect(self):
@@ -275,6 +276,23 @@ class Dispatcher:
                     )
                     return
                 
+                # Check for recovery mode ID replacement before further processing
+                if str(report.get("mode") or "").strip().lower() == "recovery":
+                    recovery_new_id = report.get("_recovery_new_id")
+                    recovery_old_id = report.get("order_id")
+                    if recovery_old_id and recovery_new_id:
+                        logger.info(
+                            "[DISPATCH:RECOVERY] Processing recovery mode for old_id=%s to new_id=%s", 
+                            recovery_old_id, recovery_new_id
+                        )
+                        replace_result = await replace_provider_id(str(recovery_old_id), str(recovery_new_id))
+                        if replace_result.get("ok"):
+                            logger.info("[DISPATCH:RECOVERY_SUCCESS] %s", replace_result)
+                            # Update the report's order_id so downstream processing and workers use the new ID
+                            report["order_id"] = recovery_new_id
+                        else:
+                            logger.error("[DISPATCH:RECOVERY_FAILED] %s", replace_result)
+
                 # Check if provider_connection already resolved canonical_order_id
                 canonical_order_id = report.get("canonical_order_id")
                 provider_order_id = report.get("provider_order_id") or report.get("order_id")

@@ -89,3 +89,78 @@ async def get_canonical_order_by_any_id(any_id: str) -> Optional[Dict[str, Any]]
     except Exception as e:
         logger.error("get_canonical_order_by_any_id error for %s: %s", any_id, e)
         return None
+
+
+async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
+    """
+    Replace an old provider ID with a new provider ID (e.g., after a rollover or restart).
+    Updates the global lookup and the specific lifecycle ID field in the canonical order.
+    """
+    if not old_id or not new_id:
+        return {"ok": False, "reason": "Missing old_id or new_id"}
+
+    try:
+        # 1. Resolve canonical order ID from old_id
+        canonical_order_id = await redis_cluster.get(f"global_order_lookup:{old_id}")
+        
+        if not canonical_order_id:
+            # If not in lookup, check if old_id is the canonical order ID itself
+            exists = await redis_cluster.exists(f"order_data:{old_id}")
+            if exists:
+                canonical_order_id = old_id
+            else:
+                return {"ok": False, "reason": f"Canonical order not found for old_id: {old_id}"}
+        
+        canonical_order_id = str(canonical_order_id)
+        order_hash_key = f"order_data:{canonical_order_id}"
+        
+        # 2. Fetch the current order data to find where old_id is used
+        order_data = await redis_cluster.hgetall(order_hash_key)
+        if not order_data:
+            return {"ok": False, "reason": f"Order data not found for canonical ID: {canonical_order_id}"}
+            
+        # 3. Identify which lifecycle field holds the old_id based on prefix
+        old_id_str = str(old_id)
+        if old_id_str.startswith("SL"):
+            matched_field = "stoploss_id"
+        elif old_id_str.startswith("TP"):
+            matched_field = "takeprofit_id"
+        else:
+            # No prefix (purely numeric) means it's a pending order replacement
+            matched_field = "provider_order_id"
+            
+        # Prepare pipeline for atomic updates
+        pipe = redis_cluster.pipeline()
+        
+        # 4. Map the new_id to the canonical order ID
+        pipe.set(f"global_order_lookup:{new_id}", canonical_order_id)
+        
+        # 5. Always securely map the new ID to the corresponding explicit field
+        pipe.hset(order_hash_key, matched_field, new_id)
+                
+        # 6. Update associated_ids list safely
+        try:
+            raw_associated = order_data.get("associated_ids")
+            import json
+            ids_list = json.loads(raw_associated) if raw_associated else []
+            if old_id in ids_list:
+                ids_list.remove(old_id)
+            if new_id not in ids_list:
+                ids_list.append(new_id)
+            pipe.hset(order_hash_key, "associated_ids", json.dumps(ids_list))
+        except Exception as e:
+            logger.warning(f"Failed to parse associated_ids for {canonical_order_id}: {e}")
+            
+        # We intentionally keep global_order_lookup:{old_id} around intact to not break delayed reports.
+
+        await pipe.execute()
+        return {
+            "ok": True, 
+            "canonical_order_id": canonical_order_id,
+            "matched_field": matched_field,
+            "note": "Replaced ID successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"replace_provider_id failed for old_id={old_id} new_id={new_id}: {e}")
+        return {"ok": False, "reason": str(e)}

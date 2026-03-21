@@ -40,7 +40,13 @@ function generateWorkerId() {
     .digest('hex');
   
   // Extract 10 bits (0-1023) for worker ID
-  const workerId = parseInt(hash.substring(0, 3), 16) % 1024;
+  let workerId = parseInt(hash.substring(0, 3), 16) % 1024;
+  
+  // Reserve worker IDs ending in 99 for the bridge to completely eliminate collision chances
+  if (workerId % 100 === 99) {
+    workerId = (workerId + 1) % 1024;
+  }
+  
   return workerId;
 }
 
