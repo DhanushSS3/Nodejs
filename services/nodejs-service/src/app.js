@@ -85,15 +85,9 @@ app.use(cors({
     return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Cache-Control',
-    'X-File-Name'
-  ],
+  // Removing allowedHeaders entirely allows the 'cors' package to naturally
+  // reflect whatever the client requests via Access-Control-Request-Headers.
+  // This prevents CORS failures when Admin portals send extra telemetry/custom headers.
   credentials: true,
   preflightContinue: false,
   optionsSuccessStatus: 204
