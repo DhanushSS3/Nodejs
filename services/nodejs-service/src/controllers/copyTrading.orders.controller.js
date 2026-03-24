@@ -75,11 +75,24 @@ function _isMarketOpenByType(typeVal) {
   try {
     const t = parseInt(typeVal, 10);
     if (!Number.isNaN(t) && t === 4) {
-      return true;
+      return true; // Crypto is 24/7
     }
   } catch (_) { /* ignore */ }
-  const day = new Date().getUTCDay(); // 0 Sunday, 6 Saturday
-  return day !== 0 && day !== 6;
+  
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 Sunday, 5 Friday, 6 Saturday
+  const hour = now.getUTCHours();
+  
+  // Closed all of Saturday
+  if (day === 6) return false;
+  
+  // Closed on Friday from 22:00 UTC onwards
+  if (day === 5 && hour >= 22) return false;
+  
+  // Closed on Sunday until 22:00 UTC
+  if (day === 0 && hour < 22) return false;
+  
+  return true;
 }
 
 async function determineStrategyProviderFlow(strategyProviderId) {
