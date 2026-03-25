@@ -413,9 +413,17 @@ class ProviderConnectionManager:
                         pass
             except asyncio.IncompleteReadError:
                 logger.warning("Provider connection closed by server")
+                try:
+                    _DISCONNECT_LOG.warning("Provider connection closed by server (EOF/IncompleteReadError)")
+                except Exception:
+                    pass
                 break
             except Exception as e:
                 logger.error("read_loop error: %s", e)
+                try:
+                    _DISCONNECT_LOG.error(f"read_loop error causing disconnect: {e}")
+                except Exception:
+                    pass
                 break
 
     async def _send_loop(self):
@@ -423,6 +431,8 @@ class ProviderConnectionManager:
             payload = await self._send_queue.get()
             if payload is None:
                 continue
+            
+            # Phase 1: Serialization (Internal errors handled separately from network errors)
             try:
                 # Ensure minimal required fields
                 if "type" not in payload:
@@ -439,6 +449,12 @@ class ProviderConnectionManager:
                     except Exception:
                         pass
                 data = _pack(payload)
+            except Exception as e:
+                logger.error("send_loop payload pack error (dropping payload): %s", e)
+                continue
+
+            # Phase 2: Send over socket (Trigger reconnect on failure)
+            try:
                 async with self._write_lock:
                     await self._connected.wait()
                     # Measure send time (write + drain)
@@ -446,7 +462,7 @@ class ProviderConnectionManager:
                     self.writer.write(data)
                     await self.writer.drain()
                     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-                    # TX log success
+                    
                     try:
                         _PROVIDER_TX_LOG.info(orjson.dumps({
                             "transport": self.transport,
@@ -460,8 +476,12 @@ class ProviderConnectionManager:
                             f"transport={self.transport} dir=out status=sent elapsed_ms={elapsed_ms:.2f} msg={payload!r}"
                         )
             except Exception as e:
-                logger.error("send_loop error: %s", e)
-                # TX log failure
+                logger.error("send_loop socket write error: %s", e)
+                try:
+                    _DISCONNECT_LOG.error(f"send_loop socket write error dropping connection: {e}")
+                except Exception:
+                    pass
+                
                 try:
                     elapsed_ms = (time.perf_counter() - t0) * 1000.0 if 't0' in locals() else 0.0
                 except Exception:
@@ -477,16 +497,15 @@ class ProviderConnectionManager:
                         "message": payload,
                     }).decode())
                 except Exception:
-                    _PROVIDER_TX_LOG.info(
-                        f"transport={self.transport} dir=out status=failed stage=send elapsed_ms={elapsed_ms:.2f} error={e!s} msg={payload!r}"
-                    )
-                # Requeue once on failure if disconnected
+                    pass
+                
+                # Requeue payload so it can be sent after reconnect completes
                 try:
-                    if not self._connected.is_set():
-                        await asyncio.sleep(0.2)
-                        await self._send_queue.put(payload)
+                    await self._send_queue.put(payload)
                 except Exception:
                     pass
+                # MUST break the loop to exit _send_loop so run() reconnects
+                break
 
     async def run(self):
         backoff = 1.0
@@ -502,7 +521,8 @@ class ProviderConnectionManager:
                 read_task = asyncio.create_task(self._read_loop(), name="provider_read")
                 send_task = asyncio.create_task(self._send_loop(), name="provider_send")
                 self._tasks = [read_task, send_task]
-                done, pending = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_EXCEPTION)
+                # Changed to FIRST_COMPLETED so that if either task breaks out due to a connection error, they properly trigger a reconnect
+                done, pending = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
                 for t in pending:
                     t.cancel()
                     try:
@@ -511,7 +531,11 @@ class ProviderConnectionManager:
                         pass
             finally:
                 await self._close()
-                logger.info("Reconnecting to provider...")
+                logger.info("Connection task completed/failed. Reconnecting to provider...")
+                try:
+                    _DISCONNECT_LOG.info("Reconnecting to provider...")
+                except Exception:
+                    pass
 
     async def stop(self):
         self._stop = True
@@ -605,3 +629,29 @@ def _get_provider_tx_logger() -> logging.Logger:
 
 
 _PROVIDER_TX_LOG = _get_provider_tx_logger()
+
+# ------------- Dedicated Disconnect file logger -------------
+def _get_provider_disconnect_logger() -> logging.Logger:
+    lg = logging.getLogger("provider.disconnect")
+    # Avoid adding duplicate handlers
+    has_handler = False
+    for h in lg.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "_provider_disconnect", False):
+            has_handler = True
+            break
+    if not has_handler:
+        try:
+            base_dir = Path(__file__).resolve().parents[3]  # .../services/python-service
+        except Exception:
+            base_dir = Path('.')
+        log_dir = base_dir / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / 'provider_disconnects.log'
+        fh = RotatingFileHandler(str(log_file), maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+        fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        fh._provider_disconnect = True  # marker
+        lg.addHandler(fh)
+        lg.setLevel(logging.INFO)
+    return lg
+
+_DISCONNECT_LOG = _get_provider_disconnect_logger()
