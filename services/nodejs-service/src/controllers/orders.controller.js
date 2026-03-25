@@ -2863,6 +2863,121 @@ async function getClosedOrders(req, res) {
   }
 }
 
+async function adminCloseCustomPrice(req, res) {
+  const operationId = `admin_close_custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let userLock;
+  try {
+    const body = req.body || {};
+    const req_user_type = normalizeStr(body.user_type).toLowerCase();
+    const order_id = normalizeStr(body.order_id);
+    const req_user_id = normalizeStr(body.user_id);
+    const provided_close_price = toNumber(body.close_price);
+
+    if (!order_id) return res.status(400).json({ success: false, message: 'order_id is required' });
+    if (!req_user_type || !['live', 'demo', 'strategy_provider', 'copy_follower'].includes(req_user_type)) {
+      return res.status(400).json({ success: false, message: 'user_type must be live, demo, strategy_provider, or copy_follower' });
+    }
+    if (!req_user_id) return res.status(400).json({ success: false, message: 'user_id is required' });
+    if (Number.isNaN(provided_close_price) || !(provided_close_price > 0)) {
+      return res.status(400).json({ success: false, message: 'close_price must be greater than 0' });
+    }
+
+    userLock = await acquireUserLock(req_user_type, req_user_id);
+    if (!userLock) {
+      return res.status(409).json({ success: false, message: 'User lock busy. Please retry shortly.' });
+    }
+
+    let ctx;
+    try {
+      ctx = await resolveOpenOrder({
+        order_id,
+        user_id: req_user_id,
+        user_type: req_user_type,
+        symbolReq: normalizeStr(body.symbol).toUpperCase(),
+        orderTypeReq: normalizeStr(body.order_type).toUpperCase()
+      });
+    } catch (e) {
+      if (e && e.code === 'ORDER_NOT_FOUND') return res.status(404).json({ success: false, message: 'Order not found' });
+      if (e && e.code === 'ORDER_NOT_BELONG_TO_USER') return res.status(403).json({ success: false, message: 'Order does not belong to user' });
+      if (e && e.code === 'ORDER_NOT_OPEN') return res.status(409).json({ success: false, message: `Order is not OPEN` });
+      return res.status(500).json({ success: false, message: 'Failed to resolve order' });
+    }
+
+    const canonical = ctx.canonical;
+    const sqlRow = ctx.row;
+    let symbol = ctx.symbol || (canonical && canonical.symbol) || (sqlRow && (sqlRow.symbol || sqlRow.order_company_name)) || body.symbol;
+    let order_type = ctx.order_type || (canonical && canonical.order_type) || (sqlRow && sqlRow.order_type) || body.order_type;
+
+    const takeprofit_cancel_id = await idGenerator.generateTakeProfitCancelId();
+    const stoploss_cancel_id = await idGenerator.generateStopLossCancelId();
+    const close_id = await idGenerator.generateCloseOrderId();
+
+    const OrderModel = req_user_type === 'live' ? LiveUserOrder : DemoUserOrder;
+    const rowToUpdate = sqlRow || await OrderModel.findOne({ where: { order_id } });
+    if (rowToUpdate) {
+      const idUpdates = { close_id, status: 'CLOSED' };
+      if (takeprofit_cancel_id) idUpdates.takeprofit_cancel_id = takeprofit_cancel_id;
+      if (stoploss_cancel_id) idUpdates.stoploss_cancel_id = stoploss_cancel_id;
+      await rowToUpdate.update(idUpdates);
+    }
+
+    await orderLifecycleService.addLifecycleId(order_id, 'close_id', close_id, `Admin custom close`);
+    
+    // Set Redis lock to prevent duplicate requests (60s TTL = typical provider response time)
+    try {
+      const closePendingKey = `order_close_pending:${order_id}`;
+      const lockValue = JSON.stringify({
+        close_id,
+        user_id: req_user_id,
+        user_type: req_user_type,
+        timestamp: Date.now()
+      });
+      await redisCluster.setex(closePendingKey, 60, lockValue);
+    } catch (redisErr) {}
+    
+    const pyPayload = {
+      symbol: String(symbol).toUpperCase(),
+      order_type: String(order_type).toUpperCase(),
+      user_id: req_user_id,
+      user_type: req_user_type,
+      order_id,
+      status: 'CLOSED',
+      order_status: 'CLOSED',
+      close_id,
+      takeprofit_cancel_id,
+      stoploss_cancel_id,
+      force_local_close: true,
+      override_close_price: provided_close_price
+    };
+
+    const baseUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+    try {
+      const pyResp = await pythonServiceAxios.post(
+        `${baseUrl}/api/orders/close`,
+        pyPayload,
+        { timeout: 20000 }
+      );
+      return res.status(200).json({ success: true, data: pyResp.data?.data || pyResp.data, order_id });
+    } catch (err) {
+      try {
+        const closePendingKey = `order_close_pending:${order_id}`;
+        await redisCluster.del(closePendingKey);
+      } catch (e) {}
+
+      const statusCode = err?.response?.status || 500;
+      const detail = err?.response?.data || { reason: 'python_unreachable' };
+      return res.status(statusCode).json({ success: false, order_id, reason: detail?.reason || 'close_failed', error: detail });
+    }
+  } catch (error) {
+    logger.error('adminCloseCustomPrice internal error', { error: error.message, operationId });
+    return res.status(500).json({ success: false, message: 'Internal server error', operationId });
+  } finally {
+    if (userLock) {
+      await releaseUserLock(userLock);
+    }
+  }
+}
+
 module.exports = {
   placeInstantOrder,
   placePendingOrder,
@@ -2874,5 +2989,6 @@ module.exports = {
   cancelTakeProfit,
   cancelPendingOrder,
   modifyPendingOrder,
-  getClosedOrders
+  getClosedOrders,
+  adminCloseCustomPrice
 };

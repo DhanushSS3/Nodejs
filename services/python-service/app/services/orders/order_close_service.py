@@ -301,8 +301,13 @@ class OrderCloser:
         if entry_price is None:
             return {"ok": False, "reason": "missing_entry_price"}
 
+        force_local_close = payload.get("force_local_close") is True
+        override_close_price_val = _safe_float(payload.get("override_close_price"))
+
         # Determine execution flow
-        if (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
+        if force_local_close:
+            flow = "local"
+        elif (user_type == "demo") or (user_type == "live" and sending_orders == "rock"):
             flow = "local"
         elif user_type == "live" and sending_orders == "barclays":
             flow = "provider"
@@ -364,26 +369,33 @@ class OrderCloser:
                 removed_triggers = await remove_order_triggers(order_id)
             except Exception:
                 removed_triggers = None
-            # Determine close price from market: BUY->bid, SELL->ask
-            close_price = await _get_market_close_price(symbol, order_type)
-            if close_price is None:
-                return {"ok": False, "reason": "missing_market_price"}
-
-            # Half-spread adjustment for local close
-            try:
-                spread = _safe_float(g.get("spread"))
-                spread_pip = _safe_float(g.get("spread_pip"))
-                half_spread = float((spread or 0.0) * (spread_pip or 0.0) / 2.0)
-            except Exception:
+            
+            if override_close_price_val is not None:
+                close_price = override_close_price_val
+                # If override price is provided, we use it directly as the close price without applying spread
+                close_price_adj = close_price
                 half_spread = 0.0
-            try:
-                cp = float(close_price)
-            except Exception:
-                cp = 0.0
-            if order_type == "BUY":
-                close_price_adj = cp - float(half_spread)
             else:
-                close_price_adj = cp + float(half_spread)
+                # Determine close price from market: BUY->bid, SELL->ask
+                close_price = await _get_market_close_price(symbol, order_type)
+                if close_price is None:
+                    return {"ok": False, "reason": "missing_market_price"}
+
+                # Half-spread adjustment for local close
+                try:
+                    spread = _safe_float(g.get("spread"))
+                    spread_pip = _safe_float(g.get("spread_pip"))
+                    half_spread = float((spread or 0.0) * (spread_pip or 0.0) / 2.0)
+                except Exception:
+                    half_spread = 0.0
+                try:
+                    cp = float(close_price)
+                except Exception:
+                    cp = 0.0
+                if order_type == "BUY":
+                    close_price_adj = cp - float(half_spread)
+                else:
+                    close_price_adj = cp + float(half_spread)
 
             # Commission exit
             commission_exit = compute_exit_commission(

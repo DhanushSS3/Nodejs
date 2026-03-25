@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 const { ensureTradingUserState } = require('../middlewares/tradingAuth.middleware');
 const ordersController = require('../controllers/orders.controller');
+const { orderActionLimiter } = require('../middlewares/rateLimit.middleware');
 
 // POST /api/orders/instant/place
 /**
@@ -92,7 +93,7 @@ const ordersController = require('../controllers/orders.controller');
  *       500:
  *         description: Internal server error
  */
-router.post('/instant/place', authenticateJWT, ensureTradingUserState, ordersController.placeInstantOrder);
+router.post('/instant/place', orderActionLimiter, authenticateJWT, ensureTradingUserState, ordersController.placeInstantOrder);
 
 // POST /api/orders/pending/place
 /**
@@ -163,7 +164,7 @@ router.post('/instant/place', authenticateJWT, ensureTradingUserState, ordersCon
  *       500:
  *         description: Internal server error
  */
-router.post('/pending/place', authenticateJWT, ensureTradingUserState, ordersController.placePendingOrder);
+router.post('/pending/place', orderActionLimiter, authenticateJWT, ensureTradingUserState, ordersController.placePendingOrder);
 
 // POST /api/orders/pending/cancel
 /**

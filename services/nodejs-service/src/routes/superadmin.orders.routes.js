@@ -291,6 +291,7 @@ router.post('/pending/cancel', ctrl.cancelPendingOrder);
 router.post('/pending/modify', ctrl.modifyPendingOrder);
 
 router.post('/close', ctrl.closeOrder);
+router.post('/close-custom-price', require('../controllers/orders.controller').adminCloseCustomPrice);
 
 router.post('/mam/place-instant', ctrl.placeMamInstantOrder);
 
