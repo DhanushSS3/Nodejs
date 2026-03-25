@@ -58,6 +58,8 @@ class CloseOrderRequest(BaseModel):
     stoploss_cancel_id: str | None = Field(None, description="Lifecycle cancel id for stoploss (provider flow)")
     takeprofit_cancel_id: str | None = Field(None, description="Lifecycle cancel id for takeprofit (provider flow)")
     close_price: float | None = Field(None, description="Optional proposed close price; local flow will fetch from market")
+    force_local_close: bool | None = Field(None, description="Force local close, bypassing provider dispatch (Superadmin flow)")
+    override_close_price: float | None = Field(None, description="Explicit override execution price (Superadmin flow)")
 
     @field_validator("symbol")
     def symbol_upper(cls, v: str) -> str:
