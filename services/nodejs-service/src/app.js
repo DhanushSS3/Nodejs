@@ -44,6 +44,9 @@ const vietnamWithdrawalRoutes = require('./routes/vietnam.withdrawal.routes');
 
 const app = express();
 
+// Crucial for reverse-proxy environments to extract real IP instead of 127.0.0.1
+app.set('trust proxy', 1);
+
 // Request timeout middleware (30 seconds)
 app.use(timeoutHandler(30000));
 
