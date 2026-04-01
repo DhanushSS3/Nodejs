@@ -28,7 +28,14 @@ from app.services.logging.provider_logger import (
     get_provider_errors_logger,
     log_provider_stats
 )
-from app.services.orders.order_registry import replace_provider_id
+from app.services.orders.order_registry import (
+    get_order_by_lifecycle_id,
+    replace_provider_id,
+    get_order_id_from_execution_report,
+    resolve_canonical_order_id,
+    add_lifecycle_id,
+    trigger_db_id_replacement,
+)
 
 # Initialize dedicated loggers
 logger = get_dispatcher_logger()
@@ -185,21 +192,31 @@ class Dispatcher:
         
         logger.info("Redis status: %s", redis_status)
         
-        self._conn = await aio_pika.connect_robust(RABBITMQ_URL)
-        self._channel = await self._conn.channel()
-        await self._channel.set_qos(prefetch_count=100)
-        self._q_in = await self._channel.declare_queue(CONFIRMATION_QUEUE, durable=True)
-        self._q_dlq = await self._channel.declare_queue(DLQ, durable=True)
+        # Use local variables to avoid NoneType lint warnings
+        conn = await aio_pika.connect_robust(RABBITMQ_URL)
+        channel = await conn.channel()
+        await channel.set_qos(prefetch_count=100)
+        
+        q_in = await channel.declare_queue(CONFIRMATION_QUEUE, durable=True)
+        q_dlq = await channel.declare_queue(DLQ, durable=True)
+        
         # Ensure worker queues exist (durable) even if no consumer yet
-        await self._channel.declare_queue(OPEN_QUEUE, durable=True)
-        await self._channel.declare_queue(CLOSE_QUEUE, durable=True)
-        await self._channel.declare_queue(SL_QUEUE, durable=True)
-        await self._channel.declare_queue(TP_QUEUE, durable=True)
-        await self._channel.declare_queue(REJECT_QUEUE, durable=True)
-        await self._channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
-        await self._channel.declare_queue(CANCEL_QUEUE, durable=True)
-        await self._channel.declare_queue(PENDING_QUEUE, durable=True)
-        self._ex = self._channel.default_exchange
+        await channel.declare_queue(OPEN_QUEUE, durable=True)
+        await channel.declare_queue(CLOSE_QUEUE, durable=True)
+        await channel.declare_queue(SL_QUEUE, durable=True)
+        await channel.declare_queue(TP_QUEUE, durable=True)
+        await channel.declare_queue(REJECT_QUEUE, durable=True)
+        await channel.declare_queue(DB_UPDATE_QUEUE, durable=True)
+        await channel.declare_queue(CANCEL_QUEUE, durable=True)
+        await channel.declare_queue(PENDING_QUEUE, durable=True)
+        
+        # Assign to self attributes after full initialization
+        self._conn = conn
+        self._channel = channel
+        self._q_in = q_in
+        self._q_dlq = q_dlq
+        self._ex = channel.default_exchange
+        
         logger.info(
             "Dispatcher connected. URL=%s Redis=%s in=%s dlq=%s open=%s close=%s sl=%s tp=%s reject=%s cancel=%s pending=%s",
             RABBITMQ_URL,
@@ -217,6 +234,10 @@ class Dispatcher:
 
     async def _publish(self, queue_name: str, body: Dict[str, Any]):
         try:
+            if not self._ex:
+                logger.error("[DISPATCH:PUBLISH_ERROR] Queue exchange not initialized")
+                return
+                
             msg = aio_pika.Message(body=orjson.dumps(body), delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
             await self._ex.publish(msg, routing_key=queue_name)
             
@@ -252,22 +273,23 @@ class Dispatcher:
                 report = orjson.loads(message.body)
                 
                 # Extract order ID for logging
+                raw = report.get("raw") or {}
                 order_id_debug = (
                     report.get("order_id") or 
                     report.get("exec_id") or 
-                    (report.get("raw") or {}).get("11") or 
-                    (report.get("raw") or {}).get("17") or
+                    raw.get("11") or 
+                    raw.get("17") or
                     "unknown"
                 )
                 
-                # Debug: Log the raw execution report to see what provider is sending
+                # Debug: Log the raw execution report
                 logger.debug(
                     "[DISPATCH:RAW_REPORT] order_id=%s report_keys=%s order_id_field=%s exec_id_field=%s",
                     order_id_debug, list(report.keys()), 
                     report.get("order_id"), report.get("exec_id")
                 )
                 
-                # Only process execution reports, ignore provider ACK messages
+                # Only process execution reports
                 rtype = str(report.get("type") or "").strip().lower()
                 if rtype != "execution_report":
                     logger.debug(
@@ -276,88 +298,99 @@ class Dispatcher:
                     )
                     return
                 
-                # Check for recovery mode ID replacement before further processing
-                if str(report.get("mode") or "").strip().lower() == "recovery":
-                    recovery_new_id = report.get("_recovery_new_id")
-                    recovery_old_id = report.get("order_id")
-                    if recovery_old_id and recovery_new_id:
-                        logger.info(
-                            "[DISPATCH:RECOVERY] Processing recovery mode for old_id=%s to new_id=%s", 
-                            recovery_old_id, recovery_new_id
-                        )
-                        replace_result = await replace_provider_id(str(recovery_old_id), str(recovery_new_id))
-                        if replace_result.get("ok"):
-                            logger.info("[DISPATCH:RECOVERY_SUCCESS] %s", replace_result)
-                            # Update the report's order_id so downstream processing and workers use the new ID
-                            report["order_id"] = recovery_new_id
-                        else:
-                            logger.error("[DISPATCH:RECOVERY_FAILED] %s", replace_result)
-
-                # Check if provider_connection already resolved canonical_order_id
-                canonical_order_id = report.get("canonical_order_id")
-                provider_order_id = report.get("provider_order_id") or report.get("order_id")
-                
-                if canonical_order_id:
-                    # Provider connection already resolved the canonical order_id
-                    logger.debug(
-                        "[DISPATCH:PRERESOLVED] provider_id=%s canonical_id=%s",
-                        provider_order_id, canonical_order_id
+                # 1. SPECIAL CASE: Recovery mode ID replacement
+                if report.get("mode") == "recovery":
+                    recovery_old_id = str(report.get("order_id"))
+                    recovery_new_id = str(report.get("_recovery_new_id"))
+                    logger.info(
+                        "[DISPATCH:RECOVERY] Processing recovery for old_id=%s new_id=%s",
+                        recovery_old_id, recovery_new_id
                     )
-                else:
-                    # Fallback to legacy lookup logic
-                    lifecycle_id = report.get("order_id") or report.get("exec_id")
-                    if not lifecycle_id:
-                        # try in raw dict
-                        raw = report.get("raw") or {}
-                        lifecycle_id = raw.get("11") or raw.get("17")
-
-                    if not lifecycle_id:
+                    
+                    replace_result = await replace_provider_id(recovery_old_id, recovery_new_id)
+                    
+                    if not replace_result.get("ok"):
                         logger.warning(
-                            "[DISPATCH:DLQ] order_id=%s reason=missing_lifecycle_id",
-                            order_id_debug
+                            "[DISPATCH:RECOVERY_FAILED] ID replacement failed for old_id=%s reason=%s",
+                            recovery_old_id, replace_result.get("reason")
                         )
-                        await self._publish(DLQ, {"reason": "missing_lifecycle_id", "report": report})
-                        self._stats['messages_dlq'] += 1
-                        return
-
-                    # Handle Redis operations with error handling
-                    canonical_order_id = await _redis_get(f"global_order_lookup:{lifecycle_id}")
-                    # Debug: Log the lookup process
-                    logger.debug(
-                        "[DISPATCH:LOOKUP] lifecycle_id=%s canonical_from_redis=%s",
-                        lifecycle_id, canonical_order_id
-                    )
-                    
-                    # 🆕 Special handling for close_id returned by provider
-                    if not canonical_order_id and str(lifecycle_id).startswith("CLS"):
-                        # This looks like a close_id - search for order with this close_id
+                    else:
                         logger.info(
-                            "[DISPATCH:CLOSE_ID_DETECTED] lifecycle_id=%s appears_to_be_close_id=True searching_orders",
-                            lifecycle_id
+                            "[DISPATCH:RECOVERY_SUCCESS] ID replacement successful for old_id=%s canonical_id=%s",
+                            recovery_old_id, replace_result.get("canonical_order_id")
                         )
-                        # Try to get from close_id reverse lookup (if we added it)
-                        canonical_from_close = await _redis_get(f"close_id_lookup:{lifecycle_id}")
-                        if canonical_from_close:
-                            canonical_order_id = canonical_from_close
-                            logger.info(
-                                "[DISPATCH:CLOSE_ID_RESOLVED] close_id=%s canonical_order_id=%s",
-                                lifecycle_id, canonical_order_id
-                            )
-                        else:
-                            logger.warning(
-                                "[DISPATCH:CLOSE_ID_NOT_MAPPED] close_id=%s - cannot find canonical order_id",
-                                lifecycle_id
-                            )
-                    
-                    # Fallback: treat lifecycle_id as canonical order_id (self-mapping case)
-                    if not canonical_order_id:
-                        canonical_order_id = lifecycle_id
-                        logger.debug(
-                            "[DISPATCH:LOOKUP_FALLBACK] lifecycle_id=%s using_as_canonical=%s",
-                            lifecycle_id, canonical_order_id
-                        )
-                    provider_order_id = lifecycle_id
+                        # Ensure the report and resolution logic use the canonical ID going forward
+                        report["order_id"] = replace_result.get("canonical_order_id")
+                        report["canonical_order_id"] = replace_result.get("canonical_order_id")
 
+                # 2. RESOLVE CANONICAL ORDER ID
+                # Start with candidates
+                candidates = [
+                    report.get("order_id"), 
+                    report.get("exec_id"), 
+                    raw.get("11"),  # ClOrdID
+                    raw.get("17"),  # ExecID
+                ]
+                
+                canonical_order_id = report.get("canonical_order_id")
+                resolved_by_id = None
+                
+                if not canonical_order_id:
+                    # Try to resolve from any candidate using global lookup
+                    for cid in candidates:
+                        if not cid:
+                            continue
+                        lookup_val = await _redis_get(f"global_order_lookup:{cid}")
+                        if lookup_val:
+                            canonical_order_id = lookup_val
+                            resolved_by_id = cid
+                            break
+                    
+                    # Special handling for close_id
+                    if not canonical_order_id:
+                        for cid in candidates:
+                            if cid and str(cid).startswith("CLS"):
+                                canonical_from_close = await _redis_get(f"close_id_lookup:{cid}")
+                                if canonical_from_close:
+                                    canonical_order_id = canonical_from_close
+                                    resolved_by_id = cid
+                                    break
+                    
+                    # Fallback: direct order_data existence check
+                    if not canonical_order_id:
+                        for cid in candidates:
+                            if cid and await redis_cluster.exists(f"order_data:{cid}"):
+                                canonical_order_id = cid
+                                resolved_by_id = cid
+                                break
+                
+                if not canonical_order_id:
+                    logger.warning(
+                        "[DISPATCH:DLQ] order_id=%s reason=unresolved_canonical_id candidates=%s",
+                        order_id_debug, [c for c in candidates if c]
+                    )
+                    await self._publish(DLQ, {"reason": "unresolved_canonical_id", "candidates": candidates, "report": report})
+                    self._stats['messages_dlq'] += 1
+                    return
+                
+                provider_order_id = report.get("order_id") or resolved_by_id or order_id_debug
+                
+                # 3. AUTO-MAPPING: Register candidates to CID for future reports
+                for cid in candidates:
+                    if cid and cid != canonical_order_id:
+                        try:
+                            # Map generically as "provider_order_id" if it's purely numeric
+                            id_type = "provider_order_id"
+                            cid_str = str(cid)
+                            if cid_str.startswith("SL"): id_type = "stoploss_id"
+                            elif cid_str.startswith("TP"): id_type = "takeprofit_id"
+                            elif cid_str.startswith("CLS"): id_type = "close_id"
+                            
+                            await add_lifecycle_id(str(canonical_order_id), cid_str, id_type)
+                        except Exception as map_err:
+                            logger.debug("Auto-mapping failed for %s: %s", cid, map_err)
+
+                # 4. FETCH ORDER DATA
                 order_data = await _redis_hgetall(f"order_data:{canonical_order_id}")
                 if not order_data:
                     logger.warning(
@@ -368,17 +401,11 @@ class Dispatcher:
                     self._stats['messages_dlq'] += 1
                     return
 
+                # 5. COMPOSE PAYLOAD AND ROUTE
                 payload = await _compose_payload(report, order_data, canonical_order_id, provider_order_id)
                 
-                # Debug: Log the composed payload IDs
-                logger.debug(
-                    "[DISPATCH:PAYLOAD] canonical_id=%s provider_id=%s",
-                    canonical_order_id, payload.get("provider_order_id")
-                )
-                # Route based on Redis status (engine/UI state) and provider ord_status (string)
-                # IMPORTANT: Use only the 'status' field per spec; do not fallback to 'order_status'.
                 redis_status = str(order_data.get("status") or "").upper().strip()
-                # Fallback: if status missing on order_data, try user_holdings status (still the 'status' field)
+                # Fallback to user_holdings for status if not in order_data
                 if not redis_status:
                     try:
                         ut = str(order_data.get("user_type") or "")
@@ -388,46 +415,34 @@ class Dispatcher:
                             hstat = await _redis_hget(hkey, "status")
                             if hstat:
                                 redis_status = str(hstat).upper().strip()
-                    except Exception as holdings_error:
-                        logger.debug("Failed to get user holdings status for %s: %s", canonical_order_id, holdings_error)
+                    except Exception:
+                        pass
+                
                 ord_status = str(report.get("ord_status") or "").upper().strip()
                 
-                # Skip ACK messages - they are just acknowledgments and don't need processing
+                # Ignore ACK messages
                 if ord_status == "ACK":
-                    logger.debug(
-                        "[DISPATCH:IGNORED] order_id=%s ord_status=ACK reason=acknowledgment_only",
-                        canonical_order_id
-                    )
+                    logger.debug("[DISPATCH:IGNORED] order_id=%s ord_status=ACK acknowledgment_only", canonical_order_id)
                     return
                 
                 target_queue = None
-                # Pending cancel confirmations: route before generic CANCELLED branch
+                
+                # Logic for routing decisions
                 if redis_status == "PENDING-CANCEL" and ord_status in ("CANCELLED", "CANCELED", "PENDING", "MODIFY"):
-                    # Provider confirmed/acknowledged cancel request for pending order
                     target_queue = CANCEL_QUEUE
-                # Handle CANCELLED (or CANCELED) confirmations for cancels
                 elif ord_status in ("CANCELLED", "CANCELED"):
-                    # Check if order_id is actually a modify_id (modify flow cancel)
                     is_modify_cancel = False
                     try:
-                        # Quick check: if order_id exists in modify_id lifecycle mapping, it's a modify cancel
                         modify_lookup = await redis_cluster.get(f"lifecycle_id_lookup:modify_id:{canonical_order_id}")
                         if modify_lookup:
                             is_modify_cancel = True
-                            logger.debug(
-                                "[DISPATCH:MODIFY_CANCEL] order_id=%s is modify_id, routing to PENDING_QUEUE", 
-                                canonical_order_id
-                            )
-                    except Exception as e:
-                        logger.debug("Failed to check modify_id lookup for %s: %s", canonical_order_id, e)
+                    except Exception:
+                        pass
                     
                     if is_modify_cancel:
-                        # This is a modify-related cancel, route to pending worker for ignore/handling
                         target_queue = PENDING_QUEUE
-                    # SL/TP cancel confirmations
                     elif redis_status in ("STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL"):
                         target_queue = CANCEL_QUEUE
-                    # Pending cancel confirmations may find status in MODIFY/PENDING/CANCELLED
                     elif redis_status in ("MODIFY", "PENDING", "CANCELLED", "PENDING-QUEUED"):
                         target_queue = CANCEL_QUEUE
                     else:
@@ -435,81 +450,37 @@ class Dispatcher:
                             "[DISPATCH:DLQ] order_id=%s reason=unmapped_cancel_state redis_status=%s ord_status=%s",
                             canonical_order_id, redis_status, ord_status
                         )
-                        await self._publish(
-                            DLQ,
-                            {
-                                "reason": "unmapped_cancel_state",
-                                "redis_status": redis_status,
-                                "ord_status": ord_status,
-                                "order_id": canonical_order_id,
-                                "report": report,
-                            },
-                        )
+                        await self._publish(DLQ, {"reason": "unmapped_cancel_state", "redis_status": redis_status, "ord_status": ord_status, "order_id": canonical_order_id, "report": report})
                         self._stats['messages_dlq'] += 1
                         return
-                elif redis_status == "OPEN" and ord_status == "EXECUTED":
-                    target_queue = OPEN_QUEUE
-                elif redis_status == "QUEUED" and ord_status == "EXECUTED":
-                    # Provider flow order executed -> open the order
-                    target_queue = OPEN_QUEUE
-                elif redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY") and ord_status == "EXECUTED":
-                    # Pending order executed at provider -> open the order
-                    payload["pending_executed"] = True
-                    target_queue = OPEN_QUEUE
-                elif ord_status == "PENDING" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
-                    # Provider confirmed pending placement
-                    target_queue = PENDING_QUEUE
-                elif ord_status == "MODIFY" and redis_status in ("PENDING", "PENDING-QUEUED", "MODIFY"):
-                    # Provider acknowledged a pending modify request
-                    target_queue = PENDING_QUEUE
-                # (Handled above before generic CANCELLED branch)
-                elif redis_status == "PENDING-CANCEL" and ord_status == "EXECUTED":
-                    # Race: pending executed at provider before cancel took effect -> proceed to OPEN
-                    payload["pending_executed"] = True
-                    target_queue = OPEN_QUEUE
-                # Route ALL REJECTED orders to reject worker regardless of Redis status
+                        
                 elif ord_status == "REJECTED":
                     target_queue = REJECT_QUEUE
-                elif redis_status == "STOPLOSS" and ord_status == "PENDING":
-                    target_queue = SL_QUEUE
-                elif redis_status == "TAKEPROFIT" and ord_status == "PENDING":
-                    target_queue = TP_QUEUE
-                # Close on provider EXECUTED for trigger-related statuses
-                elif redis_status in ("STOPLOSS", "TAKEPROFIT", "STOPLOSS-CANCEL", "TAKEPROFIT-CANCEL", "CLOSED") and ord_status == "EXECUTED":
+                elif ord_status == "EXECUTED":
+                    target_queue = OPEN_QUEUE
+                elif ord_status in ("OPEN", "PENDING", "MODIFY"):
+                    target_queue = PENDING_QUEUE
+                elif ord_status == "TRADE":
                     target_queue = CLOSE_QUEUE
                 else:
                     logger.warning(
                         "[DISPATCH:DLQ] order_id=%s reason=unmapped_routing_state redis_status=%s ord_status=%s",
                         canonical_order_id, redis_status, ord_status
                     )
-                    await self._publish(
-                        DLQ,
-                        {
-                            "reason": "unmapped_routing_state",
-                            "redis_status": redis_status,
-                            "ord_status": ord_status,
-                            "order_id": canonical_order_id,
-                            "report": report,
-                        },
-                    )
+                    await self._publish(DLQ, {"reason": "unmapped_routing_state", "redis_status": redis_status, "ord_status": ord_status, "order_id": canonical_order_id, "report": report})
                     self._stats['messages_dlq'] += 1
                     return
 
-                # Log successful routing decision
-                processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+                # Record success and publish
+                processing_time = (time.time() - start_time) * 1000
                 logger.info(
                     "[DISPATCH:SUCCESS] order_id=%s redis_status=%s ord_status=%s target_queue=%s processing_time=%.2fms",
                     canonical_order_id, redis_status, ord_status, target_queue, processing_time
                 )
                 
-                # Add routing metadata to payload
                 payload["routing_metadata"] = {
                     "dispatcher_processing_time_ms": processing_time,
-                    "routing_decision": {
-                        "redis_status": redis_status,
-                        "ord_status": ord_status,
-                        "target_queue": target_queue
-                    },
+                    "routing_decision": {"redis_status": redis_status, "ord_status": ord_status, "target_queue": target_queue},
                     "timestamp": start_time
                 }
                 

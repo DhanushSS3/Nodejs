@@ -1,6 +1,7 @@
 # Provider Node internal lookup config will be declared after imports
 
 import os
+import socket
 import asyncio
 import struct
 import time
@@ -191,6 +192,26 @@ class ProviderConnectionManager:
         try:
             self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(TCP_HOST, TCP_PORT), timeout=CONNECT_TIMEOUT_SEC)
             self.transport = "TCP"
+            
+            # Set TCP Keepalive for stability
+            sock = self.writer.get_extra_info('socket')
+            if sock:
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                    # Platform-specific keepalive settings
+                    if hasattr(socket, 'TCP_KEEPIDLE'): # Linux
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+                    elif hasattr(socket, 'SIO_KEEPALIVE_VALS'): # Windows
+                        # interval: 60s, retry: 10s
+                        sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60000, 10000))
+                        
+                    if hasattr(socket, 'TCP_KEEPINTVL'):
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                    if hasattr(socket, 'TCP_KEEPCNT'):
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
+                except Exception as ke:
+                    logger.debug("Failed to set TCP Keepalive: %s", ke)
+
             logger.info("Provider connected via TCP: %s:%s", TCP_HOST, TCP_PORT)
             self._connected.set()
             return True
@@ -507,6 +528,21 @@ class ProviderConnectionManager:
                 # MUST break the loop to exit _send_loop so run() reconnects
                 break
 
+    async def _heartbeat_loop(self):
+        """Send periodic heartbeat to keep connection alive."""
+        while not self._stop:
+            try:
+                await self._connected.wait()
+                await asyncio.sleep(30)
+                if not self._stop and self.is_connected():
+                    # Send a minimal heartbeat message
+                    hb = {"type": "heartbeat", "ts": int(time.time() * 1000)}
+                    await self.send(hb)
+                    logger.debug("[PROVIDER_CONNECTION:HB] Sent heartbeat")
+            except Exception as e:
+                logger.debug("[PROVIDER_CONNECTION:HB_ERROR] %s", e)
+                await asyncio.sleep(5)
+
     async def run(self):
         backoff = 1.0
         await self._publisher.connect()
@@ -520,7 +556,8 @@ class ProviderConnectionManager:
             try:
                 read_task = asyncio.create_task(self._read_loop(), name="provider_read")
                 send_task = asyncio.create_task(self._send_loop(), name="provider_send")
-                self._tasks = [read_task, send_task]
+                hb_task = asyncio.create_task(self._heartbeat_loop(), name="provider_hb")
+                self._tasks = [read_task, send_task, hb_task]
                 # Changed to FIRST_COMPLETED so that if either task breaks out due to a connection error, they properly trigger a reconnect
                 done, pending = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
                 for t in pending:
