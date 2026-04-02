@@ -272,6 +272,7 @@ class PendingWorker:
             user_id = str(payload.get("user_id"))
             symbol = str(payload.get("symbol") or "").upper()
             order_type = str(payload.get("order_type") or "").upper()
+            account_number = payload.get("account_number")
             
             logger.info(
                 "[PENDING:RECEIVED] order_id=%s ord_status=%s user=%s:%s symbol=%s type=%s",
