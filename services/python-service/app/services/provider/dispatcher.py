@@ -290,6 +290,22 @@ class Dispatcher:
                             logger.info("[DISPATCH:RECOVERY_SUCCESS] %s", replace_result)
                             # Update the report's order_id so downstream processing and workers use the new ID
                             report["order_id"] = recovery_new_id
+                            
+                            # Trigger DB sync
+                            try:
+                                db_msg = {
+                                    "type": "ORDER_LIFECYCLE_ID_REPLACEMENT",
+                                    "order_id": replace_result.get("canonical_order_id"),
+                                    "old_lifecycle_id": recovery_old_id,
+                                    "new_lifecycle_id": recovery_new_id,
+                                    "id_type": replace_result.get("matched_field"),
+                                    "user_id": replace_result.get("user_id"),
+                                    "user_type": replace_result.get("user_type"),
+                                    "timestamp": int(time.time() * 1000)
+                                }
+                                await self._publish(DB_UPDATE_QUEUE, db_msg)
+                            except Exception as e:
+                                logger.error("[DISPATCH:RECOVERY_DB_SYNC_FAIL] %s", e)
                         else:
                             logger.error("[DISPATCH:RECOVERY_FAILED] %s", replace_result)
 

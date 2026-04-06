@@ -533,6 +533,104 @@ async function handleCloseIdUpdate(msg) {
   }
 }
 
+/**
+ * Handle replacement of an order lifecycle ID (e.g., during recovery).
+ */
+async function handleLifecycleIdReplacement(msg) {
+  const { order_id, old_lifecycle_id, new_lifecycle_id, id_type, user_id, user_type } = msg || {};
+
+  if (!order_id || !new_lifecycle_id || !id_type) {
+    throw new Error('Missing required fields in lifecycle ID replacement message');
+  }
+
+  logger.info('Processing lifecycle ID replacement', {
+    order_id: String(order_id),
+    old_id: String(old_lifecycle_id || 'none'),
+    new_id: String(new_lifecycle_id),
+    id_type: String(id_type),
+    user_type: String(user_type || 'unknown')
+  });
+
+  const transaction = await sequelize.transaction();
+
+  try {
+    // 1. Update the main order table if user_type is provided
+    if (user_type) {
+      const OrderModel = getOrderModel(String(user_type));
+      const updateData = {};
+      
+      // Map precisely as user requested, without field name changes
+      if (id_type === 'order_id') {
+        updateData.order_id = String(new_lifecycle_id);
+      } else if (id_type === 'stoploss_id') {
+        updateData.stoploss_id = String(new_lifecycle_id);
+      } else if (id_type === 'takeprofit_id') {
+        updateData.takeprofit_id = String(new_lifecycle_id);
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await OrderModel.update(updateData, {
+          where: { order_id: String(order_id) },
+          transaction
+        });
+        logger.info('Updated main order table ID column', {
+          order_id: String(order_id),
+          updateData
+        });
+      }
+    }
+
+    // 2. Mark old ID as replaced if it exists
+    if (old_lifecycle_id) {
+      await OrderLifecycleId.update({
+        status: 'replaced',
+        replaced_by: String(new_lifecycle_id),
+        notes: `Replaced during recovery by ${new_lifecycle_id}`
+      }, {
+        where: {
+          lifecycle_id: String(old_lifecycle_id),
+          order_id: String(order_id)
+        },
+        transaction
+      });
+    }
+
+    // 3. Create or Update the new ID record
+    const [lifecycleRecord, created] = await OrderLifecycleId.findOrCreate({
+      where: {
+        lifecycle_id: String(new_lifecycle_id),
+        order_id: String(order_id)
+      },
+      defaults: {
+        id_type: String(id_type),
+        status: 'active',
+        notes: old_lifecycle_id ? `Replacement for ${old_lifecycle_id}` : 'Auto-mapped during recovery'
+      },
+      transaction
+    });
+
+    if (!created && lifecycleRecord.status !== 'active') {
+      await lifecycleRecord.update({ status: 'active' }, { transaction });
+    }
+
+    await transaction.commit();
+    logger.info('Lifecycle ID replacement persisted successfully', {
+      order_id: String(order_id),
+      new_id: String(new_lifecycle_id),
+      created_new_record: created
+    });
+    
+  } catch (error) {
+    if (transaction) await transaction.rollback();
+    logger.error('Failed to persist lifecycle ID replacement', {
+      error: error.message,
+      order_id: String(order_id),
+      new_lifecycle_id: String(new_lifecycle_id)
+    });
+    throw error;
+  }
+}
+
 async function applyDbUpdate(msg) {
   const updateStartTime = Date.now();
   const {
@@ -1992,6 +2090,8 @@ async function startOrdersDbConsumer() {
           await handleCloseIdUpdate(payload);
         } else if (payload.type === 'MAM_PENDING_CHILD_CANCELLED') {
           await handleMamPendingChildCancel(payload);
+        } else if (payload.type === 'ORDER_LIFECYCLE_ID_REPLACEMENT') {
+          await handleLifecycleIdReplacement(payload);
         } else if (payload.type === 'MAM_CHILD_AUTOCUTOFF_CLOSED') {
           await handleMamChildAutocutoffClose(payload);
         } else {

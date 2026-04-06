@@ -127,7 +127,7 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
             matched_field = "takeprofit_id"
         else:
             # No prefix (purely numeric) means it's a pending order replacement
-            matched_field = "provider_order_id"
+            matched_field = "order_id"
             
         # Prepare pipeline for atomic updates
         pipe = redis_cluster.pipeline()
@@ -158,7 +158,9 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
             "ok": True, 
             "canonical_order_id": canonical_order_id,
             "matched_field": matched_field,
-            "note": "Replaced ID successfully"
+            "note": "Replaced ID successfully",
+            "user_id": order_data.get("order_user_id") or order_data.get("user_id"),
+            "user_type": order_data.get("order_user_type") or order_data.get("user_type")
         }
         
     except Exception as e:
