@@ -262,6 +262,7 @@ async function placeInstantOrder(req, res) {
       order_id,
       status: normalizeStr(req.body.status || 'OPEN'),
       order_status: normalizeStr(req.body.order_status || 'OPEN'),
+      node_dispatch_ts: Date.now(),
     };
     if (req.body.idempotency_key) {
       pyPayload.idempotency_key = normalizeStr(req.body.idempotency_key);

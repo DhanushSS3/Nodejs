@@ -3,7 +3,7 @@ const http = require('http');
 const https = require('https');
 
 const pythonServiceAxios = axios.create({
-  timeout: 15000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
     'X-Internal-Auth': process.env.INTERNAL_PROVIDER_SECRET || process.env.INTERNAL_API_SECRET || 'livefxhub'

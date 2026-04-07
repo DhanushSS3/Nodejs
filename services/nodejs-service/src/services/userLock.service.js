@@ -10,7 +10,7 @@ else
 end
 `;
 
-const DEFAULT_TTL_SECONDS = parseInt(process.env.USER_LOCK_TTL_SECONDS || '2', 10);
+const DEFAULT_TTL_SECONDS = parseInt(process.env.USER_LOCK_TTL_SECONDS || '30', 10);
 
 async function acquireUserLock(userType, userId, ttlSeconds = DEFAULT_TTL_SECONDS, context = {}) {
   if (!userType || !userId) {

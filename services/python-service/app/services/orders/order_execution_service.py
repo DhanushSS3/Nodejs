@@ -148,6 +148,15 @@ class OrderExecutor:
         user_type = str(getattr(payload.get("user_type"), "value", payload.get("user_type", ""))).lower()
         symbol = str(payload.get("symbol", "")).upper()
         flow = None  # Will be set later
+        
+        # Deadline check from Node
+        node_dispatch_ts = payload.get("node_dispatch_ts")
+        if node_dispatch_ts:
+            elapsed_ms = int(time.time() * 1000) - int(node_dispatch_ts)
+            if elapsed_ms > 25000:
+                logger.warning(f"Order {order_id} aborted due to node timeout. elapsed: {elapsed_ms}ms")
+                return {"ok": False, "reason": "node_timeout_exceeded"}
+
         # 1) Basic validation
         missing = [k for k in ("symbol", "order_type", "order_price", "order_quantity", "user_id", "user_type") if k not in payload]
         if missing:
@@ -777,93 +786,92 @@ class OrderExecutor:
         except Exception as _pr_err:
             logger.warning("portfolio_force_recalc publish failed after order placement: %s", _pr_err)
 
-        # 14) For provider flow, create/update canonical order hash and global lookups
-        if flow == "provider":
-            try:
-                t_canonical = time.perf_counter()
-                # Build canonical order record with required fields
-                # Merge spread/spread_pip from fallback config when available
-                spread_val = g.get("spread") or gfb.get("spread")
-                spread_pip_val = g.get("spread_pip") or gfb.get("spread_pip")
+        # 14) Create/update canonical order hash and global lookups for ALL flows
+        try:
+            t_canonical = time.perf_counter()
+            # Build canonical order record with required fields
+            # Merge spread/spread_pip from fallback config when available
+            spread_val = g.get("spread") or gfb.get("spread")
+            spread_pip_val = g.get("spread_pip") or gfb.get("spread_pip")
 
-                canonical: Dict[str, Any] = {
-                    # Order IDs
-                    "order_id": order_id,
-                    # User info
-                    "user_id": user_id,
-                    "user_type": user_type,
-                    **({"account_number": account_number} if account_number is not None else {}),
-                    "group": group,
-                    "leverage": leverage,
-                    # Instrument / group data (best-effort from fetched group hash)
-                    "type": instrument_type,
-                    "spread": spread_val if spread_val is not None else None,
-                    "spread_pip": spread_pip_val if spread_pip_val is not None else None,
-                    "contract_size": contract_size if contract_size is not None else None,
-                    "profit": profit_currency,
-                    # Commission config snapshot and group-level margin config
-                    "commission_rate": commission_rate,
-                    "commission_type": commission_type,
-                    "commission_value_type": commission_value_type,
-                    "group_margin": group_margin_cfg,
-                    # Order metadata
-                    "execution": flow,
-                    "execution_status": execution_status,
-                    "created_at": now_ms,
-                    # Engine-level state vs UI-level state
-                    "order_status": displayed_status,
-                    "status": (frontend_status or "OPEN"),
-                    # Additional pricing/margin fields useful for WS/UI
-                    "symbol": symbol,
-                    "order_type": order_type,
-                    "order_price": exec_price,
-                    "order_quantity": order_qty,
-                    # For provider flow, do not store final margin yet; reserve it
-                    **({"margin": float(margin_usd)} if flow == "local" else {}),
-                    **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
-                    "contract_value": float(contract_value) if contract_value is not None else None,
-                    # Commission entry only for local immediate execution
-                    **({"commission_entry": commission_entry} if commission_entry is not None else {}),
-                }
+            canonical: Dict[str, Any] = {
+                # Order IDs
+                "order_id": order_id,
+                # User info
+                "user_id": user_id,
+                "user_type": user_type,
+                **({"account_number": account_number} if account_number is not None else {}),
+                "group": group,
+                "leverage": leverage,
+                # Instrument / group data (best-effort from fetched group hash)
+                "type": instrument_type,
+                "spread": spread_val if spread_val is not None else None,
+                "spread_pip": spread_pip_val if spread_pip_val is not None else None,
+                "contract_size": contract_size if contract_size is not None else None,
+                "profit": profit_currency,
+                # Commission config snapshot and group-level margin config
+                "commission_rate": commission_rate,
+                "commission_type": commission_type,
+                "commission_value_type": commission_value_type,
+                "group_margin": group_margin_cfg,
+                # Order metadata
+                "execution": flow,
+                "execution_status": execution_status,
+                "created_at": now_ms,
+                # Engine-level state vs UI-level state
+                "order_status": displayed_status,
+                "status": (frontend_status or "OPEN"),
+                # Additional pricing/margin fields useful for WS/UI
+                "symbol": symbol,
+                "order_type": order_type,
+                "order_price": exec_price,
+                "order_quantity": order_qty,
+                # For provider flow, do not store final margin yet; reserve it
+                **({"margin": float(margin_usd)} if flow == "local" else {}),
+                **({"reserved_margin": float(margin_usd)} if flow == "provider" else {}),
+                "contract_value": float(contract_value) if contract_value is not None else None,
+                # Commission entry only for local immediate execution
+                **({"commission_entry": commission_entry} if commission_entry is not None else {}),
+            }
 
-                # Merge any pricing metadata we already computed
-                if pricing_meta.get("pricing"):
-                    price_info = pricing_meta["pricing"]
-                    canonical.update({
-                        "raw_price": price_info.get("raw_price"),
-                        "half_spread": price_info.get("half_spread"),
-                    })
+            # Merge any pricing metadata we already computed
+            if pricing_meta.get("pricing"):
+                price_info = pricing_meta["pricing"]
+                canonical.update({
+                    "raw_price": price_info.get("raw_price"),
+                    "half_spread": price_info.get("half_spread"),
+                })
 
-                # Include any lifecycle IDs provided in payload (if any already exist)
-                lifecycle_fields = [
-                    "close_id",
-                    "modify_id",
-                    "cancel_id",
-                    "takeprofit_id",
-                    "stoploss_id",
-                    "takeprofit_cancel_id",
-                    "stoploss_cancel_id",
-                ]
-                provided_extra_ids: Dict[str, str] = {}
-                for f in lifecycle_fields:
-                    if payload.get(f):
-                        val = str(payload.get(f))
-                        canonical[f] = val
-                        provided_extra_ids[f] = val
+            # Include any lifecycle IDs provided in payload (if any already exist)
+            lifecycle_fields = [
+                "close_id",
+                "modify_id",
+                "cancel_id",
+                "takeprofit_id",
+                "stoploss_id",
+                "takeprofit_cancel_id",
+                "stoploss_cancel_id",
+            ]
+            provided_extra_ids: Dict[str, str] = {}
+            for f in lifecycle_fields:
+                if payload.get(f):
+                    val = str(payload.get(f))
+                    canonical[f] = val
+                    provided_extra_ids[f] = val
 
-                # Persist canonical record and self-lookup for order_id
-                await create_canonical_order(canonical)
+            # Persist canonical record and self-lookup for order_id
+            await create_canonical_order(canonical)
 
-                # Create global lookups for any extra IDs already generated
-                for field_name, the_id in provided_extra_ids.items():
-                    try:
-                        await add_lifecycle_id(order_id, the_id, field_name)
-                    except Exception as id_err:
-                        logger.warning("add_lifecycle_id failed for %s=%s on %s: %s", field_name, the_id, order_id, id_err)
-                timings_ms["canonical_create_ms"] = int((time.perf_counter() - t_canonical) * 1000)
-            except Exception as reg_err:
-                # Non-fatal; continue flow, but log for observability
-                logger.error("canonical order registry update failed for %s: %s", order_id, reg_err)
+            # Create global lookups for any extra IDs already generated
+            for field_name, the_id in provided_extra_ids.items():
+                try:
+                    await add_lifecycle_id(order_id, the_id, field_name)
+                except Exception as id_err:
+                    logger.warning("add_lifecycle_id failed for %s=%s on %s: %s", field_name, the_id, order_id, id_err)
+            timings_ms["canonical_create_ms"] = int((time.perf_counter() - t_canonical) * 1000)
+        except Exception as reg_err:
+            # Non-fatal; continue flow, but log for observability
+            logger.error("canonical order registry update failed for %s: %s", order_id, reg_err)
 
         # 15) Success response
         resp = {

@@ -231,33 +231,12 @@ async def compute_user_total_margin(
 # Internal helpers
 
 async def _fetch_user_orders(user_type: str, user_id: str) -> List[Dict[str, Any]]:
-    pattern = f"user_holdings:{{{user_type}:{user_id}}}:*"
     try:
-        cursor = b'0'
-        keys: List[str] = []
-        while cursor:
-            cursor, batch = await redis_cluster.scan(cursor=cursor, match=pattern, count=100)
-            keys.extend(batch)
-            if cursor == b'0' or cursor == 0:
-                break
-        if not keys:
-            return []
-        # Fetch orders concurrently
-        results = await _mget_hashes(keys)
-        orders: List[Dict[str, Any]] = []
-        for i, k in enumerate(keys):
-            try:
-                key_str = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
-            except Exception:
-                key_str = str(k)
-            order_id = key_str.rsplit(":", 1)[-1]
-            od = results[i] or {}
-            od['order_id'] = od.get('order_id') or order_id
-            od['order_key'] = key_str
-            orders.append(od)
-        return orders
+        # Dynamically import to avoid circular dependency
+        from app.services.orders.order_repository import fetch_user_orders as repo_fetch
+        return await repo_fetch(user_type, user_id)
     except Exception as e:
-        logger.error(f"_fetch_user_orders error for {user_type}:{user_id}: {e}")
+        logger.error(f"_fetch_user_orders dynamic import/fetch error for {user_type}:{user_id}: {e}")
         return []
 
 
