@@ -276,28 +276,27 @@ class Dispatcher:
                     )
                     return
                 
-                # Check for recovery mode ID replacement before further processing
+                # Check for recovery mode ID replacement before further processing.
+                # Recovery reports are ONLY for ID remapping - they must NOT flow into the
+                # normal routing/worker pipeline, as that would create phantom orders.
                 if str(report.get("mode") or "").strip().lower() == "recovery":
                     recovery_new_id = report.get("_recovery_new_id")
                     recovery_old_id = report.get("order_id")
                     if recovery_old_id and recovery_new_id:
                         logger.info(
-                            "[DISPATCH:RECOVERY] Processing recovery mode for old_id=%s to new_id=%s", 
-                            recovery_old_id, recovery_new_id
+                            "[DISPATCH:RECOVERY] Intercepted recovery report old_id=%s new_id=%s ord_status=%s",
+                            recovery_old_id, recovery_new_id, report.get("ord_status")
                         )
                         replace_result = await replace_provider_id(str(recovery_old_id), str(recovery_new_id))
                         if replace_result.get("ok"):
                             logger.info("[DISPATCH:RECOVERY_SUCCESS] %s", replace_result)
-                            # Update the report's order_id so downstream processing and workers use the new ID
-                            report["order_id"] = recovery_new_id
-                            
-                            # Trigger DB sync
+                            # Trigger DB sync so SQL tables are also updated
                             try:
                                 db_msg = {
                                     "type": "ORDER_LIFECYCLE_ID_REPLACEMENT",
                                     "order_id": replace_result.get("canonical_order_id"),
-                                    "old_lifecycle_id": recovery_old_id,
-                                    "new_lifecycle_id": recovery_new_id,
+                                    "old_lifecycle_id": str(recovery_old_id),
+                                    "new_lifecycle_id": str(recovery_new_id),
                                     "id_type": replace_result.get("matched_field"),
                                     "user_id": replace_result.get("user_id"),
                                     "user_type": replace_result.get("user_type"),
@@ -308,6 +307,14 @@ class Dispatcher:
                                 logger.error("[DISPATCH:RECOVERY_DB_SYNC_FAIL] %s", e)
                         else:
                             logger.error("[DISPATCH:RECOVERY_FAILED] %s", replace_result)
+                    else:
+                        logger.warning(
+                            "[DISPATCH:RECOVERY_SKIP] Recovery report missing order_id or _recovery_new_id: %s",
+                            report
+                        )
+                    # CRITICAL: Always stop here for recovery reports.
+                    # Do NOT let them fall through to the worker routing below.
+                    return
 
                 # Check if provider_connection already resolved canonical_order_id
                 canonical_order_id = report.get("canonical_order_id")
