@@ -911,8 +911,8 @@ function _isMarketOpenByType(typeVal) {
   // Closed on Friday from 22:00 UTC onwards
   if (day === 5 && hour >= 22) return false;
   
-  // Closed on Sunday until 22:00 UTC
-  if (day === 0 && hour < 22) return false;
+  // Closed on Sunday until 21:00 UTC
+  if (day === 0 && hour < 21) return false;
   
   return true;
 }
