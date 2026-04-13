@@ -569,14 +569,46 @@ async function handleLifecycleIdReplacement(msg) {
       }
 
       if (Object.keys(updateData).length > 0) {
-        await OrderModel.update(updateData, {
-          where: { order_id: String(order_id) },
-          transaction
-        });
-        logger.info('Updated main order table ID column', {
-          order_id: String(order_id),
-          updateData
-        });
+        try {
+          await OrderModel.update(updateData, {
+            where: { order_id: String(order_id) },
+            transaction
+          });
+          logger.info('Updated main order table ID column', {
+            order_id: String(order_id),
+            updateData
+          });
+        } catch (updateErr) {
+          if (updateErr.name === 'SequelizeUniqueConstraintError' || updateErr.message === 'Validation error') {
+            logger.warn('Lifecycle ID replacement hit unique constraint. Phantom record with new ID may exist. Resolving conflict...', {
+              old_id: String(order_id),
+              new_id: String(new_lifecycle_id),
+              id_type: String(id_type)
+            });
+            
+            // Delete the phantom duplicate that was mistakenly created by racing/old recovery flows
+            const duplicateField = id_type;
+            const duplicateValue = String(new_lifecycle_id);
+            
+            await OrderModel.destroy({
+              where: { [duplicateField]: duplicateValue },
+              transaction
+            });
+            logger.info('Deleted phantom duplicate order record.', { duplicateField, duplicateValue });
+
+            // Retry the update on the correct original order record
+            await OrderModel.update(updateData, {
+              where: { order_id: String(order_id) },
+              transaction
+            });
+            logger.info('Successfully updated main order table ID column after resolving phantom conflict', {
+              order_id: String(order_id),
+              updateData
+            });
+          } else {
+            throw updateErr;
+          }
+        }
       }
     }
 
@@ -595,11 +627,14 @@ async function handleLifecycleIdReplacement(msg) {
       });
     }
 
+    // If we just mapped the main order_id to a new value, use the new value for the lifecycle child record
+    const targetOrderId = (id_type === 'order_id') ? String(new_lifecycle_id) : String(order_id);
+
     // 3. Create or Update the new ID record
     const [lifecycleRecord, created] = await OrderLifecycleId.findOrCreate({
       where: {
         lifecycle_id: String(new_lifecycle_id),
-        order_id: String(order_id)
+        order_id: targetOrderId
       },
       defaults: {
         id_type: String(id_type),
