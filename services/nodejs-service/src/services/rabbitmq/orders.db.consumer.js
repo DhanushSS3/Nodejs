@@ -497,11 +497,11 @@ async function handleCloseIdUpdate(msg) {
     // Create lifecycle record for complete audit trail
     const [lifecycleRecord, created] = await OrderLifecycleId.findOrCreate({
       where: {
-        order_id: String(order_id),
-        id_type: 'close_id',
         lifecycle_id: String(close_id)
       },
       defaults: {
+        order_id: String(order_id),
+        id_type: 'close_id',
         status: 'active',
         notes: 'Autocutoff close ID - saved before provider send'
       }
@@ -514,7 +514,12 @@ async function handleCloseIdUpdate(msg) {
         lifecycle_record_id: lifecycleRecord.id
       });
     } else {
-      logger.info('OrderLifecycleId record already exists', {
+      await lifecycleRecord.update({
+        order_id: String(order_id),
+        id_type: 'close_id',
+        status: 'active'
+      });
+      logger.info('OrderLifecycleId record already exists, updated mapping', {
         order_id: String(order_id),
         close_id: String(close_id),
         existing_record_id: lifecycleRecord.id
@@ -633,10 +638,10 @@ async function handleLifecycleIdReplacement(msg) {
     // 3. Create or Update the new ID record
     const [lifecycleRecord, created] = await OrderLifecycleId.findOrCreate({
       where: {
-        lifecycle_id: String(new_lifecycle_id),
-        order_id: targetOrderId
+        lifecycle_id: String(new_lifecycle_id)
       },
       defaults: {
+        order_id: targetOrderId,
         id_type: String(id_type),
         status: 'active',
         notes: old_lifecycle_id ? `Replacement for ${old_lifecycle_id}` : 'Auto-mapped during recovery'
@@ -644,8 +649,12 @@ async function handleLifecycleIdReplacement(msg) {
       transaction
     });
 
-    if (!created && lifecycleRecord.status !== 'active') {
-      await lifecycleRecord.update({ status: 'active' }, { transaction });
+    if (!created) {
+      await lifecycleRecord.update({ 
+        order_id: targetOrderId,
+        id_type: String(id_type),
+        status: 'active' 
+      }, { transaction });
     }
 
     await transaction.commit();
