@@ -36,7 +36,7 @@ async function signup(req, res) {
       name, phone_number, email, password, city, state, country, pincode, group,
       bank_ifsc_code, bank_account_number, bank_holder_name, bank_branch_name,
       security_question, security_answer, address_proof, is_self_trading, 
-      id_proof, address_proof_image, id_proof_image, book,
+      id_proof, address_proof_image, id_proof_image, book, referred_code,
       ...optionalFields
     } = req.body;
 
@@ -133,6 +133,18 @@ async function signup(req, res) {
           country_id = countryRecord.id;
         }
       }
+      // Handle referral code lookup
+      let referred_by_id = null;
+      if (referred_code) {
+        const referrer = await LiveUser.findOne({
+          where: { referral_code: referred_code },
+          transaction
+        });
+        if (referrer) {
+          referred_by_id = referrer.id;
+        }
+      }
+
       // Create user with default values
       const user = await LiveUser.create({
         name, 
@@ -161,6 +173,8 @@ async function signup(req, res) {
         user_type: 'live',
         view_password: hashedViewPassword,
         book: book || null,
+        referred_code: referred_code || null,
+        referred_by_id,
         // Set default values for live users
         sending_orders: 'rock',
         leverage: 100,
