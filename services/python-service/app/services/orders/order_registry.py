@@ -166,6 +166,7 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
         return {
             "ok": True,
             "canonical_order_id": canonical_order_id,
+            "current_sql_id": order_data.get("order_id") or canonical_order_id,
             "matched_field": matched_field,
             "user_id": order_data.get("order_user_id") or order_data.get("user_id"),
             "user_type": order_data.get("order_user_type") or order_data.get("user_type"),

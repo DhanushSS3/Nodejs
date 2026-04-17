@@ -542,7 +542,7 @@ async function handleCloseIdUpdate(msg) {
  * Handle replacement of an order lifecycle ID (e.g., during recovery).
  */
 async function handleLifecycleIdReplacement(msg) {
-  const { order_id, old_lifecycle_id, new_lifecycle_id, id_type, user_id, user_type } = msg || {};
+  const { order_id, current_sql_id, old_lifecycle_id, new_lifecycle_id, id_type, user_id, user_type } = msg || {};
 
   if (!order_id || !new_lifecycle_id || !id_type) {
     throw new Error('Missing required fields in lifecycle ID replacement message');
@@ -550,6 +550,7 @@ async function handleLifecycleIdReplacement(msg) {
 
   logger.info('Processing lifecycle ID replacement', {
     order_id: String(order_id),
+    current_sql_id: String(current_sql_id || 'unknown'),
     old_id: String(old_lifecycle_id || 'none'),
     new_id: String(new_lifecycle_id),
     id_type: String(id_type),
@@ -575,12 +576,23 @@ async function handleLifecycleIdReplacement(msg) {
 
       if (Object.keys(updateData).length > 0) {
         try {
+          // If the order_id itself was previously changed, the canonical order_id might 
+          // no longer match the SQL table's primary order_id key. Python's current_sql_id correctly reflects what SQL has.
+          const searchIds = [String(order_id)];
+          if (current_sql_id) {
+             searchIds.push(String(current_sql_id));
+          }
+          if (old_lifecycle_id && id_type === 'order_id') {
+            searchIds.push(String(old_lifecycle_id));
+          }
+
           await OrderModel.update(updateData, {
-            where: { order_id: String(order_id) },
+            where: { order_id: { [Op.in]: searchIds } },
             transaction
           });
           logger.info('Updated main order table ID column', {
             order_id: String(order_id),
+            searchIds,
             updateData
           });
         } catch (updateErr) {

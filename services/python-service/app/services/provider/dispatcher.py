@@ -295,6 +295,7 @@ class Dispatcher:
                                 db_msg = {
                                     "type": "ORDER_LIFECYCLE_ID_REPLACEMENT",
                                     "order_id": replace_result.get("canonical_order_id"),
+                                    "current_sql_id": replace_result.get("current_sql_id"),
                                     "old_lifecycle_id": str(recovery_old_id),
                                     "new_lifecycle_id": str(recovery_new_id),
                                     "id_type": replace_result.get("matched_field"),
