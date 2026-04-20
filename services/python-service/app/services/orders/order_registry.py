@@ -94,21 +94,15 @@ async def get_canonical_order_by_any_id(any_id: str) -> Optional[Dict[str, Any]]
 async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
     """
     Replace an old provider ID with a new provider ID during recovery.
-    
-    Resolution strategy:
-      1. Check global_order_lookup:{old_id} -> canonical_id (provider ID stored separately)
-      2. Check if order_data:{old_id} exists directly (old_id IS the canonical ID)
-      3. Scan all order_data hashes for a field containing old_id (last resort)
+    If the ID is the main order_id, we rename the Redis hash key to maintain consistency.
     """
     if not old_id or not new_id:
         return {"ok": False, "reason": "Missing old_id or new_id"}
 
     try:
-        # Step 1: Check global lookup (covers cases where provider ID != canonical ID)
         canonical_order_id = await redis_cluster.get(f"global_order_lookup:{old_id}")
         canonical_order_id = str(canonical_order_id) if canonical_order_id else None
 
-        # Step 2: Check if old_id is itself the canonical order ID
         if not canonical_order_id:
             exists = await redis_cluster.exists(f"order_data:{old_id}")
             if exists:
@@ -121,10 +115,10 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
             )
             return {"ok": False, "reason": f"Canonical order not found for old_id: {old_id}"}
 
-        order_hash_key = f"order_data:{canonical_order_id}"
+        old_hash_key = f"order_data:{canonical_order_id}"
 
         # Fetch full order hash so we can return user_id/user_type and update associated_ids
-        order_data = await redis_cluster.hgetall(order_hash_key)
+        order_data = await redis_cluster.hgetall(old_hash_key)
         if not order_data:
             return {"ok": False, "reason": f"order_data hash empty for canonical_id: {canonical_order_id}"}
 
@@ -138,10 +132,37 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
             # Pure numeric → main order_id replacement (pending order recovery)
             matched_field = "order_id"
 
-        # Atomic pipeline: update the field value + register new lookup
+        is_main_order = (matched_field == "order_id")
+        new_canonical_id = new_id if is_main_order else canonical_order_id
+        new_hash_key = f"order_data:{new_canonical_id}"
+
         pipe = redis_cluster.pipeline()
-        pipe.set(f"global_order_lookup:{new_id}", canonical_order_id)
-        pipe.hset(order_hash_key, matched_field, new_id)
+        
+        if is_main_order:
+            # Rename canonical hash to new key
+            pipe.rename(old_hash_key, new_hash_key)
+            pipe.hset(new_hash_key, "order_id", new_id)
+            pipe.set(f"global_order_lookup:{new_id}", new_id)
+            
+            # The holdings key must be renamed too if user details are present
+            user_type = order_data.get("user_type") or order_data.get("order_user_type")
+            user_id = order_data.get("user_id") or order_data.get("order_user_id")
+            if user_type and user_id:
+                old_holdings_key = f"user_holdings:{{{user_type}:{user_id}}}:{old_id}"
+                new_holdings_key = f"user_holdings:{{{user_type}:{user_id}}}:{new_id}"
+                index_key = f"user_orders_index:{{{user_type}:{user_id}}}"
+                
+                try:
+                    exists = await redis_cluster.exists(old_holdings_key)
+                    if exists:
+                        pipe.rename(old_holdings_key, new_holdings_key)
+                    pipe.srem(index_key, old_id)
+                    pipe.sadd(index_key, new_id)
+                except Exception as e:
+                    logger.warning("[REGISTRY:HOLDINGS_WARN] error migrating holdings: %s", e)
+        else:
+            pipe.hset(old_hash_key, matched_field, new_id)
+            pipe.set(f"global_order_lookup:{new_id}", canonical_order_id)
 
         # Keep associated_ids consistent (best-effort)
         try:
@@ -152,21 +173,21 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
                 ids_list.remove(old_id)
             if new_id not in ids_list:
                 ids_list.append(new_id)
-            pipe.hset(order_hash_key, "associated_ids", _json.dumps(ids_list))
+            pipe.hset(new_hash_key, "associated_ids", _json.dumps(ids_list))
         except Exception as assoc_err:
             logger.warning("[REGISTRY:REPLACE_ASSOC_WARN] canonical=%s err=%s", canonical_order_id, assoc_err)
 
-        # Intentionally keep global_order_lookup:{old_id} so in-flight delayed reports still resolve
         await pipe.execute()
 
         logger.info(
-            "[REGISTRY:REPLACE_OK] old_id=%s new_id=%s field=%s canonical=%s",
-            old_id, new_id, matched_field, canonical_order_id
+            "[REGISTRY:REPLACE_OK] old_id=%s new_id=%s field=%s canonical=%s action=%s",
+            old_id, new_id, matched_field, canonical_order_id, 
+            "key_renamed" if is_main_order else "field_updated"
         )
         return {
             "ok": True,
-            "canonical_order_id": canonical_order_id,
-            "current_sql_id": order_data.get("order_id") or canonical_order_id,
+            "canonical_order_id": new_canonical_id,
+            "current_sql_id": old_id if is_main_order else (order_data.get("order_id") or canonical_order_id),
             "matched_field": matched_field,
             "user_id": order_data.get("order_user_id") or order_data.get("user_id"),
             "user_type": order_data.get("order_user_type") or order_data.get("user_type"),
