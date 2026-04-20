@@ -564,7 +564,7 @@ async function handleLifecycleIdReplacement(msg) {
     if (user_type) {
       const OrderModel = getOrderModel(String(user_type));
       const updateData = {};
-      
+
       // Map precisely as user requested, without field name changes
       if (id_type === 'order_id') {
         updateData.order_id = String(new_lifecycle_id);
@@ -580,7 +580,7 @@ async function handleLifecycleIdReplacement(msg) {
           // no longer match the SQL table's primary order_id key. Python's current_sql_id correctly reflects what SQL has.
           const searchIds = [String(order_id)];
           if (current_sql_id) {
-             searchIds.push(String(current_sql_id));
+            searchIds.push(String(current_sql_id));
           }
           if (old_lifecycle_id && id_type === 'order_id') {
             searchIds.push(String(old_lifecycle_id));
@@ -602,11 +602,11 @@ async function handleLifecycleIdReplacement(msg) {
               new_id: String(new_lifecycle_id),
               id_type: String(id_type)
             });
-            
+
             // Delete the phantom duplicate that was mistakenly created by racing/old recovery flows
             const duplicateField = id_type;
             const duplicateValue = String(new_lifecycle_id);
-            
+
             await OrderModel.destroy({
               where: { [duplicateField]: duplicateValue },
               transaction
@@ -662,10 +662,10 @@ async function handleLifecycleIdReplacement(msg) {
     });
 
     if (!created) {
-      await lifecycleRecord.update({ 
+      await lifecycleRecord.update({
         order_id: targetOrderId,
         id_type: String(id_type),
-        status: 'active' 
+        status: 'active'
       }, { transaction });
     }
 
@@ -675,7 +675,7 @@ async function handleLifecycleIdReplacement(msg) {
       new_id: String(new_lifecycle_id),
       created_new_record: created
     });
-    
+
   } catch (error) {
     if (transaction) await transaction.rollback();
     logger.error('Failed to persist lifecycle ID replacement', {
@@ -964,6 +964,15 @@ async function applyDbUpdate(msg) {
   const transaction = await sequelize.transaction();
   let row = null;
 
+  let isAbnormalClose = false;
+  if (type === 'ORDER_CLOSE_CONFIRMED' && close_price != null && Number.isFinite(Number(close_price))) {
+    const cp = Number(close_price);
+    if (cp > 99999999 || cp < -99999999) {
+      isAbnormalClose = true;
+      logger.warn('Detected abnormal close price early, aborting payout and normal close update', { order_id: String(order_id), cp });
+    }
+  }
+
   try {
     logger.info('Starting database transaction for order update', {
       orderId: String(order_id),
@@ -1041,7 +1050,7 @@ async function applyDbUpdate(msg) {
 
     // Wallet payout and transaction records (idempotent per order)
     try {
-      if (type === 'ORDER_CLOSE_CONFIRMED') {
+      if (type === 'ORDER_CLOSE_CONFIRMED' && !isAbnormalClose) {
         const payoutKey = `close_payout_applied:${String(order_id)}`;
         const nx = await redisCluster.set(payoutKey, '1', 'EX', 7 * 24 * 3600, 'NX');
         if (nx) {
@@ -1094,7 +1103,7 @@ async function applyDbUpdate(msg) {
       logger.warn('Skipping DB order update; SQL row not found and could not be created', { order_id });
     } else {
       const updateFields = {};
-      if (order_status) updateFields.order_status = String(order_status);
+      if (order_status && !isAbnormalClose) updateFields.order_status = String(order_status);
       // Default for pending-cancel confirmations if publisher forgot to set order_status
       if (!order_status && String(type) === 'ORDER_PENDING_CANCEL') {
         updateFields.order_status = 'CANCELLED';
@@ -1134,18 +1143,24 @@ async function applyDbUpdate(msg) {
         updateFields.take_profit = null;
       }
       // Close-specific fields
-      if (close_price != null && Number.isFinite(Number(close_price))) {
-        updateFields.close_price = Number(close_price).toFixed(8);
-      }
-      if (net_profit != null && Number.isFinite(Number(net_profit))) {
-        updateFields.net_profit = Number(net_profit).toFixed(8);
-      }
-      if (swap != null && Number.isFinite(Number(swap))) {
-        updateFields.swap = Number(swap).toFixed(8);
+      if (isAbnormalClose) {
+        updateFields.status = 'ERROR';
+        updateFields.close_message = 'Close Price Error';
+        // DO NOT update close_price, net_profit, swap
+      } else {
+        if (close_price != null && Number.isFinite(Number(close_price))) {
+          updateFields.close_price = Number(close_price).toFixed(8);
+        }
+        if (net_profit != null && Number.isFinite(Number(net_profit))) {
+          updateFields.net_profit = Number(net_profit).toFixed(8);
+        }
+        if (swap != null && Number.isFinite(Number(swap))) {
+          updateFields.swap = Number(swap).toFixed(8);
+        }
       }
 
       // Enhanced close message mapping based on close scenario
-      if (type === 'ORDER_CLOSE_CONFIRMED') {
+      if (type === 'ORDER_CLOSE_CONFIRMED' && !isAbnormalClose) {
         try {
           let closeMsg = null;
 
