@@ -136,12 +136,24 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
         new_canonical_id = new_id if is_main_order else canonical_order_id
         new_hash_key = f"order_data:{new_canonical_id}"
 
+        # Clean up associated_ids before copying
+        import json as _json
+        raw_associated = order_data.get("associated_ids")
+        ids_list = _json.loads(raw_associated) if raw_associated else []
+        if old_id in ids_list:
+            ids_list.remove(old_id)
+        if new_id not in ids_list:
+            ids_list.append(new_id)
+        order_data["associated_ids"] = _json.dumps(ids_list)
+
         pipe = redis_cluster.pipeline()
         
         if is_main_order:
-            # Rename canonical hash to new key
-            pipe.rename(old_hash_key, new_hash_key)
-            pipe.hset(new_hash_key, "order_id", new_id)
+            # Copy-and-Delete canonical hash (Cluster safe)
+            order_data["order_id"] = new_id
+            pipe.hset(new_hash_key, mapping=order_data)
+            pipe.delete(old_hash_key)
+            pipe.delete(f"global_order_lookup:{old_id}")
             pipe.set(f"global_order_lookup:{new_id}", new_id)
             
             # The holdings key must be renamed too if user details are present
@@ -155,34 +167,49 @@ async def replace_provider_id(old_id: str, new_id: str) -> Dict[str, Any]:
                 try:
                     exists = await redis_cluster.exists(old_holdings_key)
                     if exists:
+                        # old and new holdings keys share hash tag {user_type:user_id}, rename is safe
                         pipe.rename(old_holdings_key, new_holdings_key)
                     pipe.srem(index_key, old_id)
                     pipe.sadd(index_key, new_id)
                 except Exception as e:
                     logger.warning("[REGISTRY:HOLDINGS_WARN] error migrating holdings: %s", e)
+                    
+            # Cleanup pending orders specific keys if they exist
+            symbol = order_data.get("symbol")
+            ord_type = order_data.get("order_type")
+            if symbol and ord_type:
+                try:
+                    pending_index = f"pending_index:{{{symbol}}}:{ord_type}"
+                    exists_pending = await redis_cluster.exists(pending_index)
+                    if exists_pending:
+                        score = await redis_cluster.zscore(pending_index, old_id)
+                        if score is not None:
+                            pipe.zrem(pending_index, old_id)
+                            pipe.zadd(pending_index, {new_id: score})
+                except Exception as e:
+                    logger.warning("[REGISTRY:PENDING_WARN] error migrating pending index: %s", e)
+            try:
+                # pending_orders tracking key directly
+                exists_po = await redis_cluster.exists(f"pending_orders:{old_id}")
+                if exists_po:
+                    po_data = await redis_cluster.get(f"pending_orders:{old_id}")
+                    pipe.set(f"pending_orders:{new_id}", po_data)
+                    pipe.delete(f"pending_orders:{old_id}")
+            except Exception as e:
+                logger.warning("[REGISTRY:PENDING_WARN] error migrating pending_orders key: %s", e)
+
         else:
             pipe.hset(old_hash_key, matched_field, new_id)
+            pipe.hset(old_hash_key, "associated_ids", order_data["associated_ids"])
+            pipe.delete(f"global_order_lookup:{old_id}")
             pipe.set(f"global_order_lookup:{new_id}", canonical_order_id)
-
-        # Keep associated_ids consistent (best-effort)
-        try:
-            import json as _json
-            raw_associated = order_data.get("associated_ids")
-            ids_list = _json.loads(raw_associated) if raw_associated else []
-            if old_id in ids_list:
-                ids_list.remove(old_id)
-            if new_id not in ids_list:
-                ids_list.append(new_id)
-            pipe.hset(new_hash_key, "associated_ids", _json.dumps(ids_list))
-        except Exception as assoc_err:
-            logger.warning("[REGISTRY:REPLACE_ASSOC_WARN] canonical=%s err=%s", canonical_order_id, assoc_err)
 
         await pipe.execute()
 
         logger.info(
             "[REGISTRY:REPLACE_OK] old_id=%s new_id=%s field=%s canonical=%s action=%s",
             old_id, new_id, matched_field, canonical_order_id, 
-            "key_renamed" if is_main_order else "field_updated"
+            "key_copied" if is_main_order else "field_updated"
         )
         return {
             "ok": True,

@@ -50,10 +50,14 @@ async def _read_frame(reader: asyncio.StreamReader) -> Optional[Dict[str, Any]]:
 
 def _normalize_fields(msg: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Accept either { 'fields': {...} } or flat dict where keys are fix-like tags.
+    Accept either { 'fields': {...} }, { 'message': {...} } or flat dict where keys are fix-like tags or named fields.
     Ensure keys are strings for safe .get("11") access.
     """
     fields = msg.get("fields") if isinstance(msg, dict) else None
+    
+    if not isinstance(fields, dict) and isinstance(msg, dict) and isinstance(msg.get("message"), dict):
+        fields = msg.get("message")
+        
     if isinstance(fields, dict) and fields:
         base = fields
     else:
@@ -71,16 +75,20 @@ def _normalize_fields(msg: Dict[str, Any]) -> Dict[str, Any]:
 def _build_report(msg: Dict[str, Any]) -> Dict[str, Any]:
     fields = _normalize_fields(msg)
     report = {
-        "type": "execution_report",
-        "order_id": fields.get("11"),      # ClOrdID or similar
-        "exec_id": fields.get("17"),       # ExecID or similar
-        "ord_status": fields.get("39"),    # OrdStatus
-        "avspx": fields.get("6"),          # AvgPx
-        "cumqty": fields.get("14"),        # CumQty
-        "ts": int(time.time() * 1000),
+        "type": fields.get("type", "execution_report"),
+        "order_id": fields.get("order_id") or fields.get("11"),
+        "exec_id": fields.get("exec_id") or fields.get("17"),
+        "ord_status": fields.get("ord_status") or fields.get("39"),
+        "avgpx": fields.get("avgpx") or fields.get("6"),
+        "cumqty": fields.get("cumqty") or fields.get("14"),
+        "mode": fields.get("mode"),
+        "_recovery_new_id": fields.get("_recovery_new_id"),
+        "idempotency": fields.get("idempotency"),
+        "ts": int(fields.get("ts") or (time.time() * 1000)),
         "raw": fields,
     }
-    return report
+    # Keep flat payload clean
+    return {k: v for k, v in report.items() if v is not None}
 
 
 class RabbitPublisher:
