@@ -298,23 +298,6 @@ class RejectWorker:
                 additional_data={'rejection_type': rejection_type, 'redis_status': redis_status}
             )
 
-            # Provider idempotency token-based dedupe
-            try:
-                idem = str(
-                    er.get("idempotency")
-                    or (er.get("raw") or {}).get("idempotency")
-                    or er.get("ideampotency")
-                    or (er.get("raw") or {}).get("ideampotency")
-                    or ""
-                ).strip()
-                if idem:
-                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info("[REJECT:SKIP:IDEMPOTENT] order_id=%s idem=%s", order_id, idem)
-                        await self._ack(message)
-                        return
-            except Exception:
-                pass
-
             # Concurrency control per user (only for placement rejections that need margin updates)
             lock_key = None
             token = None
@@ -328,6 +311,23 @@ class RejectWorker:
                     return
 
             try:
+                # Provider idempotency token-based dedupe
+                try:
+                    idem = str(
+                        er.get("idempotency")
+                        or (er.get("raw") or {}).get("idempotency")
+                        or er.get("ideampotency")
+                        or (er.get("raw") or {}).get("ideampotency")
+                        or ""
+                    ).strip()
+                    if idem:
+                        if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                            logger.info("[REJECT:SKIP:IDEMPOTENT] order_id=%s idem=%s", order_id, idem)
+                            await self._ack(message)
+                            return
+                except Exception:
+                    pass
+
                 # Handle different rejection types
                 if rejection_type == 'ORDER_PLACEMENT':
                     # Order placement rejection - update Redis and release margin

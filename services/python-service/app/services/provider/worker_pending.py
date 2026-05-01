@@ -286,26 +286,6 @@ class PendingWorker:
                 await self._ack(message)
                 return
 
-            # Provider idempotency token-based dedupe
-            try:
-                idem = str(
-                    er.get("idempotency")
-                    or (er.get("raw") or {}).get("idempotency")
-                    or er.get("ideampotency")
-                    or (er.get("raw") or {}).get("ideampotency")
-                    or ""
-                ).strip()
-                if idem:
-                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info(
-                            "[PENDING:SKIP] order_id=%s idem=%s reason=provider_idempotent", 
-                            order_id_dbg, idem
-                        )
-                        await self._ack(message)
-                        return
-            except Exception:
-                pass
-
             # Acquire per-user lock to avoid races with other workers
             lock_key = f"lock:user_margin:{user_type}:{user_id}"
             token = f"{os.getpid()}-{id(message)}"
@@ -319,6 +299,26 @@ class PendingWorker:
                 return
 
             try:
+                # Provider idempotency token-based dedupe
+                try:
+                    idem = str(
+                        er.get("idempotency")
+                        or (er.get("raw") or {}).get("idempotency")
+                        or er.get("ideampotency")
+                        or (er.get("raw") or {}).get("ideampotency")
+                        or ""
+                    ).strip()
+                    if idem:
+                        if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                            logger.info(
+                                "[PENDING:SKIP] order_id=%s idem=%s reason=provider_idempotent", 
+                                order_id_dbg, idem
+                            )
+                            await self._ack(message)
+                            return
+                except Exception:
+                    pass
+
                 # Handle modify-related cancel reports (should be ignored)
                 if ord_status in ("CANCELLED", "CANCELED"):
                     logger.info(

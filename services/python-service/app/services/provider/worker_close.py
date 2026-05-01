@@ -410,22 +410,7 @@ class CloseWorker:
                 await self._ack(message)
                 return
 
-            # Provider idempotency token-based dedupe
-            try:
-                idem = str(
-                    er.get("idempotency")
-                    or (er.get("raw") or {}).get("idempotency")
-                    or er.get("ideampotency")
-                    or (er.get("raw") or {}).get("ideampotency")
-                    or ""
-                ).strip()
-                if idem:
-                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info("[CLOSE:SKIP] order_id=%s idem=%s reason=provider_idempotent", order_id_dbg, idem)
-                        await self._ack(message)
-                        return
-            except Exception:
-                pass
+
 
             # Identify order type and handle SL/TP cancellation logic
             self._stats['order_type_identifications'] += 1
@@ -534,6 +519,23 @@ class CloseWorker:
                 return
 
             try:
+                # Provider idempotency token-based dedupe
+                try:
+                    idem = str(
+                        er.get("idempotency")
+                        or (er.get("raw") or {}).get("idempotency")
+                        or er.get("ideampotency")
+                        or (er.get("raw") or {}).get("ideampotency")
+                        or ""
+                    ).strip()
+                    if idem:
+                        if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                            logger.info("[CLOSE:SKIP] order_id=%s idem=%s reason=provider_idempotent", order_id_dbg, idem)
+                            await self._ack(message)
+                            return
+                except Exception:
+                    pass
+
                 # Finalize close using OrderCloser logic
                 close_start = time.time()
                 avgpx = er.get("avgpx") or (er.get("raw") or {}).get("6")

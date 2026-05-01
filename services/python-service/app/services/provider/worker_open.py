@@ -505,22 +505,6 @@ class OpenWorker:
                 )
                 await self._ack(message)
                 return
-            # Provider idempotency token-based dedupe
-            try:
-                idem = str(
-                    er.get("idempotency")
-                    or (er.get("raw") or {}).get("idempotency")
-                    or er.get("ideampotency")
-                    or (er.get("raw") or {}).get("ideampotency")
-                    or ""
-                ).strip()
-                if idem:
-                    if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
-                        logger.info("[OPEN:SKIP] order_id=%s idem=%s reason=provider_idempotent", order_id_dbg, idem)
-                        await self._ack(message)
-                        return
-            except Exception:
-                pass
             # Acquire per-user lock to avoid race on used_margin recompute
             lock_key = f"lock:user_margin:{payload.get('user_type')}:{payload.get('user_id')}"
             token = f"{os.getpid()}-{id(message)}"
@@ -531,6 +515,23 @@ class OpenWorker:
                 return
 
             try:
+                # Provider idempotency token-based dedupe
+                try:
+                    idem = str(
+                        er.get("idempotency")
+                        or (er.get("raw") or {}).get("idempotency")
+                        or er.get("ideampotency")
+                        or (er.get("raw") or {}).get("ideampotency")
+                        or ""
+                    ).strip()
+                    if idem:
+                        if await redis_cluster.set(f"provider_idem:{idem}", "1", ex=7 * 24 * 3600, nx=True) is None:
+                            logger.info("[OPEN:SKIP] order_id=%s idem=%s reason=provider_idempotent", order_id_dbg, idem)
+                            await self._ack(message)
+                            return
+                except Exception:
+                    pass
+
                 # Step 1: update provider OPEN markers
                 ctx = await _update_redis_for_open(payload)
                 logger.debug("[OPEN:REDIS_UPDATED] order_id=%s ctx_keys=%s", order_id_dbg, list(ctx.keys()))
