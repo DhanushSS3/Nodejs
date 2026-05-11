@@ -59,9 +59,23 @@ def _is_market_open_by_type(instrument_type: Optional[int]) -> bool:
             return True
     except (TypeError, ValueError):
         pass
-    # Monday=0 ... Sunday=6
-    current_day = datetime.utcnow().weekday()
-    return current_day < 5
+    now = datetime.utcnow()
+    day = now.weekday()  # 0=Monday, 4=Friday, 5=Saturday, 6=Sunday
+    hour = now.hour
+
+    # Closed all of Saturday
+    if day == 5:
+        return False
+
+    # Closed on Friday from 22:00 UTC onwards
+    if day == 4 and hour >= 22:
+        return False
+
+    # Closed on Sunday until 21:00 UTC
+    if day == 6 and hour < 21:
+        return False
+
+    return True
 
 async def _get_user_lock(user_type: str, user_id: str) -> asyncio.Lock:
     """Get or create a lock for a specific user to prevent race conditions."""
