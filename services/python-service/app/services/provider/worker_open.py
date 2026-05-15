@@ -826,6 +826,19 @@ class OpenWorker:
                 db_start = time.time()
                 try:
                     self._stats['db_publishes'] += 1
+                    
+                    # Fetch original order metadata to preserve it across ID replacements
+                    try:
+                        canonical_data = await redis_cluster.hgetall(ctx["order_data_key"])
+                        original_open_time = canonical_data.get("created_at") or canonical_data.get("open_time")
+                        original_symbol = canonical_data.get("symbol") or payload.get("symbol")
+                        original_group = canonical_data.get("group") or payload.get("group")
+                    except Exception as meta_err:
+                        logger.warning("[OPEN:META_FETCH_ERR] %s", meta_err)
+                        original_open_time = None
+                        original_symbol = payload.get("symbol")
+                        original_group = payload.get("group")
+
                     # Derive executed side for DB from computed margins or payload (normalized)
                     side_for_db = _normalize_side(margins.get("side") or payload.get("order_type") or payload.get("side"))
                     db_msg = {
@@ -833,6 +846,9 @@ class OpenWorker:
                         "order_id": str(payload.get("order_id")),
                         "user_id": str(payload.get("user_id")),
                         "user_type": str(payload.get("user_type")),
+                        "symbol": original_symbol,
+                        "group": original_group,
+                        "open_time": original_open_time,
                         "order_type": side_for_db,
                         "order_status": "OPEN",
                         "order_price": margins.get("final_exec_price") or payload.get("order_price"),

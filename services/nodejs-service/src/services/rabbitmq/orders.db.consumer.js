@@ -719,6 +719,8 @@ async function applyDbUpdate(msg) {
     // New fields from pending monitor
     symbol,
     close_origin,
+    // Original metadata preserved across ID replacements
+    open_time,
   } = msg || {};
 
   const normalizedMargin = (
@@ -1404,6 +1406,15 @@ async function applyDbUpdate(msg) {
             if (Object.prototype.hasOwnProperty.call(updateFields, 'swap')) {
               pUser.hset(orderKey, 'swap', String(updateFields.swap));
             }
+            
+            // Mirror preserved metadata to user_holdings so UI receives full data after ID replacements
+            if (symbol && (String(type) === 'ORDER_PENDING_TRIGGERED' || String(type) === 'ORDER_OPEN_CONFIRMED')) {
+              pUser.hset(orderKey, 'symbol', String(symbol).toUpperCase());
+            }
+            if (open_time && String(type) === 'ORDER_OPEN_CONFIRMED') {
+              pUser.hset(orderKey, 'created_at', String(open_time));
+            }
+
             await pUser.exec();
 
             logRedisAudit('order_redis_pipeline_applied', {
@@ -1567,6 +1578,12 @@ async function applyDbUpdate(msg) {
           }
           if (String(type) === 'ORDER_OPEN_CONFIRMED') {
             wsPayload.reason = 'order_opened';
+            if (symbol && !Object.prototype.hasOwnProperty.call(updateForWs, 'symbol')) {
+              updateForWs.symbol = String(symbol).toUpperCase();
+            }
+            if (open_time && !Object.prototype.hasOwnProperty.call(updateForWs, 'created_at')) {
+              updateForWs.created_at = open_time;
+            }
           }
           if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
             wsPayload.reason = 'order_closed';
