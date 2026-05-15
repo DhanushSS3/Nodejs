@@ -1408,11 +1408,14 @@ async function applyDbUpdate(msg) {
             }
             
             // Mirror preserved metadata to user_holdings so UI receives full data after ID replacements
-            if (symbol && (String(type) === 'ORDER_PENDING_TRIGGERED' || String(type) === 'ORDER_OPEN_CONFIRMED')) {
-              pUser.hset(orderKey, 'symbol', String(symbol).toUpperCase());
+            const finalSymbol = symbol ? String(symbol).toUpperCase() : (row && row.symbol ? String(row.symbol).toUpperCase() : null);
+            if (finalSymbol && (String(type) === 'ORDER_PENDING_TRIGGERED' || String(type) === 'ORDER_OPEN_CONFIRMED')) {
+              pUser.hset(orderKey, 'symbol', finalSymbol);
             }
-            if (open_time && String(type) === 'ORDER_OPEN_CONFIRMED') {
-              pUser.hset(orderKey, 'created_at', String(open_time));
+            
+            const finalOpenTime = open_time ? String(open_time) : (row && row.created_at ? (typeof row.created_at.getTime === 'function' ? row.created_at.getTime().toString() : String(row.created_at)) : null);
+            if (finalOpenTime && String(type) === 'ORDER_OPEN_CONFIRMED') {
+              pUser.hset(orderKey, 'created_at', finalOpenTime);
             }
 
             await pUser.exec();
@@ -1578,11 +1581,15 @@ async function applyDbUpdate(msg) {
           }
           if (String(type) === 'ORDER_OPEN_CONFIRMED') {
             wsPayload.reason = 'order_opened';
-            if (symbol && !Object.prototype.hasOwnProperty.call(updateForWs, 'symbol')) {
-              updateForWs.symbol = String(symbol).toUpperCase();
+            
+            const finalSymbolForWs = symbol ? String(symbol).toUpperCase() : (row && row.symbol ? String(row.symbol).toUpperCase() : null);
+            if (finalSymbolForWs && !Object.prototype.hasOwnProperty.call(updateForWs, 'symbol')) {
+              updateForWs.symbol = finalSymbolForWs;
             }
-            if (open_time && !Object.prototype.hasOwnProperty.call(updateForWs, 'created_at')) {
-              updateForWs.created_at = open_time;
+            
+            const finalOpenTimeForWs = open_time ? open_time : (row && row.created_at ? (typeof row.created_at.toISOString === 'function' ? row.created_at.toISOString() : String(row.created_at)) : null);
+            if (finalOpenTimeForWs && !Object.prototype.hasOwnProperty.call(updateForWs, 'created_at')) {
+              updateForWs.created_at = finalOpenTimeForWs;
             }
           }
           if (String(type) === 'ORDER_CLOSE_CONFIRMED') {
